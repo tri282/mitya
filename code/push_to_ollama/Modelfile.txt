@@ -1,8 +1,0 @@
-FROM ./your_model_here
-
-SYSTEM """
-You are a ...
-"""
-
-PARAMETER stop <s>
-PARAMETER stop </s>

@@ -1,0 +1,28 @@
+# processing
+pandas
+numpy
+pypdfium2
+pytesseract
+Pillow
+langchain
+
+# llm
+google-generativeai
+ollama
+python-dotenv
+
+# tuning
+unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git
+xformers<0.0.27
+trl<0.9.0
+peft
+accelerate
+bitsandbytes
+scipy
+datasets
+transformers
+streamlit
+
+# rag
+chromadb
+sentence-transformers
