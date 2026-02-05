@@ -3,15 +3,16 @@
 ## Overview
 A local-first, privacy-focused RAG architecture designed for high-fidelity literary analysis. This system prioritizes structural awareness (book/chapter hierarchy), thematic interpretation, and strict evidence traceability using a lightweight stack optimized for consumer hardware.
 
+---
+
 ## System Architecture
 
 ### 1. Ingestion Pipeline
 **A Cleaning & Standardization**
 * Regex normalization of headers, footers, and page numbers.
-* Standardization of character names to canonical forms prior to indexing.
 
 **B. Dual-Path Chunking**
-* **Vector Chunks:** 500 tokens, 150 token overlap (Optimized for semantic search).
+* **Vector Chunks:** 500 tokens, 200 token overlap (Optimized for semantic search).
 * **Context Chunks:** Entire chapter text (Stored specifically for summary generation).
 
 **C. Metadata Extraction**
@@ -28,12 +29,19 @@ For each vector chunk, the following metadata is generated and stored:
 ### 2. Retrieval Strategy
 The system utilizes a **Query Router** to classify user intent (`SPECIFIC`, `THEMATIC`, or `STRUCTURAL`) and selects the appropriate retrieval path.
 
-**A. Retrieval Logic**
-* **Hard Filters:** Utilized when the user explicitly scopes `Book`, `Part`, and/or `Chapter` via the UI.
-* **Payload Boosting:** Uses a JSON entity map to resolve user input (e.g., "Sonya") to `canonical_entities`.
-    * Applies a `should condition` to boost scores for chunks containing the resolved entity.
+**A. The Query Router**
+* Use a **Hierachy of Uncertainty:**
+1. **Deterministic (Regex/Keyword):**: 100% precision, zero latency
+2. **Probabilistic (NLI/DeBERTa):**: High precision, low recall. Adjust confidence threshold
+3. **Fallback (Thematic):** "Catch-all" solution.
+4. **Optional:** Train a Logistic Regression base on usage logs to classify query types
 
-**B. Global Context Injection (Structural Queries)**
+**B. Retrieval Logic**
+* **Hard Filters:** Utilized when the user explicitly scopes `Book`, `Part`, and/or `Chapter` via the UI.
+* **Payload Boosting:** Uses a JSON entity map to resolve user input (e.g., "Sonya") to `canonical_entities` in the metadata.
+    * Applies a `should` condition to boost scores for chunks containing the resolved entity.
+
+**C. Global Context Injection (Structural Queries)**
 Addresses the limitation of RAG in summarization tasks.
 
 * **Mechanism:** Pre-generated summaries for every chapter are stored in a key-value store.
@@ -45,7 +53,7 @@ Combines semantic understanding with keyword precision.
 * **Sparse Vector:** Captures exact keywords (BM25).
 * **Dynamic Scoring Weights:**
 | Query Type | Dense Weight | Sparse Weight | Focus                      |
-| SPECIFIC   | 0.3          | 0.7           | Exact quotes, names, facts | 
+| SPECIFIC   | 0.3          | 0.7           | Exact quotes, names, facts |
 | THEMATIC   | 0.8          | 0.2           | Concepts, analysis, vibes  |
 
 ### 3. Reranking & Optimization
@@ -75,8 +83,10 @@ Stored per session to guide system prompts rather than biasing retrieval weights
 }
 ```
 
-**Caching Strategy**
+**Logs**
+If the app is ship only, ask for permission and log query, response, and query type, user's satisfaction.
 
+**Caching Strategy**
 Implemented via diskcache (SQLite-backed) to persist across restarts without external services.
 
 * **A. Router Check:** Determine query type.
@@ -84,6 +94,8 @@ Implemented via diskcache (SQLite-backed) to persist across restarts without ext
     * Checks past query embeddings for cosine similarity (>0.95).
     * Returns cached response immediately on hit.
 * **C.Thematic Bypass:** `THEMATIC` queries always trigger a fresh generation to ensure context sensitivity.
+
+---
 
 ## Evaluation & Guardrails
 
@@ -94,7 +106,10 @@ Ensures answers are grounded in the text.
 
 ### 2. Interpretive Restraint
 Prevents hallucinated certainty on ambiguous literary topics.
-* **Heuristic:** $$ \text{Score} = \left( \frac{\text{hedging_tokens}}{\text{total_tokens}} \right) \times \text{uncertainty_alignment} $$
+* **Heuristic:**
+$$
+\text{Score} = \left( \frac{\text{hedging_tokens}}{\text{total_tokens}} \right) \times \text{uncertainty_alignment}
+$$
 
 ### 3. Latency Budget
 * **TTFT (Time to First Token):** < 1.5 seconds.
