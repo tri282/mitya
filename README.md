@@ -88,10 +88,8 @@ Store:
 3. Hybrid Retrieval
 * Calculate score dynamically based on query type
     * `STRUCTURAL`: get summary context via JSON dictionary + Some key exercepts per character
-    * `SPECIFIC`:
-    $$ \text{Score} = 0.3 \cdot \text{Dense} + 0.7 \cdot \text{Sparse} $$
-    * `THEMATIC`:
-    $$ \text{Score} = 0.8 \cdot \text{Dense} + 0.2 \cdot \text{Sparse} $$
+    * `SPECIFIC`: $\text{Score} = 0.3 \cdot \text{Dense} + 0.7 \cdot \text{Sparse}$
+    * `THEMATIC`: $\text{Score} = 0.8 \cdot \text{Dense} + 0.2 \cdot \text{Sparse}$
 
 4. Reranking
 * Take top 25 chunks

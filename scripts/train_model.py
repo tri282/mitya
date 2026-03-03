@@ -12,7 +12,7 @@ from src.config import Config
 def main(csv_file, push, hub_id):
     csv_path = os.path.join(Config.PROCESSED_DATA_DIR, csv_file)
 
-    trainer = DostoevskyTrainer()
+    trainer = MityaTrainer()
 
     # load data
     dataset = trainer.prepare_data(csv_path)
@@ -21,16 +21,16 @@ def main(csv_file, push, hub_id):
     trainer.train(dataset)
 
     # export
-    save_path = os.path.join(Config.DATA_DIR, "dostoevsky_model_merged")
-    trainer.export_model(save_path, push_to_hub = push, hub_id = hub_id)
+    save_path = os.path.join(Config.DATA_DIR, "mitya-2.0")
+    trainer.export_model(save_path)
 
     print("Training pipeline complete.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--csv", default = "training_data.csv", help = "Name of CSV in data/processed/")
-    parser.add_argument("--push", action = "store_true", help = "Push to HuggingFace Hub")
-    parser.add_argument("--hub_id", type = str, default = "tri282/dostoevskyGPT_merged", help="HF Repo ID")
+    # parser.add_argument("--push", action = "store_true", help = "Push to HuggingFace Hub")
+    # parser.add_argument("--hub_id", type = str, default = "tri282/dostoevskyGPT_merged", help="HF Repo ID")
 
     args = parser.parse_args()
-    main(args.csv, args.push, args.hub_id)
+    main(args.csv)

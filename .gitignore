@@ -1,1 +1,3 @@
 .git
+training_data/raw/*
+training_data/processed/*
