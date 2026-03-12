@@ -8,8 +8,10 @@ import re
 from datasets import load_dataset
 from unsloth.chat_templates import get_chat_template
 from unsloth import FastLanguageModel, is_bfloat16_supported
-from trl import SFTTrainer
-from transformers import TrainingArguments
+from trl import SFTTrainer, SFTConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import PeftModel
+
 from src.config import Config
 
 SYSTEM_PROMPT = (
@@ -19,7 +21,7 @@ SYSTEM_PROMPT = (
 )
 
 class MityaTrainer:
-    def __init__(self, model_name = "unsloth/mistral-7b-instruct-v0.3-bnb-4bit", max_seq_length = 2048):
+    def __init__(self, model_name = "unsloth/mistral-7b-instruct-v0.3-bnb-4bit", max_seq_length = 1024):
         self.model_name = model_name
         self.max_seq_length = max_seq_length
         self.dtype = None # auto detect
@@ -95,7 +97,6 @@ class MityaTrainer:
 
         return dataset
 
-
     def load_model(self):
         print("Loading Model")
         self.model, self.tokenizer = FastLanguageModel.from_pretrained(
@@ -109,13 +110,13 @@ class MityaTrainer:
         self.model = FastLanguageModel.get_peft_model(
             self.model,
             # lower rank reduce the number of trainable params (e.g. 8, 16, 32, 64, 128)
-            r = 64,
+            r = 32,
             # use all modules
             target_modules = ["q_proj", "k_proj", "v_proj", "o_proj",
                               "gate_proj", "up_proj", "down_proj",],
 
             # higher ranks, more influence upon the updated weights, since we want personalized LLM, it's better to increase alpha here
-            lora_alpha = 96,
+            lora_alpha = 32,
             # since most training data or relatively similar in style, it's good to apply some regularization
             lora_dropout = 0.1,
             # less prone to overfitting than "all", but since we want to capture more with regards to new data, then yes
@@ -125,14 +126,14 @@ class MityaTrainer:
             random_state = 2802,
 
             # using rank-stabilized matrix, reduce training loss
-            use_rslora = True, 
-            use_dora = True,
+            use_rslora = True,
+            use_dora = False,
             loftq_config = None,
         )
 
     def train(self, dataset, output_dir = "outputs"):
         print("Starting Training...")
-        training_args = TrainingArguments(
+        training_args = SFTConfig(
             # default 8, batch size spread across each gpu, smaller -> generalize better, larger -> train faster, more memory
             per_device_train_batch_size = 4,
             # instead of updating weights after each batch,
@@ -154,6 +155,10 @@ class MityaTrainer:
             # might consider batch normalization rather than weight decay
             weight_decay = 0.01,
             lr_scheduler_type = "linear",
+            dataset_text_field = "text",
+            max_seq_length = self.max_seq_length,
+            dataset_num_proc = 2,
+            packing = True,
             seed = 2802,
             output_dir = output_dir,
         )
@@ -162,11 +167,6 @@ class MityaTrainer:
             model = self.model,
             tokenizer = self.tokenizer,
             train_dataset = dataset,
-            dataset_text_field = "text",
-            max_seq_length = self.max_seq_length,
-            dataset_num_proc = 2,
-            # only true when using constant length dataset, trains faster for shorter sequences
-            packing = True,
             args = training_args,
         )
 
@@ -179,22 +179,18 @@ class MityaTrainer:
         save lora adapters, merged 16 bit model, and the quantizations
         '''
         # save lora
-        print(f"Saving LoRA adapters to {save_path}_lora...")
         self.model.save_pretrained(f"{save_path}_lora")
         self.tokenizer.save_pretrained(f"{save_path}_lora")
 
-        # save merged
-        print(f"Saving merged 16-bit model to {save_path}_16bit...")
-        self.model.save_pretrained_merged(f"{save_path}_16bit", self.tokenizer, save_method = "merged_16bit")
-
-        # save gguf's
-        quantization_methods = ["q3_k_m", "q4_k_m", "q5_k_m", "q8_0"]
-
-        for quant_method in quantization_methods:
-            print(f"Quantizing to {quant_method} and saving GGUF model...")
-
-
-            self.model.save_pretrained_gguf(
-                f"{save_path}_{quant_method}_gguf",
-                self.tokenizer,
-                quantization_method = quant_method)
+        # merge 16 bit
+        base_model_id = "unsloth/mistral-7b-instruct-v0.3"
+        base_model = AutoModelForCausalLM.from_pretrained(
+            base_model_id,
+            dtype = torch.float16,
+            device_map = "auto"
+        )
+        tokenizer = AutoTokenizer.from_pretrained(base_model_id)
+        model = PeftModel.from_pretrained(base_model, lora_dir)
+        model = model.merge_and_unload()
+        model.save_pretrained(MERGE_DIR)
+        tokenizer.save_pretrained(MERGE_DIR)

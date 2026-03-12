@@ -1,9 +1,9 @@
 # processing
-pandas
-numpy
+pandas>=2.2.2
+torch==2.10.0+cu128
+pyarrow>=23.0.1
 pypdfium2
 pytesseract
-Pillow
 langchain
 
 # llm
@@ -12,17 +12,20 @@ ollama
 python-dotenv
 
 # tuning
-unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git
-xformers<0.0.27
-trl<0.9.0
-peft
-accelerate
-bitsandbytes
-scipy
-datasets
-transformers
-streamlit
+transformers>=5.2.0
+datasets>=4.7.0
+accelerate>=1.13.0
+peft>=0.18.1
+trl>=0.24.0
 
-# rag
-chromadb
-sentence-transformers
+# tokenizers
+tokenizers>=0.22.2
+tiktoken>=0.12.0
+sentencepiece>=0.2.1
+
+# quantization
+bitsandbytes>=0.49.2
+xformers>=0.0.35
+
+# unsloth
+unsloth @ git+https://github.com/unslothai/unsloth.git

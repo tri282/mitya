@@ -16,6 +16,11 @@ class Config:
     RAW_DATA_DIR = os.path.join(DATA_DIR, "raw")
     PROCESSED_DATA_DIR = os.path.join(DATA_DIR, "processed")
 
+    MODEL_DIR = os.path.join(os.getcwd(), "models")
+    LORA_DIR = os.path.join(MODEL_DIR, "lora")
+    QUANTIZATIONS_DIR = os.path.join(MODEL_DIR, "quantizations")
+    MERGE_DIR = os.path.join(MODEL_DIR, "merged")
+
 # validation
 if not Config.GOOGLE_API_KEY and Config.LLM_BACKEND == 'gemini':
     print("WARNING: GOOGLE_API_KEY is missing in .env")

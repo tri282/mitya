@@ -4,13 +4,17 @@ import sys
 import os
 import argparse
 
+from src.config import Config
+
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.training import DostoevskyTrainer
 from src.config import Config
 
 def main(csv_file, push, hub_id):
-    csv_path = os.path.join(Config.PROCESSED_DATA_DIR, csv_file)
+    csv_path = os.path.join(PROCESSED_DATA_DIR, csv_file)
 
     trainer = MityaTrainer()
 
@@ -21,7 +25,7 @@ def main(csv_file, push, hub_id):
     trainer.train(dataset)
 
     # export
-    save_path = os.path.join(Config.DATA_DIR, "mitya-2.0")
+    save_path = os.path.join(DATA_DIR, "mitya-2.0")
     trainer.export_model(save_path)
 
     print("Training pipeline complete.")

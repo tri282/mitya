@@ -1,3 +1,13 @@
+# git
 .git
-training_data/raw/*
-training_data/processed/*
+
+# data
+data/raw/*
+data/processed/*
+data/merged/*
+
+# trained models
+models/*
+
+# llama.cpp
+llama.cpp/*

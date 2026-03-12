@@ -3,6 +3,7 @@
 import google.generativeai as genai
 import ollama
 import time
+
 from src.config import Config
 
 class Generator:
