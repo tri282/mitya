@@ -9,5 +9,12 @@ data/merged/*
 # trained models
 models/*
 
+# docs
+docs/TODO.md
+
+# testing scripts
+scripts/start_chat.sh
+scripts/start_server.sh
+
 # llama.cpp
-llama.cpp/*
+llama.cpp

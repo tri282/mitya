@@ -1,3 +1,9 @@
+# llama cpp
+llama-cpp
+cmake
+gcc_linux-64
+cuda-toolkit
+
 # processing
 pandas>=2.2.2
 torch==2.10.0+cu128
