@@ -4,11 +4,16 @@
      rules/ default (e.g. a different Code Style block) if this project needs something else. -->
 
 - **Stack:** Python 3.14, FastAPI.
-- **What this service does:** "Mitya" — Dostoevsky-styled local LLM. Two parts: (1) Mistral-7B QLoRA fine-tune, merged + GGUF-quantized via llama.cpp, done; (2) metadata-tagged RAG over Dostoevsky's texts (Qdrant, hybrid dense/sparse retrieval, reranking, FastAPI serving), not built yet.
+- **What this service does:** "Mitya" — Dostoevsky-styled local LLM. Two parts: (1) Mistral-7B QLoRA fine-tune, merged + GGUF-quantized via llama.cpp, done; (2) metadata-tagged RAG over Dostoevsky's texts (Qdrant, hybrid dense/sparse retrieval, reranking, FastAPI serving), designed (`docs/RAG.md`), implementation pending.
 - **Constraint:** target hardware is a 6GB GPU — every design/dependency choice must fit that budget (quantization, small rerankers, local-mode Qdrant, no heavyweight sparse encoders like SPLADE).
-- **Architecture & design docs:** `docs/DESIGN.md` (full architecture, was README.md), `docs/RAG.md` (RAG design detail), `docs/FINE_TUNE.md` (training pipeline), `docs/TODO.md` (status). Read before non-trivial changes.
+- **Architecture & design docs:** `docs/DESIGN.md` (high-level architecture map for both subsystems), `docs/RAG.md` (settled RAG design detail), `docs/FINE_TUNE.md` (training pipeline), `docs/TODO.md` (status). Read before non-trivial changes.
 - **My role:** act as AI Engineer / MLOps engineer — favor production-shaped code (logging, caching, typed configs, API boundaries) over notebook-style scripts, but don't over-engineer past what a solo local deployment needs.
 - **Monorepo**
+
+# Design Philosophy
+- Decision priority order: **hardware fit > goal fit > usability > enterprise realism > not-overengineered.**
+- Enterprise-shaped (logging, caching, typed config, API boundaries) but not over-engineered past a solo local deploy.
+- Grounding is programmatic, persona stays in-character; single 6GB GPU runs the LLM alone.
 
 # Approval Model
 - **No prompt:** read-only exploration, linters, type-checkers, formatters.
