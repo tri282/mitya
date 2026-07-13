@@ -10,11 +10,11 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from src.training import DostoevskyTrainer
+from src.training import MityaTrainer
 from src.config import Config
 
-def main(csv_file, push, hub_id):
-    csv_path = os.path.join(PROCESSED_DATA_DIR, csv_file)
+def main(csv_file):
+    csv_path = os.path.join(Config.PROCESSED_DATA_DIR, csv_file)
 
     trainer = MityaTrainer()
 
@@ -25,7 +25,7 @@ def main(csv_file, push, hub_id):
     trainer.train(dataset)
 
     # export
-    save_path = os.path.join(DATA_DIR, "mitya-2.0")
+    save_path = os.path.join(Config.DATA_DIR, "mitya-2.0")
     trainer.export_model(save_path)
 
     print("Training pipeline complete.")
@@ -33,8 +33,6 @@ def main(csv_file, push, hub_id):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--csv", default = "training_data.csv", help = "Name of CSV in data/processed/")
-    # parser.add_argument("--push", action = "store_true", help = "Push to HuggingFace Hub")
-    # parser.add_argument("--hub_id", type = str, default = "tri282/dostoevskyGPT_merged", help="HF Repo ID")
 
     args = parser.parse_args()
     main(args.csv)

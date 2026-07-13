@@ -1,20 +1,20 @@
 # git
 .git
 
+# virtual env
+.venv
+
+# commits
+commits/*
+
 # data
-data/raw/*
-data/processed/*
-data/merged/*
+data/*
 
 # trained models
 models/*
 
 # docs
 docs/TODO.md
-
-# testing scripts
-scripts/start_chat.sh
-scripts/start_server.sh
 
 # llama.cpp
 llama.cpp

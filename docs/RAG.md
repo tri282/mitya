@@ -1,4 +1,4 @@
-# Library Metadata Enhanced RAG
+# Metadata Enhanced RAG
 
 ## Overview
 A local-first, privacy-focused RAG architecture designed for high-fidelity literary analysis. This system prioritizes structural awareness (book/chapter hierarchy), thematic interpretation, and strict evidence traceability using a lightweight stack optimized for consumer hardware.

@@ -35,3 +35,12 @@ xformers>=0.0.35
 
 # unsloth
 unsloth @ git+https://github.com/unslothai/unsloth.git
+
+# rag
+fastapi
+uvicorn
+litellm
+qdrant-client
+sentence-transformers
+flashrank
+diskcache

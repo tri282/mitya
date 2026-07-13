@@ -190,7 +190,7 @@ class MityaTrainer:
             device_map = "auto"
         )
         tokenizer = AutoTokenizer.from_pretrained(base_model_id)
-        model = PeftModel.from_pretrained(base_model, lora_dir)
+        model = PeftModel.from_pretrained(base_model, f"{save_path}_lora")
         model = model.merge_and_unload()
-        model.save_pretrained(MERGE_DIR)
-        tokenizer.save_pretrained(MERGE_DIR)
+        model.save_pretrained(Config.MERGE_DIR)
+        tokenizer.save_pretrained(Config.MERGE_DIR)

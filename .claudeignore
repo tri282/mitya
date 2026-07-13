@@ -1,0 +1,19 @@
+# git
+.git
+
+# data
+data/*
+
+# trained models
+models/lora/*
+models/quantizations/*
+
+# docs
+docs/TODO.md
+
+# testing scripts
+scripts/start_chat.sh
+scripts/start_server.sh
+
+# llama.cpp
+llama.cpp
