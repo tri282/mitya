@@ -15,6 +15,7 @@ models/*
 
 # docs
 docs/TODO.md
+docs/superpowers/*
 
 # llama.cpp
 llama.cpp
