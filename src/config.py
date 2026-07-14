@@ -30,7 +30,7 @@ class Config:
     SUMMARIES_PATH = os.path.join(RAG_DIR, "summaries.json")
 
     # --- RAG: retrieval ---
-    EMBED_MODEL   = os.getenv("EMBED_MODEL", "nomic-ai/nomic-embed-text-v1.5")  # placeholder, verify in P2
+    EMBED_MODEL   = os.getenv("EMBED_MODEL", "nomic-ai/nomic-embed-text-v1.5")  # confirmed in fastembed 0.8.0 registry (P2)
     RERANK_MODEL  = os.getenv("RERANK_MODEL", "ms-marco-MiniLM-L-12-v2")        # placeholder, verify in P4
     QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "dostoevsky")
     PREFETCH_LIMIT = int(os.getenv("PREFETCH_LIMIT", "50"))

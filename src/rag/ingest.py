@@ -1,14 +1,15 @@
 """Corpus ingest for the Dostoevsky RAG pipeline.
 
-Phase 1 (this file, done): per-book structural parsing. Each novel's plain-text
-file uses its own heading scheme (no single generic regex — see docs/RAG.md
-§II.1) and is parsed into ordered ``Unit`` records (book/part/chapter/order/text),
-then rolled up into ``structure.json`` — the canonical (book, part, chapter) key
+Phase 1 (done): per-book structural parsing. Each novel's plain-text file uses
+its own heading scheme (no single generic regex — see docs/RAG.md §II.1) and
+is parsed into ordered ``Unit`` records (book/part/chapter/order/text), then
+rolled up into ``structure.json`` — the canonical (book, part, chapter) key
 space that phase 2 (chunking), phase 3 (summaries), and phase 4 (router scope
 resolution) all key off of.
 
-Phase 2 (chunking, embedding (dense + BM25), and Qdrant upsert) is not yet
-implemented here.
+Phase 2 (this file, done): token-window chunking within each ``Unit``, dense
+(nomic, fastembed) + sparse (BM25) embedding, and Qdrant local-collection
+upsert. Driven by ``scripts/ingest_corpus.py``.
 """
 
 import argparse
@@ -17,8 +18,18 @@ import logging
 import os
 import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from qdrant_client import QdrantClient, models
 
 from src.config import Config
+
+if TYPE_CHECKING:
+    # Imported only for type hints -- keeps this module importable (e.g. by
+    # scripts that just want parse_all()/Unit) without pulling in fastembed's
+    # onnxruntime dependency unless chunking/embedding is actually used.
+    from fastembed import SparseTextEmbedding, TextEmbedding
+    from tokenizers import Tokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -311,11 +322,186 @@ def emit_structure(output_path: str = Config.STRUCTURE_PATH) -> dict:
     return structure
 
 
+# --- chunking ----------------------------------------------------------------
+# Token-window chunking within each parsed Unit -- chunks never cross a
+# chapter boundary, since a Unit already *is* one chapter. Windows are sized
+# with the embedder's own tokenizer (not str.split/tiktoken) so chunk sizing
+# matches what nomic actually sees at inference time (design R8).
+
+@dataclass
+class Chunk:
+    id: int               # stable integer point id (global, deterministic parse order)
+    book: str
+    part: int | None
+    chapter: int | None
+    text: str
+
+
+def get_tokenizer(embedder: "TextEmbedding") -> "Tokenizer":
+    """Return the underlying `tokenizers.Tokenizer` fastembed loaded for this model.
+
+    fastembed's public `TextEmbedding` API has no documented tokenizer
+    accessor. Read from fastembed 0.8.0 source (common/onnx_model.py,
+    text/onnx_text_model.py): the per-architecture inner model (here
+    `PooledEmbedding`, used for nomic-embed-text-v1.5) is `OnnxTextModel`,
+    which stores the HF `tokenizers.Tokenizer` on `self.tokenizer`, populated
+    in `load_onnx_model()`. `TextEmbedding.__init__` calls
+    `load_onnx_model()` eagerly unless `lazy_load=True` (we use the default,
+    `lazy_load=False`), so the tokenizer is already loaded by the time this
+    is called -- no dummy embed() call needed first.
+    """
+    return embedder.model.tokenizer
+
+
+def chunk_units(
+    units_by_book: dict[str, list[Unit]],
+    tokenizer: "Tokenizer",
+    chunk_tokens: int = Config.CHUNK_TOKENS,
+    chunk_overlap: int = Config.CHUNK_OVERLAP,
+) -> list[Chunk]:
+    """Slide a chunk_tokens-wide / chunk_overlap-overlapping window over each
+    Unit's text, using tokenizer offsets to map token windows back to char
+    spans. Returns chunks in stable global order (book iteration order x unit
+    order x window order), so point ids are deterministic across re-runs.
+    """
+    if chunk_overlap >= chunk_tokens:
+        raise ValueError(f"CHUNK_OVERLAP ({chunk_overlap}) must be < CHUNK_TOKENS ({chunk_tokens})")
+    stride = chunk_tokens - chunk_overlap
+
+    chunks: list[Chunk] = []
+    point_id = 0
+    for book_title, units in units_by_book.items():
+        for unit in sorted(units, key=lambda u: u.order):
+            if not unit.text:
+                continue
+            # add_special_tokens=False: we want raw content-token offsets to
+            # window over. The [CLS]/[SEP] fastembed adds at actual embed()
+            # time carry (0, 0) offsets and would corrupt the char-slicing
+            # below; they're re-added transparently when we embed the chunk
+            # text later, so omitting them here doesn't affect what the
+            # model sees at inference time.
+            encoding = tokenizer.encode(unit.text, add_special_tokens=False)
+            offsets = encoding.offsets
+            n = len(offsets)
+            if n == 0:
+                continue
+            start = 0
+            while start < n:
+                end = min(start + chunk_tokens, n)
+                char_start = offsets[start][0]
+                char_end = offsets[end - 1][1]
+                chunk_text = unit.text[char_start:char_end]
+                chunks.append(Chunk(point_id, book_title, unit.part, unit.chapter, chunk_text))
+                point_id += 1
+                if end == n:
+                    break
+                start += stride
+    return chunks
+
+
+# --- embedding -----------------------------------------------------------------
+# Dense: nomic-embed-text-v1.5 via fastembed (ONNX/CPU, 768-dim, cosine).
+# Nomic's training uses task-instruction prefixes baked into the input text
+# rather than a model-side flag, so the prefix has to be applied by the
+# caller. Read from fastembed 0.8.0 source: TextEmbedding.embed/query_embed/
+# passage_embed and PooledEmbedding (grepped fastembed/text/*.py,
+# fastembed/common/*.py for "search_document"/"search_query": no hits) never
+# insert the prefixes themselves, and PooledEmbedding does not override
+# query_embed/passage_embed to add them either -- so we must prefix
+# explicitly, both here (ingest, "search_document:") and in P4 retrieval
+# ("search_query:"). Silently getting this wrong degrades retrieval (RR5).
+_DOC_PREFIX = "search_document: "
+
+
+def embed_dense(embedder: "TextEmbedding", texts: list[str]) -> list[list[float]]:
+    prefixed = [_DOC_PREFIX + t for t in texts]
+    return [vec.tolist() for vec in embedder.embed(prefixed)]
+
+
+def embed_sparse(bm25: "SparseTextEmbedding", texts: list[str]) -> list:
+    # .embed() (document side) emits raw term-frequency weights, meant to be
+    # combined with Qdrant's server-side Modifier.IDF at query time (design
+    # §II.2, R9). Confirmed via fastembed/sparse/bm25.py: .embed() calls
+    # raw_embed()/_term_frequency() (TF only, no IDF), while .query_embed()
+    # (query side, used in P4) assigns a flat weight of 1.0 per token instead
+    # -- the two are intentionally asymmetric, this is not a bug to "fix".
+    return list(bm25.embed(texts))
+
+
+# --- Qdrant collection + upsert -------------------------------------------------
+
+def ensure_collection(client: QdrantClient, collection: str, rebuild: bool) -> None:
+    """Create the local collection with named dense ("dense") + sparse
+    ("bm25") vectors. Names are reused verbatim by P4's prefetch. Refuses to
+    touch an existing collection unless `rebuild` is set.
+    """
+    exists = client.collection_exists(collection)
+    if exists and not rebuild:
+        raise RuntimeError(f"collection '{collection}' already exists -- pass --rebuild to recreate it")
+    if exists and rebuild:
+        logger.info("dropping existing collection %s (--rebuild)", collection)
+        client.delete_collection(collection)
+
+    client.create_collection(
+        collection,
+        vectors_config={"dense": models.VectorParams(size=768, distance=models.Distance.COSINE)},
+        # Modifier.IDF is required -- without it fastembed's TF-only BM25
+        # weights are never combined with corpus-level IDF and "BM25"
+        # degrades to plain term frequency (design §II.2).
+        sparse_vectors_config={"bm25": models.SparseVectorParams(modifier=models.Modifier.IDF)},
+    )
+    logger.info("created collection %s (dense=768/cosine, bm25=idf)", collection)
+
+
+def upsert_chunks(
+    client: QdrantClient,
+    collection: str,
+    chunks: list[Chunk],
+    embedder: "TextEmbedding",
+    bm25: "SparseTextEmbedding",
+    batch_size: int,
+) -> int:
+    """Embed (dense + sparse) and upsert chunks in batches to bound memory.
+    Returns the total number of points upserted.
+    """
+    total = 0
+    for i in range(0, len(chunks), batch_size):
+        batch = chunks[i:i + batch_size]
+        texts = [c.text for c in batch]
+        dense_vecs = embed_dense(embedder, texts)
+        sparse_vecs = embed_sparse(bm25, texts)
+
+        points = [
+            models.PointStruct(
+                id=chunk.id,
+                vector={
+                    "dense": dense_vec,
+                    "bm25": models.SparseVector(
+                        indices=sparse_vec.indices.tolist(),
+                        values=sparse_vec.values.tolist(),
+                    ),
+                },
+                payload={
+                    "book": chunk.book,
+                    "part": chunk.part,
+                    "chapter": chunk.chapter,
+                    "canonical_entities": [],  # left empty in v1, see design §II.4
+                    "text": chunk.text,
+                },
+            )
+            for chunk, dense_vec, sparse_vec in zip(batch, dense_vecs, sparse_vecs)
+        ]
+        client.upsert(collection, points=points)
+        total += len(points)
+        logger.info("upserted points %d-%d (%d/%d)", i, i + len(batch) - 1, total, len(chunks))
+    return total
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Parse the Dostoevsky corpus into structural units.")
     ap.add_argument(
         "--parse-only", action="store_true",
-        help="Emit structure.json only. Currently the only mode -- chunking/embedding land in phase 2.",
+        help="Emit structure.json only. Chunking/embedding/upsert live in scripts/ingest_corpus.py.",
     )
     ap.parse_args()
 
