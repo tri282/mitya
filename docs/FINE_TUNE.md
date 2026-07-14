@@ -29,4 +29,18 @@ See `src/training.py`. I use **QLoRA** (Quantized Low-Rank Adaptation) via the U
 
 ## Merging and Quantization
 
-The model base model and LORA adapters are first merged (via Hugginface's `merge_and_unload()`) to generate a master `F16.guuf` file. Then `llama.cpp` is used to quantize the merged model to the following quantizations: **Q4_K_M, Q5_K_M, Q8_0**
+The base model and LoRA adapters are first merged (via Hugging Face's `merge_and_unload()`) to generate a master `F16.gguf` file. Then `llama.cpp` is used to quantize the merged model to the following quantizations: **Q4_K_M, Q5_K_M, Q8_0**
+
+### llama.cpp toolchain
+
+Two separate pieces, built against **system CUDA Toolkit 13.2** (`nvcc` at `/usr/local/cuda/bin/nvcc`):
+
+* **Raw C++ executables** — `llama.cpp` is cloned from GitHub and compiled with `cmake` (`cmake -B build && cmake --build build --config Release -j`). The resulting binaries under `build/bin/` do the offline work: `convert_hf_to_gguf.py` (merge -> F16 GGUF) and `llama-quantize` (F16 -> Q4_K_M / Q5_K_M / Q8_0). At serve time `llama-server` exposes the OpenAI-compatible HTTP endpoint the RAG layer calls. Full sequence in `scripts/quantize.sh`. These are **not** pip packages.
+* **`llama-cpp-python`** — the in-venv bindings, forced to compile **from source** against the system `nvcc` so the CUDA backend is built (a plain wheel ships CPU-only). Install manually, outside `pip install -r`:
+
+```bash
+CUDACXX=/usr/local/cuda/bin/nvcc CMAKE_ARGS="-DGGML_CUDA=on" \
+  pip install --no-binary llama-cpp-python llama-cpp-python
+```
+
+The `# llama.cpp` block in `requirements.txt` documents this rather than listing an installable line, since the source build needs the env vars above.

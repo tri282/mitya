@@ -1,6 +1,10 @@
 # git
 .git
 
+# python cache
+__pycache__/
+*.py[cod]
+
 # virtual env
 .venv
 
@@ -16,6 +20,8 @@ models/*
 # docs
 docs/TODO.md
 docs/superpowers/*
+plans/
+status/
 
 # llama.cpp
 llama.cpp
