@@ -79,7 +79,8 @@ BARE_ROMAN_RE = re.compile(r"^([IVXLC]+)\.?\s*$")                  # "I" / "I." 
 
 
 def _read_lines(path: str) -> list[str]:
-    with open(path, encoding="utf-8") as f:
+    # utf-8-sig transparently strips a leading BOM if present, else behaves as utf-8.
+    with open(path, encoding="utf-8-sig") as f:
         return f.readlines()
 
 
