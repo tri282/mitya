@@ -1,8 +1,13 @@
-# llama cpp
-llama-cpp
-cmake
-gcc_linux-64
-cuda-toolkit
+# llama.cpp
+# Two separate things, neither a plain `pip install -r` line:
+#  1. Raw C++ executables (convert_hf_to_gguf, llama-quantize, llama-server) —
+#     built from a git clone with cmake against system CUDA. See scripts/quantize.sh.
+#  2. llama-cpp-python (venv bindings) — forced to compile from source against the
+#     system nvcc so the CUDA backend is built (a plain wheel is CPU-only). Install
+#     manually, NOT through this file:
+#       CUDACXX=/usr/local/cuda/bin/nvcc CMAKE_ARGS="-DGGML_CUDA=on" \
+#         pip install --no-binary llama-cpp-python llama-cpp-python
+# System-level (not pip): CUDA Toolkit 13.2, cmake, a C/C++ compiler.
 
 # processing
 pandas>=2.2.2
@@ -39,8 +44,8 @@ unsloth @ git+https://github.com/unslothai/unsloth.git
 # rag
 fastapi
 uvicorn
-litellm
-qdrant-client
-sentence-transformers
+httpx
+qdrant-client>=1.10
+fastembed
 flashrank
 diskcache
