@@ -26,7 +26,7 @@ def main(pdf_filename, output_csv_name):
     print(f"Generated {len(chunks)} text chunks.")
 
     # generation
-    generator = LLMGenerator()
+    generator = Generator()
     data_rows = []
 
     print("Generating Q&A pairs...")
