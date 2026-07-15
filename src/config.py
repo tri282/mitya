@@ -9,7 +9,9 @@ load_dotenv()
 class Config:
     GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
     TESSERACT_PATH = os.getenv("TESSERACT_PATH", "/usr/bin/tesseract")
-    MODEL_NAME = os.getenv("MODEL_NAME", "gemini-1.5-flash")
+    # gemini-1.5-flash (the previous default) no longer exists in the API listing.
+    # Only used by src/generation.py; the RAG side has its own TEACHER_MODEL.
+    MODEL_NAME = os.getenv("MODEL_NAME", "models/gemini-3.1-flash-lite")
     LLM_BACKEND = os.getenv("LLM_BACKEND", "gemini") # 'gemini' or 'ollama'
 
     # paths
@@ -26,7 +28,8 @@ class Config:
     RAG_DIR = os.path.join(DATA_DIR, "rag")
     VECTOR_DB_DIR = os.path.join(DATA_DIR, "vector_db")
     STRUCTURE_PATH = os.path.join(RAG_DIR, "structure.json")
-    ENTITIES_PATH  = os.path.join(RAG_DIR, "entities.json")
+    ENTITIES_PATH  = os.path.join(RAG_DIR, "entities.json")      # post-human-review (design II.4)
+    ENTITIES_RAW_PATH = os.path.join(RAG_DIR, "entities.raw.json")  # machine output, safe to regenerate
     SUMMARIES_PATH = os.path.join(RAG_DIR, "summaries.json")
 
     # --- RAG: retrieval ---
@@ -39,6 +42,21 @@ class Config:
     RERANK_ENABLED = os.getenv("RERANK_ENABLED", "true").lower() == "true"
     CHUNK_TOKENS   = int(os.getenv("CHUNK_TOKENS", "500"))
     CHUNK_OVERLAP  = int(os.getenv("CHUNK_OVERLAP", "100"))
+
+    # --- RAG: teacher LLM (offline artifact builds, phase 3) ---
+    # Free-tier quotas differ wildly per model and the AI Studio dashboard lists
+    # models that 404 on an actual call (2.5 Flash: "no longer available to new
+    # users"). gemini-3.1-flash-lite was verified live and is the only free-tier
+    # model with a daily quota large enough for a full corpus pass -- see
+    # test/bakeoff/RESULTS.md. Limits below mirror its dashboard row; override in
+    # .env if you switch models, they are not derivable from the model id.
+    TEACHER_MODEL = os.getenv("TEACHER_MODEL", "models/gemini-3.1-flash-lite")
+    TEACHER_RPM = int(os.getenv("TEACHER_RPM", "15"))
+    TEACHER_TPM = int(os.getenv("TEACHER_TPM", "250000"))
+    TEACHER_RPD = int(os.getenv("TEACHER_RPD", "500"))
+    TEACHER_MAX_RETRIES = int(os.getenv("TEACHER_MAX_RETRIES", "3"))
+    TEACHER_TIMEOUT_MS = int(os.getenv("TEACHER_TIMEOUT_MS", "120000"))
+    TEACHER_MAX_OUTPUT_TOKENS = int(os.getenv("TEACHER_MAX_OUTPUT_TOKENS", "2048"))
 
     # --- RAG: serving ---
     LLAMA_SERVER_URL = os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080")

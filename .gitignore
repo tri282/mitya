@@ -1,6 +1,9 @@
 # git
 .git
 
+# secrets
+.env
+
 # python cache
 __pycache__/
 *.py[cod]
@@ -13,6 +16,9 @@ commits/*
 
 # data
 data/*
+
+# local test
+test/
 
 # trained models
 models/*
