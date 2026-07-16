@@ -25,6 +25,8 @@ import json
 import logging
 import os
 import sys
+from collections.abc import Iterator
+from typing import Any
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -95,12 +97,35 @@ def valid_entry(name: str, body) -> bool:
     )
 
 
-def merge_entities(dest: dict, new: dict, book: str, source_key: str) -> int:
+def iter_entries(result) -> Iterator[tuple[str, Any]]:
+    """Yield (name, body) pairs from either shape the teacher returns.
+
+    The prompt asks for one object keyed by person: {"Raskolnikov": {...}}.
+    About a third of the corpus instead comes back as a list of those same
+    objects, one person each: [{"Raskolnikov": {...}}, {"Lizaveta": {...}}].
+    The choice is deterministic per chapter at temperature 0, which is why the
+    same 80 chapters failed every run until this flattened them. Nothing is
+    lost in the list form -- the person key is intact inside each element.
+
+    Pairs rather than a merged dict so a name repeated across elements reaches
+    merge_entities and gets unioned, instead of one entry silently winning.
+    """
+    if isinstance(result, dict):
+        yield from result.items()
+    elif isinstance(result, list):
+        for element in result:
+            if isinstance(element, dict):
+                yield from element.items()
+            else:
+                logger.warning("  dropping non-object list element %r", element)
+
+
+def merge_entities(dest: dict, new, book: str, source_key: str) -> int:
     """Merge one chapter's extraction into the per-book accumulator.
     Same person seen in two chapters -> union the aliases, keep the longest
     canonical (usually the most complete form)."""
     added = 0
-    for name, body in new.items():
+    for name, body in iter_entries(new):
         if not valid_entry(name, body):
             logger.warning("  %s: dropping malformed entry %r", source_key, name)
             continue
