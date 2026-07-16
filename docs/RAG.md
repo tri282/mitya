@@ -122,19 +122,39 @@ python scripts/ingest_corpus.py
 
 ### 4. Entity map (`entities.json`)
 
-Teacher-LLM extracts `PERSON` mentions + aliases per chunk, merged per book; one human review pass fixes it.
+Teacher-LLM extracts `PERSON` mentions + aliases per chapter, merged per `(name, book)`; one human review pass fixes it.
+
+A reference name maps to a **list** of the people who go by it — one entry per book:
 
 ```json
 {
-  "Raskolnikov": {
-    "canonical": "Rodion Romanovich Raskolnikov",
-    "aliases": ["Rodya", "Rodka", "Rodion"],
-    "book": "Crime and Punishment"
-  }
+  "Raskolnikov": [
+    {
+      "canonical": "Rodion Romanovich Raskolnikov",
+      "aliases": ["Rodya", "Rodka", "Rodion"],
+      "book": "Crime and Punishment"
+    }
+  ],
+  "Katerina Ivanovna": [
+    {
+      "canonical": "Katerina Ivanovna Marmeladova",
+      "aliases": ["Katerina"],
+      "book": "Crime and Punishment"
+    },
+    {
+      "canonical": "Katerina Ivanovna Verkhovtseva",
+      "aliases": ["Katya", "Katerina"],
+      "book": "The Brothers Karamazov"
+    }
+  ]
 }
 ```
 
-**Runtime use — query expansion, not payload boosting.** Resolved entities have their canonical name + aliases appended to the query text before embedding; the BM25 leg then naturally ranks entity-bearing chunks higher and the dense leg gets a richer query. If the entity's `book` conflicts with an active hard filter, expansion is skipped.
+**Why a list and not `{name: {...}}`** (the shape this section originally specified): reference names are not unique across the corpus, so a bare name cannot identify a person. Katerina Ivanovna is Marmeladov's wife in C&P *and* Verhovtsev's daughter in BK; Nikolay is a painter in C&P and Stavrogin in The Possessed; Dmitri, Marya and Lizaveta collide the same way. The flat shape had no way to hold both, so the builder merged whichever came second into the first — unioning two people's aliases, taking the longer canonical, and keeping the first book's label. That produced entries like `Nikolay` labeled `Crime and Punishment` carrying the canonical `Nikolay Vsyevolodovitch Stavrogin`, who appears 287 times in The Possessed and never in C&P. The list models the ambiguity that is actually in the data instead of silently resolving it wrong.
+
+**Resolution is book-scoped.** A bare name query is genuinely ambiguous and the resolver must see that, rather than be handed one arbitrary winner. With a hard book filter active, take the candidate whose `book` matches. With no filter and more than one candidate, the name does not identify a person: skip expansion rather than guess (expanding with the wrong novel's aliases is worse than not expanding).
+
+**Runtime use — query expansion, not payload boosting.** Resolved entities have their canonical name + aliases appended to the query text before embedding; the BM25 leg then naturally ranks entity-bearing chunks higher and the dense leg gets a richer query. Candidates are filtered to the active hard filter's book first; if none survive, or if none is uniquely identified, expansion is skipped.
 
 **Why** expansion over the originally drafted Qdrant `should`-boost: Qdrant filters are binary — a `should` clause adds no score, and a should-only filter *excludes* non-matching points, which would have silently gutted recall. Expansion achieves the boost through a mechanism that exists, at zero extra queries; the reranker dominates final ordering anyway. `canonical_entities` stays in the payload for eval and future client-side boosting.
 
