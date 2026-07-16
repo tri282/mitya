@@ -38,6 +38,12 @@ WINDOW_SECONDS = 60.0
 # request, 403 bad key) is fatal: retrying it just burns quota to fail again.
 RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
 
+# Candidate finish reasons that arrive as HTTP 200 with no text and will never
+# succeed on retry -- the model refused the content itself. PROHIBITED_CONTENT
+# is Gemini's non-configurable filter: it sits above the four HARM_CATEGORY_*
+# settings below, reports no safety_ratings, and BLOCK_NONE cannot reach it.
+FATAL_FINISH_REASONS = frozenset({"PROHIBITED_CONTENT", "BLOCKLIST", "SPII"})
+
 # Dostoevsky is violent (axe murder, parricide, suicide). Default filters block
 # these chapters, and a blocked response has no .text -- it raises, after the
 # request has already been charged. Mirrors src/generation.py.
@@ -60,6 +66,15 @@ class TeacherError(RuntimeError):
     def __init__(self, message: str, status: int | None = None):
         super().__init__(message)
         self.status = status
+
+
+class ContentBlocked(TeacherError):
+    """The model refused this prompt's content (HTTP 200, empty candidate).
+
+    Not retryable and not maskable: the filter that produces it is outside
+    safety_settings. The fix is a different prompt shape or a hand-written
+    artifact, not another attempt.
+    """
 
 
 class QuotaExhausted(TeacherError):
@@ -197,29 +212,54 @@ class TeacherClient:
             self.model, self.limiter.rpm, self.limiter.tpm, self.limiter.rpd,
         )
 
+    @staticmethod
+    def _finish_reason(resp: types.GenerateContentResponse) -> str | None:
+        try:
+            reason = resp.candidates[0].finish_reason
+        except Exception:
+            return None
+        return getattr(reason, "name", None) or str(reason)
+
+    @staticmethod
+    def _prompt_feedback(resp: types.GenerateContentResponse) -> str | None:
+        try:
+            return str(resp.prompt_feedback)
+        except Exception:
+            return None
+
     def _extract_text(self, resp: types.GenerateContentResponse) -> str:
+        # Read the finish reason before touching .text: a refused response is a
+        # 200 whose .text is simply empty, so without this the diagnosis is lost
+        # and the caller retries a call that can only fail the same way.
+        finish = self._finish_reason(resp)
+        if finish in FATAL_FINISH_REASONS:
+            raise ContentBlocked(
+                f"model returned no content: finish_reason={finish}; "
+                f"safety_settings cannot override this filter"
+            )
+
         try:
             text = resp.text
         except Exception as e:
-            finish = feedback = None
-            try:
-                finish = str(resp.candidates[0].finish_reason)
-            except Exception:
-                pass
-            try:
-                feedback = str(resp.prompt_feedback)
-            except Exception:
-                pass
             raise TeacherError(
                 f"no text in response ({type(e).__name__}: {e}); "
-                f"finish_reason={finish} prompt_feedback={feedback}"
+                f"finish_reason={finish} prompt_feedback={self._prompt_feedback(resp)}"
             ) from e
         if not text:
-            raise TeacherError("empty response text")
+            raise TeacherError(
+                f"empty response text (finish_reason={finish} "
+                f"prompt_feedback={self._prompt_feedback(resp)})"
+            )
         return text
 
-    def generate_json(self, prompt: str) -> dict[str, Any]:
+    def generate_json(self, prompt: str) -> Any:
         """One logical call: pace, send, parse. Retries only what is retryable.
+
+        Returns whatever JSON the model produced -- object or array. It does not
+        reliably honour the shape the prompt asks for: at temperature 0 it picks
+        one deterministically per chapter, and for ~1/3 of the corpus it wraps
+        each requested object in a single-element array. Callers own the shape
+        check, since only they know what they asked for.
 
         Raises TeacherError on fatal failure, QuotaExhausted when the day is spent.
         """
@@ -255,6 +295,10 @@ class TeacherClient:
 
             try:
                 text = self._extract_text(resp)
+            except ContentBlocked:
+                # Refusal is deterministic for a given prompt; the other two
+                # attempts would buy three billed failures instead of one.
+                raise
             except TeacherError as e:
                 last_err = str(e)
                 if attempt == self.max_retries:
@@ -271,8 +315,8 @@ class TeacherClient:
                 logger.warning("attempt %d/%d: %s; retrying", attempt, self.max_retries, last_err)
                 continue
 
-            if not isinstance(parsed, dict):
-                raise TeacherError(f"expected a JSON object, got {type(parsed).__name__}")
+            if not isinstance(parsed, (dict, list)):
+                raise TeacherError(f"expected a JSON object or array, got {type(parsed).__name__}")
             return parsed
 
         raise TeacherError(
