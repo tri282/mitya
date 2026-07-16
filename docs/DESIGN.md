@@ -72,6 +72,8 @@ The 6GB GPU runs **only** the quantized LLM (`q4_k_m`, ≈5.2–5.5GB total with
 * `docs/DESIGN.md` — this file: high-level architecture map for both subsystems.
 * `docs/FINE_TUNE.md` — full Style pipeline (data generation, QLoRA, quantization).
 * `docs/RAG.md` — full Substance design (ingestion, retrieval, generation, ops, eval).
+* `docs/RUNBOOK.md` — operating the offline artifact builds by hand (entities, summaries).
+* `docs/CHARACTERS.md` — principal characters per novel; ground truth for the entity review gate and eval.
 * `docs/superpowers/specs/2026-07-13-rag-decisions.md` — RAG decision/ruling audit trail.
 * `docs/TODO.md` — current status and next steps.
 * `src/ingestion.py`, `src/training.py`, `src/generation.py` — fine-tune pipeline (Style).

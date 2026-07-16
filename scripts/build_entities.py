@@ -13,11 +13,15 @@ this script NEVER writes there, so re-running cannot clobber hand corrections.
 Resumable: already-processed (book, part, chapter) keys are skipped, so a run
 killed by quota exhaustion or Ctrl-C resumes where it stopped.
 
+Every response is also appended verbatim to entities.responses.jsonl, so a merge
+bug costs a code fix and --remerge rather than another 231 billed calls.
+
 Usage:
     python scripts/build_entities.py --dry-run       # print the plan, 0 API calls
     python scripts/build_entities.py --limit 3       # first 3 chapters only
     python scripts/build_entities.py                 # full run (~231 calls, ~20 min)
     python scripts/build_entities.py --force         # ignore checkpoint, redo all
+    python scripts/build_entities.py --remerge       # rebuild from the log, 0 API calls
 """
 
 import argparse
@@ -26,6 +30,7 @@ import logging
 import os
 import sys
 from collections.abc import Iterator
+from datetime import datetime, timezone
 from typing import Any
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -37,6 +42,15 @@ from src.rag.teacher import QuotaExhausted, TeacherClient, TeacherError, estimat
 logger = logging.getLogger(__name__)
 
 CHECKPOINT_PATH = os.path.join(Config.RAG_DIR, "entities.progress.json")
+
+# Every teacher response, exactly as parsed, one JSON object per line.
+#
+# entities.raw.json is a merge, and a merge is lossy: it cannot be un-done or
+# re-done differently. When the (name, book) keying bug was found, the only
+# copies of 231 chapters' extractions were already fused inside the merged file,
+# so fixing the merge meant paying for all 231 calls again. This log makes the
+# next merge fix free -- see --remerge.
+RESPONSES_PATH = os.path.join(Config.RAG_DIR, "entities.responses.jsonl")
 
 # Consecutive 429s that mean "daily quota gone", not "slow down".
 MAX_CONSECUTIVE_429 = 3
@@ -88,6 +102,55 @@ def save_json(path: str, obj) -> None:
     os.replace(tmp, path)
 
 
+def append_response(key: str, book: str, result) -> None:
+    """Append one chapter's parsed response. Line-buffered append, so an
+    interrupt costs at most the line being written, never the log."""
+    os.makedirs(os.path.dirname(RESPONSES_PATH), exist_ok=True)
+    record = {
+        "key": key,
+        "book": book,
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "response": result,
+    }
+    with open(RESPONSES_PATH, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def remerge() -> None:
+    """Rebuild entities.raw.json from the response log. Zero API calls.
+
+    The point of RESPONSES_PATH: a merge bug becomes a code fix plus this, not
+    another 231 billed calls.
+    """
+    if not os.path.exists(RESPONSES_PATH):
+        logger.error("no response log at %s; nothing to re-merge (it only exists "
+                     "for chapters built after the log was added)", RESPONSES_PATH)
+        return
+
+    entities: dict = {}
+    done: set[str] = set()
+    lines = 0
+    with open(RESPONSES_PATH, encoding="utf-8") as f:
+        for lineno, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as e:
+                logger.warning("skipping malformed line %d: %s", lineno, e)
+                continue
+            merge_entities(entities, record["response"], record["book"], record["key"])
+            done.add(record["key"])
+            lines += 1
+
+    save_json(Config.ENTITIES_RAW_PATH, entities)
+    save_json(CHECKPOINT_PATH, sorted(done))
+    logger.info("re-merged %d responses covering %d chapters", lines, len(done))
+    logger.info("names=%d people=%d", len(entities), total_people(entities))
+    logger.info("wrote %s and %s", Config.ENTITIES_RAW_PATH, CHECKPOINT_PATH)
+
+
 def valid_entry(name: str, body) -> bool:
     return (
         isinstance(body, dict)
@@ -120,27 +183,42 @@ def iter_entries(result) -> Iterator[tuple[str, Any]]:
                 logger.warning("  dropping non-object list element %r", element)
 
 
+def total_people(entities: dict) -> int:
+    """Distinct people, not distinct names -- one name can cover several."""
+    return sum(len(candidates) for candidates in entities.values())
+
+
 def merge_entities(dest: dict, new, book: str, source_key: str) -> int:
-    """Merge one chapter's extraction into the per-book accumulator.
-    Same person seen in two chapters -> union the aliases, keep the longest
-    canonical (usually the most complete form)."""
+    """Merge one chapter's extraction into the accumulator, keyed (name, book).
+
+    dest maps a reference name to a LIST of the people who go by it, one entry
+    per book (RAG.md section 4). Names are not unique across the corpus:
+    Katerina Ivanovna is Marmeladov's wife in C&P and Verhovtsev's daughter in
+    BK; Nikolay is a painter in C&P and Stavrogin in The Possessed. Keying by
+    name alone fused each such pair into one entry carrying the first book's
+    label -- a chimera that P4 would then filter on the wrong book.
+
+    Same person seen in two chapters of the same book -> union the aliases, keep
+    the longest canonical (usually the most complete form).
+    """
     added = 0
     for name, body in iter_entries(new):
         if not valid_entry(name, body):
             logger.warning("  %s: dropping malformed entry %r", source_key, name)
             continue
-        body["book"] = book  # never trust the model to echo this correctly
-        if name not in dest:
-            dest[name] = {"canonical": body["canonical"],
-                          "aliases": sorted({a for a in body["aliases"] if isinstance(a, str)}),
-                          "book": book}
+        aliases = {a for a in body["aliases"] if isinstance(a, str)}
+        # Match on book, never on the model's echo of it -- we know the book we
+        # sent, so it is authoritative.
+        existing = next((c for c in dest.get(name, []) if c["book"] == book), None)
+        if existing is None:
+            dest.setdefault(name, []).append(
+                {"canonical": body["canonical"], "aliases": sorted(aliases), "book": book}
+            )
             added += 1
             continue
-        existing = dest[name]
         if len(body["canonical"]) > len(existing["canonical"]):
             existing["canonical"] = body["canonical"]
-        merged = set(existing["aliases"]) | {a for a in body["aliases"] if isinstance(a, str)}
-        existing["aliases"] = sorted(merged)
+        existing["aliases"] = sorted(set(existing["aliases"]) | aliases)
     return added
 
 
@@ -154,6 +232,13 @@ def main(dry_run: bool, limit: int | None, force: bool) -> None:
     todo = [u for u in units if unit_key(u) not in done]
     if limit is not None:
         todo = todo[:limit]
+
+    # --force regenerates every chapter, so the old responses describe a build
+    # that no longer exists. Keep the log matched to the artifact beside it.
+    if force and not dry_run and os.path.exists(RESPONSES_PATH):
+        backup = f"{RESPONSES_PATH}.bak"
+        os.replace(RESPONSES_PATH, backup)
+        logger.info("--force: moved the previous response log to %s", backup)
 
     est_tokens = sum(estimate_tokens(PROMPT_TMPL.format(book=u.book, text=u.text)) for u in todo)
     logger.info("chapters total=%d done=%d todo=%d", len(units), len(done), len(todo))
@@ -206,10 +291,14 @@ def main(dry_run: bool, limit: int | None, force: bool) -> None:
             continue
         consecutive_429 = 0
 
+        # Log the response before merging it: the merge is lossy, this is not.
+        append_response(key, u.book, result)
+
         added = merge_entities(entities, result, u.book, key)
         done.add(key)
         processed += 1
-        logger.info("  %d people (%d new); %d unique so far", len(result), added, len(entities))
+        logger.info("  %d extracted (%d new); %d people / %d names so far",
+                    len(result), added, total_people(entities), len(entities))
 
         # Checkpoint every chapter: teacher calls are the expensive thing, never
         # pay for the same one twice.
@@ -217,8 +306,13 @@ def main(dry_run: bool, limit: int | None, force: bool) -> None:
         save_json(CHECKPOINT_PATH, sorted(done))
 
     logger.info("done: processed=%d failed=%d skipped=%d", processed, failed, len(done) - processed)
-    logger.info("unique people: %d", len(entities))
-    logger.info("wrote %s", Config.ENTITIES_RAW_PATH)
+    logger.info("people: %d across %d reference names", total_people(entities), len(entities))
+    shared = {n: [c["book"] for c in cs] for n, cs in entities.items() if len(cs) > 1}
+    if shared:
+        # Precisely the case the old flat schema could not express.
+        logger.info("%d names shared across books (e.g. %s)", len(shared),
+                    "; ".join(f"{n}: {', '.join(bs)}" for n, bs in list(shared.items())[:3]))
+    logger.info("wrote %s (responses logged to %s)", Config.ENTITIES_RAW_PATH, RESPONSES_PATH)
     if failed:
         logger.warning("%d chapters failed; re-run to retry just those", failed)
     logger.info(
@@ -233,7 +327,12 @@ if __name__ == "__main__":
     ap.add_argument("--dry-run", action="store_true", help="Print the plan and exit; makes no API calls.")
     ap.add_argument("--limit", type=int, default=None, help="Process at most N chapters (for a cheap trial).")
     ap.add_argument("--force", action="store_true", help="Ignore the checkpoint and regenerate everything.")
+    ap.add_argument("--remerge", action="store_true",
+                    help="Rebuild entities.raw.json from the logged responses. Makes no API calls.")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
-    main(args.dry_run, args.limit, args.force)
+    if args.remerge:
+        remerge()
+    else:
+        main(args.dry_run, args.limit, args.force)
