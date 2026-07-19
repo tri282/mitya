@@ -59,7 +59,7 @@ servant. Aliases listed are the ones the text actually uses.
 | Parfyon Semyonovitch Rogojin | — | Merchant's son; obsessed with her |
 | Aglaya Ivanovna Epanchina | — | Youngest Epanchin daughter |
 | Ivan Fyodorovitch Epanchin | the General | Her father |
-| Elizabetha Prokofievna Epanchina | Lizabetha Prokofievna | Her mother; Myshkin's distant relation |
+| Lizabetha Prokofievna Epanchina | Lizabetha Prokofievna, Elizabetha | Her mother; Myshkin's distant relation |
 | Gavrila Ardalionovitch Ivolgin | Gania | Seeks Nastasia's hand for money |
 | Ardalion Alexandrovitch Ivolgin | the General | Gania's father; fabulist |
 | Lukian Timofeyovitch Lebedeff | — | Clerk, schemer |
