@@ -158,6 +158,24 @@ A reference name maps to a **list** of the people who go by it — one entry per
 
 **Why** expansion over the originally drafted Qdrant `should`-boost: Qdrant filters are binary — a `should` clause adds no score, and a should-only filter *excludes* non-matching points, which would have silently gutted recall. Expansion achieves the boost through a mechanism that exists, at zero extra queries; the reranker dominates final ordering anyway. `canonical_entities` stays in the payload for eval and future client-side boosting.
 
+**Name normalization is code, not data.** Two folds live in `src/rag/names.py`, applied **symmetrically** to the alias/canonical match index and to the incoming query. Both are **derived match keys only**: the `canonical` field keeps its true spelling (shown in Sources, fed to the LLM) and is never overwritten.
+
+1. `normalize()` — casefold, NFKD diacritic strip, ligature expansion (`Æ`→`Ae`), whitespace/hyphen/apostrophe collapse. Handles mechanical variance (`Svidrigaïlov`/`Svidrigailov`, case, spacing).
+2. `fold()` — `normalize()` plus an ordered **transliteration** ruleset, because the corpus is Constance Garnett only while readers know these novels through other translators. A P&V reader types `Dunya`, `Razumikhin`, `Sonya` where Garnett wrote `Dounia`, `Razumihin`, `Sonia`; without the fold the entity never resolves, no expansion happens, and the BM25 leg searches tokens that occur nowhere in the corpus. Rules cover the regular correspondences: щ (`tch`/`stch`/`shch`/`tsch`), `kh`↔`h`, `ph`↔`f`, `zh`↔`j`, `ff$`↔`v`, `ou`↔`u`, ё (`yo`↔`e`), `ya`/`yu`↔`ia`/`iu`, `y`↔`i`, Garnett's French `c` (`Colia`↔`Kolya`), German-tradition `ja`/`ju`/`w`, `x`↔`ks`, and doubled-consonant collapse. Order is load-bearing — several rules manufacture input for later ones.
+
+Consequences:
+
+* `entities.json` stores only **irregular** variants — genuine alternate names, nicknames, and transliterations no rule can derive (`Muishkin`↔`Myshkin`, `Shigalov`↔`Shigalyov`, `Ferdishenko`↔`Ferdyshchenko`). Anything a rule reaches — including `Rogojin`↔`Rogozhin` (`zh`) and `Dmitri`↔`Dmitry` (`y`) — does **not** belong in the file.
+* The dense leg embeds **raw** query text (embeddings absorb spelling fuzz on their own); the folds apply to the BM25 / entity-match leg where exact tokens matter.
+* Qdrant payload carries a derived normalized field for filter/exact match; the display `canonical` stays verbatim.
+* Fold output is not human-readable (`fold("Count") == "kunt"`) — harmless precisely because it is applied to both sides and never surfaces. Expansion appends the verbatim `canonical`, never a fold key.
+* Matching runs on **token boundaries**, not substrings: `liza ⊂ lizaveta` otherwise resolves "Lizaveta Prokofyevna" to "Liza".
+* The fold merges some genuinely distinct cross-book identities (diminutives like `Katia`/`Kostia`/`Nastia`, `-off`/`-ov` surname pairs). Book-scoped resolution above absorbs these when a filter is active; unfiltered they degrade to extra appended canonicals, which is soft noise. **Same-book** collisions are not absorbed and are a build-time gate failure.
+
+*Interim state:* `entities.json` currently also carries hand-added ASCII folds (e.g. `Svidrigailov` alongside `Svidrigaïlov`) as a pre-P4 stopgap. Once `names.py` lands these are redundant and can be stripped — keep the irregular aliases, drop the mechanical folds. Curation history in `RUNBOOK.md` (2026-07-17 pass).
+
+*Out of scope for `entities.json`:* **book titles** need their own alias map (`Demons`/`The Devils` → `The Possessed`). A wrong title becomes a hard filter matching zero points — a silent empty result, worse than a miss.
+
 ### 5. Chapter summaries (`summaries.json`)
 
 One teacher-LLM pass per chapter (keys drawn from `structure.json`), pre-generated up front.

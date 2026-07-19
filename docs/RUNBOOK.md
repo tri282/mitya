@@ -160,6 +160,24 @@ cp data/rag/entities.raw.json data/rag/entities.json
   "Ilyusha Snegiryov" and "Elizabetha Prokofievna" where these translations write
   *Ilusha* and *Lizabetha*. Aliases are what P4 matches on, so the text's own
   spelling must survive in `aliases` even when the canonical is normalised.
+- **Derivable variance is code's job, irregular variance is the file's.** Do not
+  hand-add case/diacritic/spacing variants, nor any spelling a transliteration
+  rule reaches. `src/rag/names.py` supplies `normalize()` (casefold + NFKD strip
+  + ligature expand) and `fold()` (adds the ordered transliteration ruleset),
+  both applied symmetrically to query and index. `fold()` already derives
+  `Rogojin`↔`Rogozhin` (`zh`) and `Dmitri`↔`Dmitry` (`y`) — those do **not**
+  belong in the file. Only store what no rule can reach: `Muishkin`↔`Myshkin`,
+  `Shigalov`↔`Shigalyov`, `Ferdishenko`↔`Ferdyshchenko`. See `RAG.md` section 4.
+
+**2026-07-17 curation pass.** After the manual gate, `entities.json` was cut
+~625→255 keys and cleaned in one scripted pass (`scratchpad/curate.py` +
+`fold.py`): duplicate keys merged (survivor = fuller/less-ambiguous name, aliases
+unioned, canonical forced — never trust length tiebreak); real-world references
+dropped (kept in-story characters + biblical figures only); unusable aliases
+purged (`He`/`Him`/`I`/`me`/`father`/`general`/`the old man`/`the master`/
+`mother`/`Father`); Ivolgin father/son de-conflated; modern-spelling aliases
+added for flagship names; ASCII folds added as the pre-`normalize()` stopgap.
+Backup at `data/rag/entities.json.bak`.
 
 P4 reads `entities.json`, the reviewed file. Not the raw one.
 
