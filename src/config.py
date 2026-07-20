@@ -4,6 +4,8 @@ import logging
 import os
 from dotenv import load_dotenv
 
+from src.rag.names import normalize as _normalize_title
+
 load_dotenv()
 
 class Config:
@@ -33,15 +35,48 @@ class Config:
     SUMMARIES_PATH = os.path.join(RAG_DIR, "summaries.json")
 
     # --- RAG: retrieval ---
+    # RERANK_MODEL verified at P4 impl against installed FlashRank 0.2.10
+    # (.venv/.../flashrank/Config.py model_file_map) -- the placeholder id was
+    # already correct, no change needed.
     EMBED_MODEL   = os.getenv("EMBED_MODEL", "nomic-ai/nomic-embed-text-v1.5")  # confirmed in fastembed 0.8.0 registry (P2)
-    RERANK_MODEL  = os.getenv("RERANK_MODEL", "ms-marco-MiniLM-L-12-v2")        # placeholder, verify in P4
+    RERANK_MODEL  = os.getenv("RERANK_MODEL", "ms-marco-MiniLM-L-12-v2")
     QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "dostoevsky")
     PREFETCH_LIMIT = int(os.getenv("PREFETCH_LIMIT", "50"))
     TOP_K_FUSED    = int(os.getenv("TOP_K_FUSED", "25"))
     TOP_K_RERANK   = int(os.getenv("TOP_K_RERANK", "3"))
+    # design III.3 STRUCTURAL path: chapter summary + top-2 dense excerpts.
+    # Added at P4 impl alongside retrieve.retrieve_structural_excerpts() so the
+    # "2" isn't a hardcoded magic number -- follows the existing TOP_K_* pattern.
+    TOP_K_STRUCTURAL_EXCERPTS = int(os.getenv("TOP_K_STRUCTURAL_EXCERPTS", "2"))
     RERANK_ENABLED = os.getenv("RERANK_ENABLED", "true").lower() == "true"
     CHUNK_TOKENS   = int(os.getenv("CHUNK_TOKENS", "500"))
     CHUNK_OVERLAP  = int(os.getenv("CHUNK_OVERLAP", "100"))
+
+    # --- RAG: book title aliases (P4, authored 2026-07-19 -- not a prior
+    # design decision, see plans/mitya-rag/05-impl/phase-4.md) ---
+    # Users say "Demons"/"The Devils"; entities.json, Qdrant payloads, and
+    # structure.json all carry the Garnett-edition title "The Possessed".
+    # A wrong title becomes a hard filter matching zero points -- a silent
+    # empty result, worse than a miss -- so unmapped titles must be rejected
+    # loudly (see resolve_book_title), never passed through. Flag for review:
+    # this list is not guaranteed exhaustive of every title readers might use.
+    BOOK_TITLE_ALIASES: dict[str, str] = {
+        "crime and punishment": "Crime and Punishment",
+        "the brothers karamazov": "The Brothers Karamazov",
+        "brothers karamazov": "The Brothers Karamazov",
+        "the karamazov brothers": "The Brothers Karamazov",
+        "the idiot": "The Idiot",
+        "idiot": "The Idiot",
+        "the possessed": "The Possessed",
+        "possessed": "The Possessed",
+        "demons": "The Possessed",
+        "the demons": "The Possessed",
+        "the devils": "The Possessed",
+        "devils": "The Possessed",
+        "notes from the underground": "Notes from the Underground",
+        "notes from underground": "Notes from the Underground",
+        "notes from the underground man": "Notes from the Underground",
+    }
 
     # --- RAG: teacher LLM (offline artifact builds, phase 3) ---
     # Free-tier quotas differ wildly per model and the AI Studio dashboard lists
@@ -64,6 +99,37 @@ class Config:
     MAX_TOKENS = int(os.getenv("MAX_TOKENS", "400"))
     CACHE_ENABLED = os.getenv("CACHE_ENABLED", "true").lower() == "true"
     CACHE_DIR = os.path.join(DATA_DIR, "cache")
+
+    _NORMALIZED_BOOK_ALIASES: dict[str, str] | None = None  # lazy-built cache, see resolve_book_title
+
+    @classmethod
+    def resolve_book_title(cls, title: str) -> str:
+        """Map a user-supplied book title to the canonical title used in
+        entities.json / Qdrant payloads / structure.json.
+
+        Unmapped titles are rejected loudly (raise ValueError) rather than
+        passed through -- an unmapped title silently becomes a Qdrant hard
+        filter matching zero points, which is worse than a miss.
+
+        Both sides of the lookup go through `names.normalize()` (D5 fix):
+        plain `.strip().lower()` rejects anything with a diacritic
+        ("Karamázov"), a curly apostrophe, or doubled internal whitespace as
+        a hard 400 for a cosmetically different title. `normalize()` already
+        does casefold + NFKD diacritic strip + separator collapse for
+        exactly this reason (see src/rag/names.py); reused here rather than
+        re-implemented. `src/rag/names.py` has no imports from this package,
+        so importing it here does not create an import cycle.
+        """
+        if cls._NORMALIZED_BOOK_ALIASES is None:
+            cls._NORMALIZED_BOOK_ALIASES = {
+                _normalize_title(alias): canonical
+                for alias, canonical in cls.BOOK_TITLE_ALIASES.items()
+            }
+        key = _normalize_title(title)
+        canonical = cls._NORMALIZED_BOOK_ALIASES.get(key)
+        if canonical is None:
+            raise ValueError(f"unrecognized book title: {title!r}")
+        return canonical
 
     @classmethod
     def validate_rag(cls):
