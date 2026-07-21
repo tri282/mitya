@@ -24,6 +24,7 @@ import argparse
 import json
 import logging
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 from src.config import Config
@@ -34,7 +35,10 @@ logger = logging.getLogger(__name__)
 
 # entities.json.bak is the PRE-CURATION state from 2026-07-17. Never overwrite
 # it -- it is the only copy of what the file looked like before the manual gate.
-BACKUP_SUFFIX = ".pre-names.bak"
+# entities.json.pre-names.bak is likewise a fixed, one-shot snapshot (the
+# pre-names.py-integration state) -- never overwrite it either. Every later
+# pass gets its own timestamped backup so no prior snapshot is ever clobbered.
+BACKUP_SUFFIX = f".{datetime.now():%Y%m%d-%H%M%S}.pre-datafix.bak"
 
 
 # --- Split a character out of another character's alias list ------------------
@@ -52,6 +56,28 @@ SPLITS = [
     },
 ]
 
+# --- A record filed under the wrong novel --------------------------------------
+# The "Jesus" key already carries a correctly-filed Brothers Karamazov record
+# (Good Shepherd, Our Lord Jesus Christ, ...). A second record under the same
+# key has book "Crime and Punishment" but its aliases (The Prisoner, Word) are
+# Grand Inquisitor language -- that chapter is BK, not C&P. Under a BK filter
+# it never resolves; under a C&P filter it resolves as the wrong novel.
+RELABEL_BOOK = [
+    {"key": "Jesus", "old_book": "Crime and Punishment", "new_book": "The Brothers Karamazov"},
+]
+
+# --- Two records that are the same person in the same book --------------------
+# apply_relabels can move a record under a book where the key already holds one:
+# the "Jesus" key had a Grand-Inquisitor record relabelled C&P -> BK, and a BK
+# record already existed. Two records under one (key, book) is a same-book
+# collision -- book-scoped resolution cannot choose between them, and
+# check_entity_folds.py fails on exactly this. They are the same entity, so
+# collapse into one, unioning aliases order-preserving. Runs after relabels so a
+# fresh restore+rerun reproduces the fix; a no-op when only one record matches.
+MERGE_RECORDS = [
+    {"key": "Jesus", "book": "The Brothers Karamazov"},
+]
+
 # --- Aliases that belong to a different person entirely -----------------------
 REMOVE_ALIASES = [
     # The holy fool of The Possessed is not the Turgenev caricature.
@@ -60,6 +86,25 @@ REMOVE_ALIASES = [
     # Sofya Ivanovna is a Brothers Karamazov name on a Crime and Punishment entity.
     {"key": "SofyaSemyonovna", "book": "Crime and Punishment", "alias": "Sofya Ivanovna",
      "why": "cross-book contamination; BK name on a C&P person"},
+    # 2026-07-21: a hand edit re-added generic/no-name aliases the 2026-07-17
+    # human gate had already purged (bare pronouns, bare role-titles). They add
+    # BM25 noise and can mis-resolve across characters who share a role.
+    {"key": "AlyonaIvanovna", "book": "Crime and Punishment", "alias": "old woman",
+     "why": "generic role-title, no proper name; re-added by hand edit, purged 2026-07-17"},
+    {"key": "IppolitKirillovitch", "book": "The Brothers Karamazov", "alias": "the prosecutor",
+     "why": "generic role-title, no proper name; re-added by hand edit, purged 2026-07-17"},
+    {"key": "Ivolgin", "book": "The Idiot", "alias": "General",
+     "why": "generic role-title, no proper name; re-added by hand edit, purged 2026-07-17"},
+    {"key": "Lebedeff", "book": "The Idiot", "alias": "the clerk",
+     "why": "generic role-title, no proper name; re-added by hand edit, purged 2026-07-17"},
+    {"key": "Lebyadkin", "book": "The Possessed", "alias": "the captain",
+     "why": "generic role-title, no proper name; re-added by hand edit, purged 2026-07-17"},
+    {"key": "Matryona", "book": "The Brothers Karamazov", "alias": "the cook",
+     "why": "generic role-title, no proper name; re-added by hand edit, purged 2026-07-17"},
+    {"key": "PrinceMuishkin", "book": "The Idiot", "alias": "Prince",
+     "why": "bare title, no proper name; re-added by hand edit, purged 2026-07-17"},
+    {"key": "PrinceMuishkin", "book": "The Idiot", "alias": "the prince",
+     "why": "generic role-title, no proper name; re-added by hand edit, purged 2026-07-17"},
 ]
 
 # --- Spellings other translators use, that no rule can derive -----------------
@@ -127,6 +172,48 @@ def apply_splits(data: dict) -> int:
                 "book": op["new_book"],
             })
         logger.info("SPLIT %s <- %s (off %s)", op["new_canonical"], sorted(moved), op["from_key"])
+        changed += 1
+    return changed
+
+
+def apply_relabels(data: dict) -> int:
+    changed = 0
+    for op in RELABEL_BOOK:
+        record = find_record(data, op["key"], op["old_book"])
+        if record is None:
+            logger.warning("RELABEL skipped: no %r in %r", op["key"], op["old_book"])
+            continue
+        if find_record(data, op["key"], op["new_book"]) is not None:
+            logger.warning(
+                "RELABEL %r: a record already exists under %r -- key will carry two "
+                "records for that book after relabel; merge by hand if that is wrong",
+                op["key"], op["new_book"],
+            )
+        record["book"] = op["new_book"]
+        logger.info("RELABEL %s: %s -> %s", record["canonical"], op["old_book"], op["new_book"])
+        changed += 1
+    return changed
+
+
+def apply_merges(data: dict) -> int:
+    changed = 0
+    for op in MERGE_RECORDS:
+        matches = [r for r in data.get(op["key"], []) if r.get("book") == op["book"]]
+        if len(matches) < 2:
+            continue
+        survivor = matches[0]
+        for extra in matches[1:]:
+            for alias in extra["aliases"]:
+                if alias not in survivor["aliases"]:
+                    survivor["aliases"].append(alias)
+        # Keep the survivor and every record under a different book; drop the
+        # other same-book duplicates.
+        data[op["key"]] = [
+            r for r in data[op["key"]] if r is survivor or r.get("book") != op["book"]
+        ]
+        logger.info(
+            "MERGE %s under %r: %d records -> 1", survivor["canonical"], op["book"], len(matches)
+        )
         changed += 1
     return changed
 
@@ -207,7 +294,13 @@ def main() -> None:
     before_keys = len(data)
     before_aliases = sum(len(r["aliases"]) for recs in data.values() for r in recs)
 
-    changed = apply_splits(data) + apply_removals(data) + apply_additions(data)
+    changed = (
+        apply_splits(data)
+        + apply_relabels(data)
+        + apply_merges(data)
+        + apply_removals(data)
+        + apply_additions(data)
+    )
     pruned = prune_derivable(data)
     report_ambiguous(data)
 
