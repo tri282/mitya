@@ -1,6 +1,16 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Launch llama-server (OpenAI-compatible HTTP API) for the RAG serving path.
+# llama-cli (previous version of this script) has no HTTP API -- see
+# docs/RAG.md V "Hardware Budget" / ruling R2.
+set -euo pipefail
 
-CLI_PATH="/home/tri282/projects/mitya/llama.cpp/build/bin/llama-cli"
-MODEL_PATH="/home/tri282/projects/mitya/models/quantizations/mitya-2.0_q4_k_m.gguf"
+BIN="/home/tri282/projects/mitya/llama.cpp/build/bin/llama-server"
+MODEL="/home/tri282/projects/mitya/models/quantizations/mitya-2.0_q4_k_m.gguf"
 
-$CLI_PATH -m $MODEL_PATH -c 4096 -ngl 80 -cnv --chat-template chatml --port 8080
+# -fa on is required for V-cache quantization (--cache-type-v) to take effect;
+# silently ignored otherwise. Budget: ~5.2-5.5GB VRAM at -c 4096 (docs/RAG.md V).
+# If a desktop compositor shares the card, drop -c to 3072.
+"$BIN" -m "$MODEL" \
+  -ngl 99 -c 4096 -fa on \
+  --cache-type-k q8_0 --cache-type-v q8_0 \
+  --parallel 1 --host 127.0.0.1 --port 8080
