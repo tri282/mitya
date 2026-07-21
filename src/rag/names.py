@@ -41,7 +41,11 @@ LIGATURES = {
     "ĳ": "ij",  # ij
 }
 
-_SEPARATORS = re.compile(r"[\s\-'’.,]+")
+# Word separators to collapse. Includes sentence and quote punctuation so a
+# name that ends a query ("What happens to Dunya?") folds to the same token as
+# the bare name -- without the '?', '?' etc. here the trailing mark stays glued
+# to the last token and the whole-token index lookup misses.
+_SEPARATORS = re.compile(r"[\s\-'’.,?!;:\"“”«»()\[\]…—–]+")
 
 # Ordered. Order is load-bearing in three ways, all of them load-bearing enough
 # to break matching if disturbed:
