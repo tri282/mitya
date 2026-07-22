@@ -2,7 +2,6 @@
 
 import logging
 
-import ollama
 from google import genai
 from google.genai import types
 
@@ -54,6 +53,10 @@ class Generator:
             return ""
 
     def _call_ollama(self, prompt: str) -> str:
+        # Lazy import: ollama is an optional finetuning-only backend, not installed
+        # by default. Importing at module scope would break the gemini path too.
+        import ollama
+
         try:
             response = ollama.chat(model = self.model_name, messages=[
                 {'role': 'user', 'content': prompt}

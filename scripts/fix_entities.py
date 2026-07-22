@@ -119,9 +119,6 @@ ADD_ALIASES = [
     # Identity certain, P&V spelling UNVERIFIED against a text -- see commit note.
     {"key": "Bachmatoff", "book": "The Idiot", "aliases": ["Bakhmutov"]},
     {"key": "Bielokonski", "book": "The Idiot", "aliases": ["Belokonskaya"]},
-    # Bare surname, unambiguous: one Syetotchkin in the corpus (Notes, 2x).
-    {"key": "AntonAntonitch", "book": "Notes from the Underground",
-     "aliases": ["Syetotchkin"]},
 ]
 
 # --- Reported, not applied ----------------------------------------------------
