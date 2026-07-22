@@ -42,11 +42,17 @@ the programmatic Sources content), never against inline citations in the
 answer -- the persona is instructed to never mention passages/sources at all
 (R19), so an inline-citation check would fail by design on every response.
 
+The transcript is flushed after every query, so an interrupted run keeps its
+completed rows. Combined with `--themes-only` + `--append`, a long run can be
+done in theme-sized chunks that survive a Ctrl-C and accumulate onto one
+transcript (re-running a cell overwrites in place, keyed by theme/query/mode).
+
 Usage:
     python scripts/eval_quality.py
     python scripts/eval_quality.py --modes A                       # composition A only
     python scripts/eval_quality.py --themes test/quality_eval.json --limit 3
     python scripts/eval_quality.py --skip-judge                    # generate transcripts, judge by hand later
+    python scripts/eval_quality.py --themes-only Ambiguity --append   # run one theme, merge onto existing transcript
 """
 
 import argparse
@@ -85,6 +91,21 @@ _BM25_MODEL = "Qdrant/bm25"  # matches src/api/app.py, scripts/eval_retrieval.py
 def _load_json(path: str) -> dict | list:
     with open(path, encoding="utf-8") as f:
         return json.load(f)
+
+
+def _row_key(row: dict) -> tuple[str, str, str]:
+    """Identity of a transcript cell -- one (theme, query, mode) triple. Used to
+    merge a resumed/appended run onto an existing transcript: a re-run of the
+    same cell overwrites, it does not duplicate."""
+    return (row["theme"], row["query"], row["mode"])
+
+
+def _write_transcript(merged: dict[tuple, dict], out_path: str) -> None:
+    """Flush the current transcript to disk. Called after every query (not only
+    at the end) so an interrupted run keeps the work already completed."""
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(list(merged.values()), f, indent=2, ensure_ascii=False)
 
 
 def _mean(xs: list[float]) -> float | None:
@@ -191,6 +212,8 @@ async def run(
     modes: list[str],
     limit: int | None,
     skip_judge: bool,
+    themes_only: list[str] | None,
+    append: bool,
 ) -> None:
     logger.info("loading dense embedder: %s", Config.EMBED_MODEL)
     embedder = TextEmbedding(model_name=Config.EMBED_MODEL)
@@ -209,11 +232,22 @@ async def run(
         judge_client = TeacherClient(model=Config.JUDGE_MODEL)
 
     queries: list[dict] = _load_json(themes_path)
+    if themes_only:
+        wanted = set(themes_only)
+        queries = [q for q in queries if q["theme"] in wanted]
     if limit is not None:
         queries = queries[:limit]
     logger.info("loaded %d themed queries from %s", len(queries), themes_path)
 
-    results: list[dict] = []
+    # Merge onto an existing transcript when --append: a re-run of a cell
+    # overwrites in place (keyed by theme/query/mode), so a chunked, resumed
+    # run accumulates instead of clobbering earlier themes.
+    merged: dict[tuple, dict] = {}
+    if append and os.path.exists(out_path):
+        for prior in _load_json(out_path):
+            merged[_row_key(prior)] = prior
+        logger.info("append: loaded %d existing rows from %s", len(merged), out_path)
+
     for row in queries:
         query = row["query"]
         theme = row["theme"]
@@ -248,7 +282,7 @@ async def run(
                     judge_error = str(exc)
                     logger.error("judge failed query=%r mode=%s: %s", query, mode, exc)
 
-            results.append({
+            merged[(theme, query, mode)] = {
                 "theme": theme,
                 "query": query,
                 "mode": mode,
@@ -259,22 +293,26 @@ async def run(
                 "generation_error": error,
                 "judge": judge_result,
                 "judge_error": judge_error,
-            })
+            }
 
-    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
+        # Flush after every query so an interrupt keeps completed work.
+        _write_transcript(merged, out_path)
+
+    results = list(merged.values())
     logger.info("wrote %d transcript rows to %s", len(results), out_path)
 
     # Compact, decision-ready summary alongside the full transcript -- this is
     # the artifact for review; the transcript is for drilling into answers.
-    summary = _summarize(results, modes)
+    # Summarize across every mode present in the merged transcript, not just the
+    # --modes of this chunk, so a resumed run still reports both A and B.
+    summary_modes = sorted({r["mode"] for r in results}) or modes
+    summary = _summarize(results, summary_modes)
     summary_path = out_path[:-len(".json")] + "_summary.json" if out_path.endswith(".json") else out_path + "_summary.json"
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
     logger.info("wrote A/B summary to %s", summary_path)
     if not skip_judge:
-        _print_summary(summary, modes)
+        _print_summary(summary, summary_modes)
     else:
         logger.info("--skip-judge: summary has error counts only (no judge scores)")
 
@@ -285,8 +323,12 @@ if __name__ == "__main__":
     ap.add_argument("--out", default=os.path.join("plans", "mitya-rag", "05-impl", "quality_ab_results.json"))
     ap.add_argument("--modes", nargs="+", default=["A", "B"], choices=["A", "B"])
     ap.add_argument("--limit", type=int, default=None, help="only run the first N themed queries (smoke test)")
+    ap.add_argument("--themes-only", nargs="+", default=None,
+                    help="only run queries whose theme is in this list (e.g. Ambiguity), for chunked/resumed runs")
+    ap.add_argument("--append", action="store_true",
+                    help="merge onto the existing --out transcript (keyed by theme/query/mode) instead of overwriting")
     ap.add_argument("--skip-judge", action="store_true", help="write transcripts without calling the judge API")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    asyncio.run(run(args.themes, args.out, args.modes, args.limit, args.skip_judge))
+    asyncio.run(run(args.themes, args.out, args.modes, args.limit, args.skip_judge, args.themes_only, args.append))
