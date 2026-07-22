@@ -3,9 +3,14 @@
 Prompt composition (design III.4, ruling R19): the fine-tune's training rows
 never contained context in the prompt and its system prompt forbids
 referencing external sources, so injected passages are out-of-distribution.
-System = the verbatim fine-tuned persona head (stay near the training
-distribution) + retrieved passages framed as the author's own recollections;
-the user turn carries the question only.
+Composition A (design default): system = the verbatim fine-tuned persona
+head (stay near the training distribution) + retrieved passages framed as
+the author's own recollections; the user turn carries the question only.
+Composition B (P7 A/B candidate, added alongside A -- neither deleted until
+a human judges the transcripts): system = persona head unmodified; passages
+move into the user turn instead. Both are implemented in build_messages()
+below, gated on Config.PROMPT_COMPOSITION / an explicit `mode=` argument; A
+is the default so no existing caller changes behavior.
 
 Generation streams OpenAI-compatible SSE deltas from llama-server's
 /v1/chat/completions (ruling R16 -- httpx, not LiteLLM: the whole need is a
@@ -47,14 +52,49 @@ class LlamaServerTimeout(Exception):
     """llama-server did not respond within budget -- P6 maps this to HTTP 504."""
 
 
-def build_messages(persona_head: str, passages_block: str, question: str) -> list[dict]:
+def build_messages(
+    persona_head: str,
+    passages_block: str,
+    question: str,
+    mode: str | None = None,
+) -> list[dict]:
     """Compose the chat messages sent to llama-server.
 
-    System = persona head + passages framed as the author's own recollections
-    (R19). User turn carries the question only -- context never enters the
-    user turn, which would push the prompt further out of the fine-tune's
-    training distribution than necessary.
+    `mode` selects the prompt-composition A/B (P7, ruling R19); defaults to
+    `Config.PROMPT_COMPOSITION` ("A") when not given explicitly, so every
+    existing caller (P6's `src/api/app.py`) keeps using composition A without
+    a code change.
+
+    * **A (design default):** system = persona head + passages framed as the
+      author's own recollections; user turn carries the question only.
+      Context never enters the user turn -- keeps the prompt closer to the
+      fine-tune's training distribution (which never saw context at all).
+    * **B (A/B candidate):** system = persona head, unmodified; passages are
+      appended to the user turn instead, ahead of the question. This is the
+      out-of-distribution seam RR ("persona may ignore or parrot injected
+      context") predicts could go either way -- P7's answer-quality eval
+      judges A vs B on persona retention + groundedness; the loser gets
+      deleted from this file once a human has read the transcripts (see
+      plans/mitya-rag/05-impl/phase-7.md), not decided here.
     """
+    mode = mode or Config.PROMPT_COMPOSITION
+    if mode == "B":
+        system = persona_head
+        user = (
+            "Here are some passages from your own novels; let their substance "
+            "inform your answer, but never mention passages, sources, or "
+            "quotations:\n\n"
+            + passages_block
+            + "\n\n"
+            + question
+        )
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+    if mode != "A":
+        raise ValueError(f"unknown prompt composition mode: {mode!r} (expected 'A' or 'B')")
+
     system = (
         persona_head
         + "\n\nRecall these passages from your own novels; let their substance "
