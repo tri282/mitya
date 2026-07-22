@@ -1,2 +1,1 @@
-"""FastAPI serving layer for Mitya RAG."""
-# TODO: phase 6
+"""FastAPI serving layer for Mitya RAG. See src.api.app for the ASGI app."""
