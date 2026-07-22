@@ -107,6 +107,29 @@ def build_messages(
     ]
 
 
+async def _stream_once(client: httpx.AsyncClient, url: str, payload: dict) -> AsyncIterator[str]:
+    """One llama-server streaming request; yields token text as it arrives.
+    Connection/timeout faults are translated to LlamaServerUnavailable/Timeout
+    by the caller."""
+    async with client.stream("POST", url, json=payload) as response:
+        response.raise_for_status()
+        async for line in response.aiter_lines():
+            if not line.startswith("data: "):
+                continue
+            data = line[len("data: "):].strip()
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+            except json.JSONDecodeError:
+                logger.warning("stream_answer: unparseable SSE chunk: %r", data)
+                continue
+            choices = chunk.get("choices") or [{}]
+            token = choices[0].get("delta", {}).get("content")
+            if token:
+                yield token
+
+
 async def stream_answer(messages: list[dict]) -> AsyncIterator[str]:
     """Stream answer token text from llama-server's OpenAI-compatible endpoint.
 
@@ -114,30 +137,40 @@ async def stream_answer(messages: list[dict]) -> AsyncIterator[str]:
     LlamaServerUnavailable on connection failure and LlamaServerTimeout on a
     stalled connect/read -- both raised before or during iteration so P6 can
     catch them and surface 503/504 instead of a hung stream.
+
+    Empty-completion guard: the weak q4 7B occasionally samples EOS as its
+    first token and returns zero tokens (see P7 answer-quality eval -- empty
+    answers were per-run, never per-query). When an attempt yields *nothing*,
+    re-draw (new random seed, since none is pinned) up to Config.EMPTY_RETRIES
+    times. The retry only fires before any token is emitted, so a normal
+    (non-empty) stream is unaffected -- tokens are yielded live, no buffering,
+    TTFT unchanged.
     """
-    payload = {"messages": messages, "max_tokens": Config.MAX_TOKENS, "stream": True}
+    payload = {
+        "messages": messages,
+        "max_tokens": Config.MAX_TOKENS,
+        "temperature": Config.GEN_TEMPERATURE,
+        "top_p": Config.GEN_TOP_P,
+        "stream": True,
+    }
     timeout = httpx.Timeout(connect=5.0, read=120.0, write=5.0, pool=5.0)
     url = f"{Config.LLAMA_SERVER_URL}/v1/chat/completions"
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            async with client.stream("POST", url, json=payload) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    data = line[len("data: "):].strip()
-                    if data == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data)
-                    except json.JSONDecodeError:
-                        logger.warning("stream_answer: unparseable SSE chunk: %r", data)
-                        continue
-                    choices = chunk.get("choices") or [{}]
-                    token = choices[0].get("delta", {}).get("content")
-                    if token:
-                        yield token
+            for attempt in range(Config.EMPTY_RETRIES + 1):
+                yielded = False
+                async for token in _stream_once(client, url, payload):
+                    yielded = True
+                    yield token
+                if yielded:
+                    return
+                if attempt < Config.EMPTY_RETRIES:
+                    logger.warning(
+                        "stream_answer: empty completion, retrying (attempt %d/%d)",
+                        attempt + 1, Config.EMPTY_RETRIES,
+                    )
+            logger.warning("stream_answer: still empty after %d retries", Config.EMPTY_RETRIES)
     except httpx.ConnectError as e:
         logger.error("stream_answer: llama-server unreachable at %s: %s", url, e)
         raise LlamaServerUnavailable(str(e)) from e
