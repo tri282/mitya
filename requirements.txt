@@ -18,13 +18,9 @@ pytesseract
 langchain
 
 # llm
-# google-generativeai is EOL ("all support has ended") and is kept only for
-# src/generation.py, which serves the finished fine-tune Q&A pipeline. New code
-# (src/rag/teacher.py) uses google-genai. Migrating generation.py is tracked
-# separately -- it is working code for a completed subsystem.
-google-generativeai
+# ollama is an optional finetuning-only backend; not installed. src/generation.py
+# imports it lazily so the default (gemini) path works without it.
 google-genai
-ollama
 python-dotenv
 
 # tuning
