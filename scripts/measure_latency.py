@@ -113,7 +113,7 @@ async def _time_chat(base_url: str, query: str, filters: dict | None) -> tuple[f
 
     t0 = time.monotonic()
     ttfb_s: float | None = None
-    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=5.0, read=120.0)) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=5.0, read=120.0)) as client:
         async with client.stream("POST", f"{base_url}/chat", json=payload) as resp:
             resp.raise_for_status()
             async for _ in resp.aiter_lines():
