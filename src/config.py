@@ -105,6 +105,14 @@ class Config:
     LLAMA_SERVER_URL = os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080")
     CTX_SIZE   = int(os.getenv("CTX_SIZE", "4096"))
     MAX_TOKENS = int(os.getenv("MAX_TOKENS", "400"))
+    # Sampling. A modest temperature (vs llama-server's ~0.8 default) cuts the
+    # rate at which the weak q4 7B samples EOS as its first token and returns
+    # an empty completion; the zero-token retry in generate.stream_answer is
+    # the belt to this suspenders. EMPTY_RETRIES re-draws (new random seed) up
+    # to N times when an attempt yields no tokens.
+    GEN_TEMPERATURE = float(os.getenv("GEN_TEMPERATURE", "0.6"))
+    GEN_TOP_P = float(os.getenv("GEN_TOP_P", "0.9"))
+    EMPTY_RETRIES = int(os.getenv("EMPTY_RETRIES", "1"))
     CACHE_ENABLED = os.getenv("CACHE_ENABLED", "true").lower() == "true"
     CACHE_DIR = os.path.join(DATA_DIR, "cache")
 
