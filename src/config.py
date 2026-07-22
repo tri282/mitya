@@ -93,12 +93,31 @@ class Config:
     TEACHER_TIMEOUT_MS = int(os.getenv("TEACHER_TIMEOUT_MS", "120000"))
     TEACHER_MAX_OUTPUT_TOKENS = int(os.getenv("TEACHER_MAX_OUTPUT_TOKENS", "2048"))
 
+    # --- RAG: LLM judge (P7 answer-quality eval, scripts/eval_quality.py) ---
+    # Reuses TeacherClient (src/rag/teacher.py) and its rate-limit fields
+    # above rather than a second RateLimiter -- defaults to the same
+    # already-verified free-tier model (test/bakeoff/RESULTS.md) since the
+    # judge is a small, occasional call volume, not a full-corpus batch;
+    # override via .env if a different model/quota is preferred for judging.
+    JUDGE_MODEL = os.getenv("JUDGE_MODEL", TEACHER_MODEL)
+
     # --- RAG: serving ---
     LLAMA_SERVER_URL = os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080")
     CTX_SIZE   = int(os.getenv("CTX_SIZE", "4096"))
     MAX_TOKENS = int(os.getenv("MAX_TOKENS", "400"))
     CACHE_ENABLED = os.getenv("CACHE_ENABLED", "true").lower() == "true"
     CACHE_DIR = os.path.join(DATA_DIR, "cache")
+
+    # --- RAG: prompt composition A/B (P7, ruling R19) ---
+    # A (design default): context in the system prompt, framed as the
+    # author's own recollections. B: context in the user turn instead. Both
+    # are implemented in src/rag/generate.py; this flag only selects which
+    # build_messages() branch P7's A/B runner (and, later, the API) uses.
+    # Not read by src/api/app.py yet -- P6 hardcodes composition A by calling
+    # generate.build_messages() with no mode argument (its default), see
+    # plans/mitya-rag/05-impl/phase-7.md for why that stays true until the
+    # A/B run picks a winner.
+    PROMPT_COMPOSITION = os.getenv("PROMPT_COMPOSITION", "A")
 
     _NORMALIZED_BOOK_ALIASES: dict[str, str] | None = None  # lazy-built cache, see resolve_book_title
 
