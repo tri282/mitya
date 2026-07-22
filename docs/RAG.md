@@ -321,14 +321,14 @@ System RAM: Python service ≈ 1.5GB resident (fastembed nomic ~0.5GB, FlashRank
 
 ## VI. Latency Budget
 
-Honest numbers for a 6GB consumer card (prefill ~500–1000 t/s, decode ~30 t/s), replacing the aspirational 1.5s/10s targets:
+Measured on the real card (GTX 1060 6GB), P7 `scripts/measure_latency.py` + the P6 server request log. These replace the pre-build estimates; the estimate is kept in parentheses where it was materially off.
 
-* Retrieval (embed ~50ms + Qdrant <50ms + rerank 25 ~0.3–0.5s) ≤ **0.6s**.
-* Prefill ~2k prompt tokens → **TTFT ≤ 3s**.
-* Decode ≤ 400 tokens → **total ≤ 20s** (typical ~15s).
-* Cache hit: < 50ms.
+* **Retrieval only: ~2.25s** (est. ≤0.6s). Rerank dominates — FlashRank `ms-marco-MiniLM-L-12-v2` on CPU, 25→3, is ~1.96s of it; embed + Qdrant fuse are ~0.3s. This is the honest floor; cutting it needs a smaller/GPU reranker or fewer candidates (out of scope, §VIII).
+* **TTFT: ~7.9s** (est. ≤3s). ~2k-token prompt prefill on the 6GB card is slower than estimated.
+* **Total: ~21.3s** for ≤400 decode tokens (est. ≤20s) at ~23.6 tok/s.
+* **Cache hit: ~0.008s** (est. <50ms) — well under budget.
 
-*Note: provisional until measured on the actual card; revise once, from data.*
+The retrieval and TTFT numbers exceed the pre-build estimates; they are accepted for a solo local deploy (hardware fit > latency). No cold cache-miss end-to-end is recorded here: the only clean generation numbers are P6's (above); `measure_latency.py`'s cache-miss line is unreliable when the query is already cached.
 
 ---
 
@@ -343,10 +343,11 @@ Honest numbers for a 6GB consumer card (prefill ~500–1000 t/s, decode ~30 t/s)
 * Three themed sets (Motivation / Philosophy / Ambiguity), 30–50 each.
 * Judge (manual or LLM-judge): stays in-persona, grounded in the retrieved chunks, no fabricated events. Grounding is checked against the programmatic Sources, not inline citations.
 * Includes the **prompt-composition A/B**: context-in-system ("recollections" framing) vs context-in-user-turn, judged on persona retention + groundedness.
+* **A/B outcome (P7, 36 queries × A/B, LLM-judge):** no winner — A and B are within noise (persona 3.11 vs 3.22, groundedness 2.44 vs 2.53 on 1–5; B fabricates slightly more, 0.50 vs 0.47). **Both compositions kept** in `src/rag/generate.py`; the delete-loser prune is not taken. The eval instead surfaced two systemic issues dominating any A/B signal: meta-commentary answers (learned from the fine-tune's weak gemini-2.5-flash training outputs — model/data floor, prompt trace verified clean) and stochastic empty completions (fixed: empty-retry + sampling floor, `253a8ee`). Revisit A/B only after a better training-data/model pass.
 
 ### 3. Latency
 
-* Measure TTFT and total against VI on the real card; revise budgets once from measurements.
+* Measured on the real card — see §VI (TTFT ~7.9s, total ~21.3s, retrieval ~2.25s, cache hit ~0.008s). Budgets revised there from data.
 
 ---
 
@@ -360,9 +361,9 @@ Semantic cache; conversation memory / `interpretive_bias`; interpretive-restrain
 
 Full detail in `docs/superpowers/specs/2026-07-13-rag-decisions.md`.
 
-* Persona may ignore or parrot injected context (fine-tune never saw context in prompts) — mitigated by the recollections framing, gated by the answer eval.
+* Persona may ignore or parrot injected context (fine-tune never saw context in prompts) — **materialized** in the P7 eval: groundedness ~2.5/5 and frequent meta-commentary answers, on both A and B. Root cause is the weak fine-tune (bad gemini-2.5-flash training data + old q4 7B), not the recollections framing or prompt plumbing (trace verified clean, §VII.2). Not resolvable at the serving layer; needs a better training-data/model pass.
 * The Idiot's heading scheme and BK's book count are verified from the files at impl (`structure.json` counts are the tripwire).
-* Latency budgets are provisional until measured.
+* Latency measured on the real card (§VI); retrieval (~2.25s) and TTFT (~7.9s) exceed pre-build estimates, accepted for a solo local deploy.
 * FlashRank exact model id and fastembed's nomic prefix behavior are impl-time verifications.
 * Entity-map quality depends on the teacher LLM + one human pass; misses degrade gracefully to plain hybrid+rerank.
 * ~0.5GB VRAM headroom assumes a headless GPU; compositor on the same card forces `-c 3072`.
