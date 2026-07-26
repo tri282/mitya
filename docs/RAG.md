@@ -249,6 +249,8 @@ diskcache (SQLite-backed), **exact-match only**, keyed on `normalize(query) + fi
 
 **Why** diskcache over redis: no external service for a solo local deploy. **Why** exact-match only: a semantic cache adds an embedding index for a single-user app whose hit rate is near zero anyway; the cache exists as the product's cache boundary, kept at ~15 lines. *Note: hit rate is expected to be low and that is accepted; cached answers also skip response variation — acceptable at exact-match granularity.*
 
+**Planned for the UI build (`mitya-ui`), not yet implemented:** the cached value changes from a bare answer string to `{answer, sources, footer}`, so a cache hit can re-emit the `sources` event and grounding stays visible on a repeat question (today a cache hit answers with no Sources at all). `cache.get` will treat any stored value that doesn't match the new dict shape — i.e. a legacy answer-only entry written before this change — as a **cache miss**, re-generating once and self-healing on the next hit; no migration script, no key-namespace bump. See `plans/mitya-ui/02-decide/decisions.md` (C10/R6) and §IV.1 below for the corresponding SSE change.
+
 ---
 
 ## IV. API & Operations
@@ -260,6 +262,11 @@ diskcache (SQLite-backed), **exact-match only**, keyed on `normalize(query) + fi
 * `GET /books` — the `structure.json` tree, feeds the filter UI.
 
 Bind uvicorn and llama-server to `127.0.0.1` by default. Query text appears in local logs only — fine for a single-user deployment.
+
+**Planned for the UI build (`mitya-ui`), not yet implemented:** a new `event: meta` SSE event, added for the UI's debug panel, carrying `{route_name, chunk_ids, ttft_ms, total_ms, filter_relaxed, no_context, cache_hit}` — all fields the pipeline already computes and only logs today. Always-on, no request flag (single local user; query text is already in local logs). Placement:
+- **Live path:** `token`* → `sources` → **`meta`** (stream close). Emitted *after* `sources` and after `cache.set`, at the point `total_ms`/`ttft_ms` are already computed and logged, so `total_ms` is a truthful end-to-end figure.
+- **Cache path:** `token` → **`sources`** (re-emitted from the stored value, see §III.6 planned change) → **`meta`** (`cache_hit: true`, `ttft_ms: null`, `route_name: "CACHE"`) → `done`.
+The client must treat `meta` as optional and non-terminal — its absence (current backend) must not break rendering. See `plans/mitya-ui/01-draft/design.md` §IV for the full contract and `plans/mitya-ui/02-decide/decisions.md` (C1, C10) for the placement rationale.
 
 ### 2. Concurrency & timeouts
 

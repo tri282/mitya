@@ -15,5 +15,13 @@ docs/TODO.md
 scripts/start_chat.sh
 scripts/start_server.sh
 
+# frontend build artifacts (context bloat)
+frontend/node_modules/
+frontend/dist/
+frontend/package-lock.json
+
+# graphify knowledge graph output
+graphify-out/
+
 # llama.cpp
 llama.cpp

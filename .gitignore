@@ -29,5 +29,14 @@ docs/superpowers/*
 plans/
 status/
 
+# frontend (Vue 3 + Vite build)
+frontend/node_modules/
+frontend/dist/
+frontend/*.local
+npm-debug.log*
+
+# graphify knowledge graph output
+graphify-out/
+
 # llama.cpp
 llama.cpp
