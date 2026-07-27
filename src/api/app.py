@@ -183,6 +183,15 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
             try:
                 yield _sse("token", {"text": cached["answer"]})
                 yield _sse("sources", {"sources": cached["sources"], "footer": cached["footer"]})
+                yield _sse("meta", {
+                    "route_name": "CACHE",
+                    "chunk_ids": [],
+                    "ttft_ms": None,
+                    "total_ms": int((time.monotonic() - t_start) * 1000),
+                    "filter_relaxed": False,
+                    "no_context": not cached["sources"],
+                    "cache_hit": True,
+                })
                 yield _sse("done", {})
             finally:
                 state.sem.release()
@@ -274,6 +283,15 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
 
             total_ms = int((time.monotonic() - t_start) * 1000)
             ttft_ms = int((t_first_token - t_start) * 1000) if t_first_token is not None else None
+            yield _sse("meta", {
+                "route_name": route_name,
+                "chunk_ids": [p.id for p in points],
+                "ttft_ms": ttft_ms,
+                "total_ms": total_ms,
+                "filter_relaxed": filter_relaxed,
+                "no_context": no_context,
+                "cache_hit": False,
+            })
             logger.info(
                 "chat: query=%r route=%s filters=%s entities=%s chunk_ids=%s "
                 "cache_hit=false ttft_ms=%s total_ms=%s filter_relaxed=%s no_context=%s session_id=%s",

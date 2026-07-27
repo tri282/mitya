@@ -257,16 +257,16 @@ The cached value is `{answer, sources, footer}`, so a cache hit re-emits the `so
 
 ### 1. Endpoints (`src/api/app.py`)
 
-* `POST /chat` — `{query, filters?, session_id?}`; SSE stream of answer tokens, then a `sources` event. `session_id` is log-correlation only in v1 (conversation memory is out of scope).
+* `POST /chat` — `{query, filters?, session_id?}`; SSE stream of answer tokens, then a `sources` event, then a `meta` event. `session_id` is log-correlation only in v1 (conversation memory is out of scope).
 * `GET /health` — llama-server reachability + Qdrant collection presence/count + artifact load status.
 * `GET /books` — the `structure.json` tree, feeds the filter UI.
 
 Bind uvicorn and llama-server to `127.0.0.1` by default. Query text appears in local logs only — fine for a single-user deployment.
 
-**Planned for the UI build (`mitya-ui`), not yet implemented:** a new `event: meta` SSE event, added for the UI's debug panel, carrying `{route_name, chunk_ids, ttft_ms, total_ms, filter_relaxed, no_context, cache_hit}` — all fields the pipeline already computes and only logs today. Always-on, no request flag (single local user; query text is already in local logs). Placement:
+**Shipped for the UI build (`mitya-ui`):** an `event: meta` SSE event, added for the UI's debug panel, carrying `{route_name, chunk_ids, ttft_ms, total_ms, filter_relaxed, no_context, cache_hit}` — fields the pipeline already computed and previously only logged. Always-on, no request flag (single local user; query text is already in local logs). Placement:
 - **Live path:** `token`* → `sources` → **`meta`** (stream close). Emitted *after* `sources` and after `cache.set`, at the point `total_ms`/`ttft_ms` are already computed and logged, so `total_ms` is a truthful end-to-end figure.
-- **Cache path:** `token` → **`sources`** (re-emitted from the stored value, see §III.6 planned change) → **`meta`** (`cache_hit: true`, `ttft_ms: null`, `route_name: "CACHE"`) → `done`.
-The client must treat `meta` as optional and non-terminal — its absence (current backend) must not break rendering. See `plans/mitya-ui/01-draft/design.md` §IV for the full contract and `plans/mitya-ui/02-decide/decisions.md` (C1, C10) for the placement rationale.
+- **Cache path:** `token` → **`sources`** (re-emitted from the stored value, see §III.6) → **`meta`** (`cache_hit: true`, `ttft_ms: null`, `route_name: "CACHE"`) → `done`.
+The client must treat `meta` as optional and non-terminal for forward compatibility. See `plans/mitya-ui/01-draft/design.md` §IV for the full contract and `plans/mitya-ui/02-decide/decisions.md` (C1, C10) for the placement rationale.
 
 ### 2. Concurrency & timeouts
 
