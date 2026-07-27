@@ -249,7 +249,7 @@ diskcache (SQLite-backed), **exact-match only**, keyed on `normalize(query) + fi
 
 **Why** diskcache over redis: no external service for a solo local deploy. **Why** exact-match only: a semantic cache adds an embedding index for a single-user app whose hit rate is near zero anyway; the cache exists as the product's cache boundary, kept at ~15 lines. *Note: hit rate is expected to be low and that is accepted; cached answers also skip response variation — acceptable at exact-match granularity.*
 
-**Planned for the UI build (`mitya-ui`), not yet implemented:** the cached value changes from a bare answer string to `{answer, sources, footer}`, so a cache hit can re-emit the `sources` event and grounding stays visible on a repeat question (today a cache hit answers with no Sources at all). `cache.get` will treat any stored value that doesn't match the new dict shape — i.e. a legacy answer-only entry written before this change — as a **cache miss**, re-generating once and self-healing on the next hit; no migration script, no key-namespace bump. See `plans/mitya-ui/02-decide/decisions.md` (C10/R6) and §IV.1 below for the corresponding SSE change.
+The cached value is `{answer, sources, footer}`, so a cache hit re-emits the `sources` event and grounding stays visible on a repeat question. `cache.get` treats any stored value that doesn't match this dict shape — i.e. a legacy answer-only entry written before this change — as a **cache miss**, re-generating once and self-healing on the next hit; no migration script, no key-namespace bump. See `plans/mitya-ui/02-decide/decisions.md` (C10/R6) and §IV.1 below for the corresponding SSE change.
 
 ---
 
