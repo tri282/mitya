@@ -181,7 +181,8 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
 
         async def cached_stream():
             try:
-                yield _sse("token", {"text": cached})
+                yield _sse("token", {"text": cached["answer"]})
+                yield _sse("sources", {"sources": cached["sources"], "footer": cached["footer"]})
                 yield _sse("done", {})
             finally:
                 state.sem.release()
@@ -269,7 +270,7 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
             yield _sse("sources", {"sources": sources, "footer": footer})
 
             if answer:
-                state.cache.set(body.query, filters, answer)
+                state.cache.set(body.query, filters, answer, sources, footer)
 
             total_ms = int((time.monotonic() - t_start) * 1000)
             ttft_ms = int((t_first_token - t_start) * 1000) if t_first_token is not None else None
