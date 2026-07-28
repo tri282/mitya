@@ -1,1 +1,59 @@
-/* Phase 8 (visual-system): "Evening Reading Room" design tokens (DESIGN.md). */
+/* Phase 8 (visual-system): "Evening Reading Room" design tokens.
+   Source of truth: DESIGN.md (root) — mirrors 01-draft/design.md §V verbatim.
+   Values are computed from OKLCH, not instrument-measured on a render (C9). */
+
+:root {
+  /* -- Palette (§V.1/§V.2) -------------------------------------------- */
+  --surface: #16130f; /* oklch(0.18 0.012 60) — Study Dark, body surface */
+  --panel: #211d17; /* oklch(0.24 0.012 60) — second layer */
+  --panel-2: #2a251d; /* oklch(0.28 0.013 60) — hover/active tonal step */
+  --ink: #ede7dc; /* oklch(0.92 0.015 75) — Page Ink, reading text */
+  --ink-muted: #aaa08d; /* oklch(0.72 0.015 70) — Muted Ink */
+  --accent: #e8a33d; /* oklch(0.78 0.13 70) — Lamplight Amber, the ONE accent */
+  --accent-hover: #f2b455; /* oklch(0.83 0.13 75) */
+  --accent-active: #d5902f; /* oklch(0.72 0.13 68) */
+  --accent-muted: #8a7f6c; /* oklch(0.58 0.04 70) — disabled amber */
+  --on-accent: var(--surface); /* text/icon color on an --accent fill */
+
+  /* -- Type stacks (§V.3) ----------------------------------------------- */
+  --font-reading: "Spectral", Georgia, "Times New Roman", serif;
+  --font-chrome: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  /* -- Type scale (§V.4) — fixed rem, ratio ~1.2, root 16px -------------- */
+  --fs-display: 2rem; /* 32px — app title / empty-state prompt */
+  --fs-title: 1.5rem; /* 24px — (reserved) section headline */
+  --fs-reading: 1.1875rem; /* 19px — answer prose */
+  --fs-body: 1rem; /* 16px — input text, question line */
+  --fs-label: 0.875rem; /* 14px — filters, buttons, source rows */
+  --fs-meta: 0.8125rem; /* 13px — debug values, health tooltip */
+
+  /* -- Spacing scale (§V.5) — 4px base ----------------------------------- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+  --sp-8: 64px;
+
+  /* -- Radii (§V.6) — no fully-round pills -------------------------------- */
+  --radius-sm: 4px; /* chips, source rows */
+  --radius-md: 8px; /* composer, panels */
+  --radius-lg: 12px; /* the composer container */
+
+  /* -- Motion (§V.7) ------------------------------------------------------ */
+  --ease-out-exp: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 150ms;
+  --dur-med: 220ms;
+
+  /* -- Elevation (§V.6) — the one permitted shadow, warm/ambient ---------- */
+  --shadow-ambient: 0 1px 24px oklch(0.78 0.13 70 / 0.06);
+
+  /* -- Z-index scale (§V.11) — semantic, nothing else creates a context --- */
+  --z-base: 0; /* transcript */
+  --z-composer: 10; /* sticky composer */
+  --z-header: 20;
+  --z-popover: 30; /* filter dropdown, debug expand */
+  --z-tooltip: 40; /* health detail */
+}
