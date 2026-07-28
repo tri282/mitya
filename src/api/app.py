@@ -302,3 +302,19 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
             state.sem.release()
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# Serve the built SPA (design §I.6, C8) -- must be the LAST statement in the
+# module: Starlette matches routes in registration order, so /health, /books,
+# /chat, and FastAPI's own /docs/openapi.json/redoc (registered above, at
+# app-construction/decorator time) all win over this catch-all mount. Two
+# caveats, documented here and in README.md's run notes: (1) html=True does
+# NOT SPA-fallback unknown paths to index.html -- there is no client router,
+# so an unmapped path 404s, which is fine; (2) directory="frontend/dist" is
+# resolved relative to the uvicorn PROCESS CWD, not this file's location --
+# the server must be launched from the repo root, or this mount raises
+# RuntimeError at startup ("Directory 'frontend/dist' does not exist") if
+# `npm run build` has not been run yet, in dev-proxy-only workflows included.
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="ui")

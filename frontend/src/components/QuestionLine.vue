@@ -5,6 +5,7 @@
 
 import { computed } from "vue"
 import type { ChatFilters } from "../api/types"
+import { formatChapter, formatPart, resolveBookNode } from "../bookLabels"
 import { useBooks } from "../composables/useBooks"
 
 const props = defineProps<{
@@ -19,18 +20,19 @@ const { tree } = useBooks()
 const chipLabel = computed(() => {
   const filters = props.filters
   if (!filters?.book) return null
-  const node = tree.value?.[filters.book]
-  // Tree not loaded yet, or an unresolved book name: render nothing rather
-  // than fabricate a "Part"/"Chapter" label (C3 is non-negotiable). The
-  // chip appears a beat later once useBooks()'s fetch resolves.
+  // Shared lookup (Phase 7, C3): tree not loaded yet, or an unresolved book
+  // name, resolves to undefined -- render nothing rather than fabricate a
+  // "Part"/"Chapter" label. The chip appears a beat later once useBooks()'s
+  // fetch resolves.
+  const node = resolveBookNode(tree.value, filters.book)
   if (!node) return null
 
   const segments = [filters.book]
-  if (filters.part !== undefined) {
-    segments.push(`${node.part_label} ${filters.part}`)
-    if (filters.chapter !== undefined) {
-      segments.push(`${node.chapter_label} ${filters.chapter}`)
-    }
+  const partLabel = formatPart(node, filters.part)
+  if (partLabel) {
+    segments.push(partLabel)
+    const chapterLabel = formatChapter(node, filters.chapter)
+    if (chapterLabel) segments.push(chapterLabel)
   }
   return segments.join(" · ")
 })
@@ -42,3 +44,28 @@ const chipLabel = computed(() => {
     <span v-if="chipLabel" class="question-line__scope-chip">{{ chipLabel }}</span>
   </div>
 </template>
+
+<style scoped>
+.question-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
+}
+
+.question-line__text {
+  font-family: var(--font-chrome);
+  font-size: var(--fs-body);
+  color: var(--ink-muted);
+}
+
+.question-line__scope-chip {
+  font-family: var(--font-chrome);
+  font-size: var(--fs-meta);
+  color: var(--ink-muted);
+  background: var(--panel);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-1) var(--sp-2);
+}
+</style>

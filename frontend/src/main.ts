@@ -13,6 +13,7 @@ import "@fontsource/spectral/latin-600.css"
 import "@fontsource/spectral/cyrillic-400.css"
 import "@fontsource/spectral/cyrillic-400-italic.css"
 
+import "./styles/tokens.css"
 import "./styles/base.css"
 
 createApp(App).mount("#app")

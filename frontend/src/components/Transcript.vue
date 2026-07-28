@@ -109,6 +109,25 @@ function onExampleSelect(payload: { query: string; book: string }): void {
 </template>
 
 <style scoped>
+.transcript {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.transcript__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--sp-6);
+}
+
+.transcript__turn + .transcript__turn {
+  margin-top: var(--sp-7);
+}
+
 .transcript__announcer {
   position: absolute;
   width: 1px;
