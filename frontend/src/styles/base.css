@@ -1,1 +1,86 @@
-/* Phase 8 (visual-system): global resets + Spectral font stack applied here. */
+/* Phase 8 (visual-system): reset, element defaults, font stacks, body
+   background. Fonts themselves are supplied by the six @fontsource/spectral
+   entrypoints imported in main.ts -- no @font-face is written here, only the
+   family stack that uses the registered name ("Spectral", confirmed against
+   node_modules/@fontsource/spectral/latin-400.css). */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body,
+h1,
+h2,
+h3,
+p,
+ul,
+ol,
+dl,
+dd,
+figure {
+  margin: 0;
+  padding: 0;
+}
+
+ul,
+ol {
+  list-style: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+body {
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-chrome);
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* A11y floor (§VII.1): visible warm focus ring on every interactive element,
+   never `outline: none` without a replacement. Named "focus" transition —
+   the ring fades in over --dur-fast. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  transition: outline-color var(--dur-fast) var(--ease-out-exp);
+}
+
+/* No container may overflow the viewport horizontally (absolute ban). */
+html,
+body {
+  overflow-x: hidden;
+}
+
+/* Reduced motion (§VII.1, honored globally): every motion rule in the
+   system collapses to instant state changes. Component-level rules below
+   also carry their own reduced-motion override for the two named,
+   non-transition animations (the Reading Lamp caret, source-list reveal),
+   since `transition`/`animation` shorthand overrides need to be co-located
+   with the rule they cancel. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
