@@ -7,6 +7,7 @@
 
 import { computed } from "vue"
 import type { Turn } from "../state/session"
+import DebugRow from "./DebugRow.vue"
 import SourcesList from "./SourcesList.vue"
 
 const props = defineProps<{
@@ -82,6 +83,13 @@ const isEmptyComplete = computed(
         </p>
         <SourcesList :sources="turn.sources" :footer="turn.footer" />
       </template>
+
+      <!-- Rendered for every reading state (streaming/complete/stream-error/
+           interrupted) so it shows "diagnostics unavailable" from the first
+           token, then populates once `meta` arrives last in the stream
+           (design §IV, C1, this phase's Step 5). Not rendered for the pure
+           error-4xx/5xx states below, which never produce a `meta` either. -->
+      <DebugRow :meta="turn.meta" />
     </template>
 
     <template v-else-if="turn.state === 'error-400'">
@@ -105,3 +113,87 @@ const isEmptyComplete = computed(
     </template>
   </div>
 </template>
+
+<style scoped>
+.answer-block {
+  max-width: 66ch;
+}
+
+.answer-block__paragraph,
+.answer-block__empty {
+  font-family: var(--font-reading);
+  font-size: var(--fs-reading);
+  line-height: 1.7;
+  color: var(--ink);
+}
+
+.answer-block__paragraph + .answer-block__paragraph {
+  margin-top: var(--sp-4);
+}
+
+/* The Reading Lamp (§V.8) -- the ONE signature element. Boldness is spent
+   here and nowhere else in the system. */
+.answer-block__caret {
+  display: inline-block;
+  width: 3px;
+  height: 1.1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--accent);
+  border-radius: 1px;
+  box-shadow: var(--shadow-ambient);
+  animation: reading-lamp 1.6s ease-in-out infinite;
+}
+
+@keyframes reading-lamp {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .answer-block__caret {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+.answer-block__notice,
+.answer-block__note {
+  margin-top: var(--sp-3);
+  font-family: var(--font-chrome);
+  font-size: var(--fs-label);
+  color: var(--ink-muted);
+}
+
+.answer-block__empty {
+  color: var(--ink-muted);
+}
+
+.answer-block__error {
+  font-family: var(--font-chrome);
+  font-size: var(--fs-body);
+  color: var(--ink);
+}
+
+.answer-block__retry {
+  margin-top: var(--sp-3);
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink);
+  font-family: var(--font-chrome);
+  font-size: var(--fs-label);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out-exp);
+}
+
+.answer-block__retry:hover {
+  background: var(--panel-2);
+}
+</style>

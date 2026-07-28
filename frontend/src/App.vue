@@ -26,12 +26,10 @@ import type { Turn } from "./state/session"
 useHealth()
 
 // The single useChat() instance for the whole app (see note above).
-const { turns, send } = useChat()
+const { turns, isStreaming, send, stop } = useChat()
 
-// Prepared for Phase 7's Composer, which isn't functional yet (no props/
-// v-model on the current stub) -- EmptyState's example chips already need
-// somewhere to land, so this state exists now and Phase 7 wires it into the
-// real Composer's textarea/FilterControl v-model.
+// Composer's textarea/FilterControl v-models (Phase 6 note) -- EmptyState's
+// example chips populate these, and Phase 7's Composer now consumes them.
 const composerDraft = ref("")
 const composerFilters = ref<ChatFilters>({})
 
@@ -43,12 +41,35 @@ function onExampleSelect(payload: { query: string; book: string }): void {
   composerDraft.value = payload.query
   composerFilters.value = { book: payload.book }
 }
+
+function onSubmit(payload: { query: string; filters: ChatFilters }): void {
+  // Drop an empty filters object rather than send `{}` -- keeps the wire
+  // payload identical to an unscoped query with no `filters` key at all
+  // (types.ts's exclude_none note).
+  const filters = Object.keys(payload.filters).length > 0 ? payload.filters : undefined
+  void send(payload.query, filters)
+}
 </script>
 
 <template>
   <div class="app-shell">
     <AppHeader />
     <Transcript :turns="turns" @retry="onRetry" @example-select="onExampleSelect" />
-    <Composer />
+    <Composer
+      :disabled="isStreaming"
+      v-model:draft="composerDraft"
+      v-model:filters="composerFilters"
+      @submit="onSubmit"
+      @stop="stop"
+    />
   </div>
 </template>
+
+<style scoped>
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-width: 100%;
+}
+</style>

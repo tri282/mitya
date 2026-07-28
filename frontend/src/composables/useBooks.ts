@@ -25,7 +25,16 @@ async function load(): Promise<void> {
   }
 }
 
+// Same fan-out trap as useHealth: the tree is shared, but onMounted() runs per
+// *calling component*, so /books refetched every time a QuestionLine or
+// SourcesList mounted for a new turn. Load exactly once per page load.
+let loadStarted = false
+
 export function useBooks() {
-  onMounted(load)
+  onMounted(() => {
+    if (loadStarted) return
+    loadStarted = true
+    void load()
+  })
   return { tree, error }
 }

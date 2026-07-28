@@ -3,7 +3,7 @@
 Goal: A local LLM that writes like Fyodor Dostoevsky and answers grounded in his 5 novels, on a single 6GB GPU.  
 *Requirements: Mistral-7B QLoRA fine-tune (done); metadata-tagged RAG over the novels (designed, pending implementation); GPU budget ≤ 6GB; all retrieval on CPU.*  
 
-Mitya splits into two independent subsystems: **Style** (a Dostoevsky-voiced fine-tune) and **Substance** (RAG grounding over the actual texts), plus a thin third piece, **UI** (a browser client over the existing FastAPI `/chat` SSE endpoint — planned, not yet built). The two backend subsystems compose at generation time — RAG supplies passages, the fine-tuned model answers in character, and citations are shown programmatically rather than asked of the model. Every design choice in all three is bounded by a single 6GB consumer GPU (the UI adds no GPU consumer of its own).
+Mitya splits into two independent subsystems: **Style** (a Dostoevsky-voiced fine-tune) and **Substance** (RAG grounding over the actual texts), plus a thin third piece, **UI** (a browser client over the existing FastAPI `/chat` SSE endpoint — built). The two backend subsystems compose at generation time — RAG supplies passages, the fine-tuned model answers in character, and citations are shown programmatically rather than asked of the model. Every design choice in all three is bounded by a single 6GB consumer GPU (the UI adds no GPU consumer of its own).
 
 ---
 
@@ -21,7 +21,7 @@ Dostoevsky .txt corpus -> per-book parse           ^                  ^
   -> chunk -> embed -> Qdrant upsert                | query           | fetch + SSE (ReadableStream)
   -> entities.json / summaries.json           router -> retrieve -> rerank
   (src/rag/ingest.py, scripts/build_*.py)      (src/rag/*, CPU only)  |
-                                                          browser: Vue 3 SPA (frontend/, planned)
+                                                          browser: Vue 3 SPA (frontend/)
                                                           served by StaticFiles (prod) /
                                                           Vite dev-proxy (dev) — see §VI
 ```
@@ -70,15 +70,15 @@ The 6GB GPU runs **only** the quantized LLM (`q4_k_m`, ≈5.2–5.5GB total with
 
 ---
 
-## VI. Part 3 — UI (planned)
+## VI. Part 3 — UI
 
-A thin browser client over the existing `/chat` SSE endpoint — no new backend surface beyond one flagged contract delta (below). **Status: designed, not built** — full spec in `plans/mitya-ui/01-draft/design.md` (as settled by `plans/mitya-ui/02-decide/decisions.md`); this section is a map, not a restatement.
+A thin browser client over the existing `/chat` SSE endpoint — no new backend surface beyond the two shipped contract deltas (below). **Status: built** — full spec in `plans/mitya-ui/01-draft/design.md` (as settled by `plans/mitya-ui/02-decide/decisions.md`); this section is a map, not a restatement.
 
 * **Stack:** Vue 3 (`<script setup>`) + Vite + TypeScript. No router, no Pinia, no UI component library — one page, a handful of composables, ~8 hand-built components.
 * **API boundary:** all network access typed and confined to `frontend/src/api/*`; `/chat`'s SSE response is read via `fetch` + `response.body.getReader()` (the browser's `EventSource` cannot `POST`), never `EventSource`.
 * **Serving:** production build (`frontend/dist/`) is mounted last by FastAPI via `StaticFiles(html=True)`, after all API routes; dev runs Vite's own server with a proxy to `127.0.0.1:8000` for `/chat`, `/health`, `/books`. Same relative paths in both modes — no hardcoded host, no CORS.
 * **Visual system:** the single dim "Evening Reading Room" theme (see root `DESIGN.md`) — warm near-black surface, one amber "lamplight" accent, literary serif reading column, quiet sans chrome. No light theme in v1.
-* **Backend contract deltas (shipped):** (1) an `event: meta` SSE event carrying per-answer diagnostics (`route_name, chunk_ids, ttft_ms, total_ms, filter_relaxed, no_context, cache_hit`) for a collapsed debug panel; (2) the `cache.py` cached value changed from a bare answer string to `{answer, sources, footer}` so a cache hit re-emits the `sources` event and grounding stays visible on repeat questions. Both are additive, local-only (no new request flag) — see `docs/RAG.md` §III.6/§IV.1 for the full contract. Frontend (`frontend/`) is the remaining work.
+* **Backend contract deltas (shipped):** (1) an `event: meta` SSE event carrying per-answer diagnostics (`route_name, chunk_ids, ttft_ms, total_ms, filter_relaxed, no_context, cache_hit`) for a collapsed debug panel; (2) the `cache.py` cached value changed from a bare answer string to `{answer, sources, footer}` so a cache hit re-emits the `sources` event and grounding stays visible on repeat questions. Both are additive, local-only (no new request flag) — see `docs/RAG.md` §III.6/§IV.1 for the full contract. `frontend/` (the Vue 3 SPA) is built and served in production via a mount-last `StaticFiles`; see the repo README for build/run notes.
 
 *See `plans/mitya-ui/01-draft/design.md` for the full component tree, SSE contract, and failure-copy table; `plans/mitya-ui/manifest.md` for the decision log.*
 
@@ -97,6 +97,6 @@ A thin browser client over the existing `/chat` SSE endpoint — no new backend 
 * `plans/mitya-ui/` — the UI design-flow record: draft spec, decision log, manifest (§VI source of truth).
 * `src/ingestion.py`, `src/training.py`, `src/generation.py` — fine-tune pipeline (Style).
 * `src/rag/` *(planned)* — ingestion, router, retrieval, context, generation, cache for RAG.
-* `src/api/` *(planned)* — FastAPI app (`/chat` SSE, `/health`, `/books`).
-* `frontend/` *(planned)* — Vue 3 + Vite + TS SPA (§VI); not yet built.
+* `src/api/` *(planned)* — FastAPI app (`/chat` SSE, `/health`, `/books`); also mounts `frontend/dist/` last (§VI).
+* `frontend/` — Vue 3 + Vite + TS SPA (§VI); built.
 * `scripts/` — `build_dataset.py`, `train_model.py`, `quantize.sh` (Style); `build_entities.py`, `build_summaries.py`, `ingest_corpus.py` (Substance, planned).
