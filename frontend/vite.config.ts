@@ -17,5 +17,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: false,
+    // Node-26/jsdom localStorage shadowing fix -- see testSetup.ts.
+    setupFiles: ["./src/testSetup.ts"],
   },
 })
