@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest"
 import { mount } from "@vue/test-utils"
 import FilterControl from "./FilterControl.vue"
+import { formatChapter } from "../bookLabels"
 import type { ChatFilters, StructureTree } from "../api/types"
 
 // Same trimmed fixture shape as useBooks.test.ts (duplicated intentionally --
@@ -31,6 +32,20 @@ const fixtureTree: StructureTree = {
     part_label: "Book",
     chapter_label: "Chapter",
     notes: null,
+    parts: {
+      "1": { chapters: [1, 2], unit_count: 2 },
+    },
+    total_units: 2,
+  },
+  // Real shape from data/rag/structure.json: chapters are unlabeled bare
+  // roman numerals, so the generator emits a NULL chapter_label. Interpolating
+  // it raw rendered "null 5" in the source locator.
+  "The Idiot": {
+    file: "the_idiot.txt",
+    scheme: "part_chapter",
+    part_label: "Part",
+    chapter_label: null,
+    notes: "chapters are unlabeled bare roman numerals",
     parts: {
       "1": { chapters: [1, 2], unit_count: 2 },
     },
@@ -108,6 +123,20 @@ describe("FilterControl", () => {
     expect(filters).toEqual({ book: "Crime and Punishment", part: 2, chapter: 1 })
     expect(typeof filters?.part).toBe("number")
     expect(typeof filters?.chapter).toBe("number")
+  })
+
+  it("falls back to 'Chapter' when the book has a null chapter_label", async () => {
+    const wrapper = mountControl()
+    await wrapper.findAll("select")[0].setValue("The Idiot")
+    await wrapper.findAll("select")[1].setValue("1")
+
+    expect(wrapper.findAll("select")).toHaveLength(3)
+    expect(wrapper.text()).toContain("Chapter")
+    expect(wrapper.text()).not.toContain("null")
+
+    // Same fallback on the read side -- this is where "null 5" surfaced, in
+    // SourcesList's and QuestionLine's locator.
+    expect(formatChapter(fixtureTree["The Idiot"], 5)).toBe("Chapter 5")
   })
 
   it("clearing the book scope resets all downstream selections", async () => {

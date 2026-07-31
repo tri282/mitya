@@ -27,9 +27,14 @@ export function formatPart(node: BookNode, part: number | null | undefined): str
   return `${node.part_label} ${part}`
 }
 
+/** Rendered in place of a null `chapter_label` (The Idiot, Notes from the
+ * Underground -- unlabeled bare-roman-numeral chapters). Interpolating the
+ * raw null produced "null 5" in the source locator. */
+export const DEFAULT_CHAPTER_LABEL = "Chapter"
+
 /** "<chapter_label> <chapter>", e.g. "Chapter 3". Returns null when there's
  * no chapter to label. */
 export function formatChapter(node: BookNode, chapter: number | null | undefined): string | null {
   if (chapter === null || chapter === undefined) return null
-  return `${node.chapter_label} ${chapter}`
+  return `${node.chapter_label ?? DEFAULT_CHAPTER_LABEL} ${chapter}`
 }
