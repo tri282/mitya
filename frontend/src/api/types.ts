@@ -75,7 +75,11 @@ export interface BookNode {
   file: string
   scheme: "part_chapter" | "book_chapter"
   part_label: "Part" | "Book" // VARIES per book — Karamazov uses "Book"
-  chapter_label: "Chapter"
+  // NULL for books whose chapters are bare roman numerals with no "CHAPTER"
+  // keyword in the source text (The Idiot, Notes from the Underground -- see
+  // that node's `notes`). Renderers fall back to DEFAULT_CHAPTER_LABEL; the
+  // chapters exist and are numbered, only the word is missing.
+  chapter_label: "Chapter" | null
   notes: string | null
   parts: Record<string, PartNode> // keys are STRING integers ("1","2",...)
   total_units: number

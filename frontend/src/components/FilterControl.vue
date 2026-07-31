@@ -7,7 +7,7 @@
 
 import { computed, ref, watch } from "vue"
 import type { ChatFilters, StructureTree } from "../api/types"
-import { resolveBookNode } from "../bookLabels"
+import { DEFAULT_CHAPTER_LABEL, resolveBookNode } from "../bookLabels"
 
 const props = defineProps<{
   tree: StructureTree | null
@@ -112,7 +112,9 @@ watch(
     </label>
 
     <label v-if="selectedNode && selectedPart" class="filter-control__field">
-      <span class="filter-control__label">{{ selectedNode.chapter_label }}</span>
+      <span class="filter-control__label">{{
+        selectedNode.chapter_label ?? DEFAULT_CHAPTER_LABEL
+      }}</span>
       <select v-model="selectedChapter" class="filter-control__select" @change="emitFilters">
         <option value="">All</option>
         <option v-for="chapter in chapters" :key="chapter" :value="String(chapter)">

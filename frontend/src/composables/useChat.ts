@@ -1,6 +1,6 @@
 // Phase 5 (state-composables): drives POST /chat via chatStream, turn state machine.
 
-import { ref } from "vue"
+import { reactive, ref } from "vue"
 import { ChatHttpError, streamChat } from "../api/chatStream"
 import type { ChatFilters } from "../api/types"
 import { scheduleSave, session, sessionId, type Turn } from "../state/session"
@@ -20,7 +20,12 @@ export function useChat() {
     // the contract-enforcing guard.
     if (isStreaming.value) return
 
-    const turn: Turn = {
+    // Must be reactive BEFORE the push. `session.turns` is a reactive array,
+    // but pushing a raw object stores it raw: every later `turn.answer +=` /
+    // `turn.state =` here would bypass the proxy's set trap, so the value
+    // updates in memory and the DOM never re-renders. Wrapping first means the
+    // stored element and this local reference are the same proxy.
+    const turn: Turn = reactive<Turn>({
       id: crypto.randomUUID(),
       question: query,
       filters,
@@ -29,7 +34,7 @@ export function useChat() {
       footer: "",
       state: "streaming",
       createdAt: Date.now(),
-    }
+    })
     session.turns.push(turn)
     scheduleSave()
     isStreaming.value = true
