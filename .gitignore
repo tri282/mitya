@@ -1,30 +1,29 @@
-# git
-.git
-
 # secrets
 .env
+.env.*
+!.env.example
 
-# python cache
+# internal docs
+*.md
+!README.md
+!RAG.md
+!FINE_TUNE.md
+!DESIGN.md
+
+# python
 __pycache__/
 *.py[cod]
-
-# virtual env
+*.egg-info/
 .venv
+.pytest_cache/
 
-# commits
-commits/*
+# os / editor
+.vscode/
+*.log
 
 # data
 data/*
-
-# trained models
 models/*
-
-# docs
-docs/TODO.md
-docs/superpowers/*
-plans/
-status/
 
 # frontend (Vue 3 + Vite build)
 frontend/node_modules/
@@ -32,10 +31,16 @@ frontend/dist/
 frontend/*.local
 npm-debug.log*
 
-# tools
+# working files
+commits/*
+plans/
+status/
+docs/superpowers/*
 graphify-out/
+.graphifyignore
+.claudeignore
 .claude
 CLAUDE.md
 
-# llama.cpp
+# vendored build
 llama.cpp
