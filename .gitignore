@@ -17,9 +17,6 @@ commits/*
 # data
 data/*
 
-# local test
-test/
-
 # trained models
 models/*
 
@@ -35,8 +32,10 @@ frontend/dist/
 frontend/*.local
 npm-debug.log*
 
-# graphify knowledge graph output
+# tools
 graphify-out/
+.claude
+CLAUDE.md
 
 # llama.cpp
 llama.cpp
