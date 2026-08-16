@@ -54,7 +54,7 @@ High-level pipeline (settled design, not yet built):
 * Generation is **single-pass**: the fine-tuned persona answers in character from the retrieved passages, with a **programmatic Sources list** appended after the stream — no inline citations.
 * **Status: designed, not built.**
 
-*See `docs/RAG.md` for the settled design and `docs/superpowers/specs/2026-07-13-rag-decisions.md` for the rationale.*
+*See `docs/RAG.md` for the settled design and its rationale.*
 
 ---
 
@@ -72,7 +72,7 @@ The 6GB GPU runs **only** the quantized LLM (`q4_k_m`, ≈5.2–5.5GB total with
 
 ## VI. Part 3 — UI
 
-A thin browser client over the existing `/chat` SSE endpoint — no new backend surface beyond the two shipped contract deltas (below). **Status: built** — full spec in `plans/mitya-ui/01-draft/design.md` (as settled by `plans/mitya-ui/02-decide/decisions.md`); this section is a map, not a restatement.
+A thin browser client over the existing `/chat` SSE endpoint — no new backend surface beyond the two shipped contract deltas (below). **Status: built** — this section is a map; `DESIGN.md` at the repo root carries the visual system, and `frontend/src/` is the implementation.
 
 * **Stack:** Vue 3 (`<script setup>`) + Vite + TypeScript. No router, no Pinia, no UI component library — one page, a handful of composables, ~8 hand-built components.
 * **API boundary:** all network access typed and confined to `frontend/src/api/*`; `/chat`'s SSE response is read via `fetch` + `response.body.getReader()` (the browser's `EventSource` cannot `POST`), never `EventSource`.
@@ -80,7 +80,7 @@ A thin browser client over the existing `/chat` SSE endpoint — no new backend 
 * **Visual system:** the single dim "Evening Reading Room" theme (see root `DESIGN.md`) — warm near-black surface, one amber "lamplight" accent, literary serif reading column, quiet sans chrome. No light theme in v1.
 * **Backend contract deltas (shipped):** (1) an `event: meta` SSE event carrying per-answer diagnostics (`route_name, chunk_ids, ttft_ms, total_ms, filter_relaxed, no_context, cache_hit`) for a collapsed debug panel; (2) the `cache.py` cached value changed from a bare answer string to `{answer, sources, footer}` so a cache hit re-emits the `sources` event and grounding stays visible on repeat questions. Both are additive, local-only (no new request flag) — see `docs/RAG.md` §III.6/§IV.1 for the full contract. `frontend/` (the Vue 3 SPA) is built and served in production via a mount-last `StaticFiles`; see the repo README for build/run notes.
 
-*See `plans/mitya-ui/01-draft/design.md` for the full component tree, SSE contract, and failure-copy table; `plans/mitya-ui/manifest.md` for the decision log.*
+*See `DESIGN.md` (repo root) for the visual system and `docs/RAG.md` §IV.1 for the SSE contract.*
 
 ---
 
@@ -90,14 +90,9 @@ A thin browser client over the existing `/chat` SSE endpoint — no new backend 
 * `DESIGN.md` (root) — the visual design system ("The Evening Reading Room"): palette, type, spacing, components.
 * `docs/FINE_TUNE.md` — full Style pipeline (data generation, QLoRA, quantization).
 * `docs/RAG.md` — full Substance design (ingestion, retrieval, generation, ops, eval).
-* `docs/RUNBOOK.md` — operating the offline artifact builds by hand (entities, summaries).
-* `docs/CHARACTERS.md` — principal characters per novel; ground truth for the entity review gate and eval.
-* `docs/superpowers/specs/2026-07-13-rag-decisions.md` — RAG decision/ruling audit trail.
-* `status/INDEX.md` — per-topic status and next steps.
-* `plans/mitya-ui/` — the UI design-flow record: draft spec, decision log, manifest (§VI source of truth).
 * `src/ingestion.py`, `src/training.py`, `src/generation.py` — fine-tune pipeline (Style).
 * `src/rag/` — ingestion, names, entities, router, retrieval, context, generation, cache, judge.
 * `src/api/` — FastAPI app (`/chat` SSE, `/health`, `/books`); also mounts `frontend/dist/` last (§VI).
 * `frontend/` — Vue 3 + Vite + TS SPA (§VI); built.
 * `scripts/` — `build_dataset.py`, `train_model.py`, `quantize.sh` (Style); `build_entities.py`, `build_summaries.py`, `ingest_corpus.py` (Substance); `eval_retrieval.py`, `eval_quality.py`, `measure_latency.py` (eval).
-* `plans/mitya-ablation/plan.md` — pending retrieval attribution run (per-stage deltas).
+* `test/` — retrieval/quality eval sets and the offline assert suites.

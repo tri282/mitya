@@ -3,7 +3,7 @@
 Goal: Ground the fine-tuned Dostoevsky model in his 5 novels via metadata-tagged hybrid retrieval, answering in-character with a programmatic Sources list, on a single 6GB GPU.  
 *Requirements: Mitya GGUF `q4_k_m` served by `llama-server`; `data/rag/*.txt` (5 clean plaintext novels); Qdrant local mode; all retrieval components on CPU; ≥16GB system RAM.*  
 
-This is the settled v1 design (2026-07-13). It supersedes the previous contents of this file and the `2026-07-12` redesign draft. The full refutation and ruling audit trail is in `docs/superpowers/specs/2026-07-13-rag-decisions.md`.
+This is the settled v1 design (2026-07-13). It supersedes the previous contents of this file and the `2026-07-12` redesign draft. Rulings referenced below as R1–R24 / RR1–RR9 come from the adversarial review that settled it; the ones that still bind the code are restated inline where they apply.
 
 ---
 
@@ -172,7 +172,7 @@ Consequences:
 * Matching runs on **token boundaries**, not substrings: `liza ⊂ lizaveta` otherwise resolves "Lizaveta Prokofyevna" to "Liza".
 * The fold merges some genuinely distinct cross-book identities (diminutives like `Katia`/`Kostia`/`Nastia`, `-off`/`-ov` surname pairs). Book-scoped resolution above absorbs these when a filter is active; unfiltered they degrade to extra appended canonicals, which is soft noise. **Same-book** collisions are not absorbed and are a build-time gate failure.
 
-*Interim state:* `entities.json` currently also carries hand-added ASCII folds (e.g. `Svidrigailov` alongside `Svidrigaïlov`) as a pre-P4 stopgap. Once `names.py` lands these are redundant and can be stripped — keep the irregular aliases, drop the mechanical folds. Curation history in `RUNBOOK.md` (2026-07-17 pass).
+*Interim state:* `entities.json` currently also carries hand-added ASCII folds (e.g. `Svidrigailov` alongside `Svidrigaïlov`) as a pre-P4 stopgap. Once `names.py` lands these are redundant and can be stripped — keep the irregular aliases, drop the mechanical folds. The curation passes are reproducible via `scripts/fix_entities.py`, gated by `scripts/check_entity_folds.py`.
 
 *Out of scope for `entities.json`:* **book titles** need their own alias map (`Demons`/`The Devils` → `The Possessed`). A wrong title becomes a hard filter matching zero points — a silent empty result, worse than a miss.
 
@@ -249,7 +249,7 @@ diskcache (SQLite-backed), **exact-match only**, keyed on `normalize(query) + fi
 
 **Why** diskcache over redis: no external service for a solo local deploy. **Why** exact-match only: a semantic cache adds an embedding index for a single-user app whose hit rate is near zero anyway; the cache exists as the product's cache boundary, kept at ~15 lines. *Note: hit rate is expected to be low and that is accepted; cached answers also skip response variation — acceptable at exact-match granularity.*
 
-The cached value is `{answer, sources, footer}`, so a cache hit re-emits the `sources` event and grounding stays visible on a repeat question. `cache.get` treats any stored value that doesn't match this dict shape — i.e. a legacy answer-only entry written before this change — as a **cache miss**, re-generating once and self-healing on the next hit; no migration script, no key-namespace bump. See `plans/mitya-ui/02-decide/decisions.md` (C10/R6) and §IV.1 below for the corresponding SSE change.
+The cached value is `{answer, sources, footer}`, so a cache hit re-emits the `sources` event and grounding stays visible on a repeat question. `cache.get` treats any stored value that doesn't match this dict shape — i.e. a legacy answer-only entry written before this change — as a **cache miss**, re-generating once and self-healing on the next hit; no migration script, no key-namespace bump. See §IV.1 below for the corresponding SSE change.
 
 ---
 
@@ -266,7 +266,7 @@ Bind uvicorn and llama-server to `127.0.0.1` by default. Query text appears in l
 **Shipped for the UI build (`mitya-ui`):** an `event: meta` SSE event, added for the UI's debug panel, carrying `{route_name, chunk_ids, ttft_ms, total_ms, filter_relaxed, no_context, cache_hit}` — fields the pipeline already computed and previously only logged. Always-on, no request flag (single local user; query text is already in local logs). Placement:
 - **Live path:** `token`* → `sources` → **`meta`** (stream close). Emitted *after* `sources` and after `cache.set`, at the point `total_ms`/`ttft_ms` are already computed and logged, so `total_ms` is a truthful end-to-end figure.
 - **Cache path:** `token` → **`sources`** (re-emitted from the stored value, see §III.6) → **`meta`** (`cache_hit: true`, `ttft_ms: null`, `route_name: "CACHE"`) → `done`.
-The client must treat `meta` as optional and non-terminal for forward compatibility. See `plans/mitya-ui/01-draft/design.md` §IV for the full contract and `plans/mitya-ui/02-decide/decisions.md` (C1, C10) for the placement rationale.
+The client must treat `meta` as optional and non-terminal for forward compatibility. `meta` is emitted **last** so `total_ms` is a truthful end-to-end figure; the live path has no `done` event by design and the client relies on stream close.
 
 ### 2. Concurrency & timeouts
 
@@ -365,8 +365,6 @@ Semantic cache; conversation memory / `interpretive_bias`; interpretive-restrain
 ---
 
 ## IX. Residual Risks (summary)
-
-Full detail in `docs/superpowers/specs/2026-07-13-rag-decisions.md`.
 
 * Persona may ignore or parrot injected context (fine-tune never saw context in prompts) — **materialized** in the P7 eval: groundedness ~2.5/5 and frequent meta-commentary answers, on both A and B. Root cause is the weak fine-tune (bad gemini-2.5-flash training data + old q4 7B), not the recollections framing or prompt plumbing (trace verified clean, §VII.2). Not resolvable at the serving layer; needs a better training-data/model pass.
 * The Idiot's heading scheme and BK's book count are verified from the files at impl (`structure.json` counts are the tripwire).
