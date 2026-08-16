@@ -17,6 +17,8 @@ See `src/generation.py` & `scripts/build_dataset.py`.
     * **2. Answer Generation:** The LLM is then prompted to act as Dostoevsky himself, answering the generated question in the first person (under 350 words) based strictly on the text chunk.
 * **Formatting:** The raw Q&A pairs are saved to a CSV, cleaned of HTML/non-ASCII artifacts, and dynamically converted into the standard ChatML format (System, User, Assistant) before being fed into the Hugging Face dataset.
 
+**Dataset as built:** `data/processed/chatml_cleaned_data.jsonl`, **6,979 pairs** (~11MB), generated entirely on free-tier teacher quota (zero API spend).
+
 ---
 
 ## Fine-Tuning Architecture
@@ -24,6 +26,18 @@ See `src/generation.py` & `scripts/build_dataset.py`.
 See `src/training.py`. I use **QLoRA** (Quantized Low-Rank Adaptation) via the Unsloth library since I'm broke and memory stores up quickly in Colab.
 * **Base Model:** `unsloth/mistral-7b-instruct-v0.3-bnb-4bit`.
 * **Wrapper/Trainer:** The pipeline utilizes `SFTTrainer` (Supervised Fine-Tuning) from the `trl` library.
+
+**Hyperparameters as trained** (`src/training.py`):
+
+| | |
+|---|---|
+| LoRA rank / alpha | `r=32`, `lora_alpha=32` (1:1 — a personalized style transfer wants the adapter to carry real weight, not be damped) |
+| Target modules | all 7 — `q/k/v/o_proj`, `gate/up/down_proj` |
+| Dropout / bias | `lora_dropout=0.1`, `bias="lora_only"` — the corpus is stylistically homogeneous, so it needs regularization more than a typical instruct tune |
+| Sequence length | 1024 (matches the 1600-char / 100-overlap chunker upstream) |
+| Schedule | 3 epochs, `lr=2e-4`, per-device batch 4 with gradient accumulation, gradient checkpointing (`"unsloth"`) |
+
+The rank/alpha and dropout choices are the two that are *not* defaults, and both follow from the same fact: the target is a single narrow voice, not broad instruction-following.
 
 ---
 

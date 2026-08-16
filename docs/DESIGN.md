@@ -1,7 +1,7 @@
 # Mitya — Architecture Overview
 
 Goal: A local LLM that writes like Fyodor Dostoevsky and answers grounded in his 5 novels, on a single 6GB GPU.  
-*Requirements: Mistral-7B QLoRA fine-tune (done); metadata-tagged RAG over the novels (designed, pending implementation); GPU budget ≤ 6GB; all retrieval on CPU.*  
+*Requirements: Mistral-7B QLoRA fine-tune (done); metadata-tagged RAG over the novels (built and evaluated, `docs/RAG.md` §VI–§VII); GPU budget ≤ 6GB; all retrieval on CPU.*  
 
 Mitya splits into two independent subsystems: **Style** (a Dostoevsky-voiced fine-tune) and **Substance** (RAG grounding over the actual texts), plus a thin third piece, **UI** (a browser client over the existing FastAPI `/chat` SSE endpoint — built). The two backend subsystems compose at generation time — RAG supplies passages, the fine-tuned model answers in character, and citations are shown programmatically rather than asked of the model. Every design choice in all three is bounded by a single 6GB consumer GPU (the UI adds no GPU consumer of its own).
 
@@ -93,10 +93,11 @@ A thin browser client over the existing `/chat` SSE endpoint — no new backend 
 * `docs/RUNBOOK.md` — operating the offline artifact builds by hand (entities, summaries).
 * `docs/CHARACTERS.md` — principal characters per novel; ground truth for the entity review gate and eval.
 * `docs/superpowers/specs/2026-07-13-rag-decisions.md` — RAG decision/ruling audit trail.
-* `docs/TODO.md` — current status and next steps.
+* `status/INDEX.md` — per-topic status and next steps.
 * `plans/mitya-ui/` — the UI design-flow record: draft spec, decision log, manifest (§VI source of truth).
 * `src/ingestion.py`, `src/training.py`, `src/generation.py` — fine-tune pipeline (Style).
-* `src/rag/` *(planned)* — ingestion, router, retrieval, context, generation, cache for RAG.
-* `src/api/` *(planned)* — FastAPI app (`/chat` SSE, `/health`, `/books`); also mounts `frontend/dist/` last (§VI).
+* `src/rag/` — ingestion, names, entities, router, retrieval, context, generation, cache, judge.
+* `src/api/` — FastAPI app (`/chat` SSE, `/health`, `/books`); also mounts `frontend/dist/` last (§VI).
 * `frontend/` — Vue 3 + Vite + TS SPA (§VI); built.
-* `scripts/` — `build_dataset.py`, `train_model.py`, `quantize.sh` (Style); `build_entities.py`, `build_summaries.py`, `ingest_corpus.py` (Substance, planned).
+* `scripts/` — `build_dataset.py`, `train_model.py`, `quantize.sh` (Style); `build_entities.py`, `build_summaries.py`, `ingest_corpus.py` (Substance); `eval_retrieval.py`, `eval_quality.py`, `measure_latency.py` (eval).
+* `plans/mitya-ablation/plan.md` — pending retrieval attribution run (per-stage deltas).
