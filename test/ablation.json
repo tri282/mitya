@@ -1,0 +1,33 @@
+[
+  {
+    "arm": "full",
+    "timestamp": "2026-08-16T17:04:27+00:00",
+    "expand": true,
+    "legs": [
+      "dense",
+      "bm25"
+    ],
+    "rerank_query": null,
+    "k": 5,
+    "route_matched": 6,
+    "route_checked": 6,
+    "buckets": [
+      {
+        "bucket": "PRIMARY (headline recall@5 / MRR)",
+        "k": 5,
+        "rows": 25,
+        "hits": 18,
+        "recall": 0.72,
+        "mrr": 0.406
+      },
+      {
+        "bucket": "NEGATIVE-CONTROL (reported separately, not headline)",
+        "k": 5,
+        "rows": 2,
+        "hits": 1,
+        "recall": 0.5,
+        "mrr": 0.125
+      }
+    ]
+  }
+]
