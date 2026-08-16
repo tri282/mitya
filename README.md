@@ -5,9 +5,9 @@ Local LLM that speaks like Fyodor Dostoevsky and answers questions grounded in h
 Two parts, plus a thin UI:
 - **Style** — Mistral-7B QLoRA fine-tune (Unsloth), merged and quantized (Q4_K_M / Q5_K_M) via `llama.cpp`. Done.
 - **Substance** — metadata-tagged RAG: per-book parsing, Qdrant hybrid dense/BM25 + native RRF + FlashRank rerank, single-pass in-character generation with a programmatic Sources list. Built and evaluated (`docs/RAG.md`).
-- **UI** — Vue 3 + Vite + TS single-page chat client over `/chat` SSE, "Evening Reading Room" theme (`DESIGN.md`). Built (`plans/mitya-ui/`, `frontend/`).
+- **UI** — Vue 3 + Vite + TS single-page chat client over `/chat` SSE, "Evening Reading Room" theme (`DESIGN.md`). Built (`frontend/`).
 
-See `docs/DESIGN.md` for the high-level architecture map, `DESIGN.md` for the UI visual design system, `docs/FINE_TUNE.md` for the training pipeline, `docs/RAG.md` for the settled RAG design (retrieval, caching, eval), `status/INDEX.md` for per-topic status.
+See `docs/DESIGN.md` for the high-level architecture map, `DESIGN.md` for the UI visual design system, `docs/FINE_TUNE.md` for the training pipeline, `docs/RAG.md` for the settled RAG design (retrieval, caching, eval).
 
 ## Measured
 
@@ -76,7 +76,7 @@ mitya/
 │   ├── generation.py           # synthetic Q&A generation (Gemini/Ollama)
 │   ├── rag/                    # ingest, names, entities, router, retrieve, context, generate, cache, judge
 │   └── api/                    # FastAPI app (/chat SSE, /health, /books) + frontend/dist mount
-├── frontend/                    # Vue 3 + Vite + TS SPA (see plans/mitya-ui/)
+├── frontend/                    # Vue 3 + Vite + TS SPA
 ├── scripts/
 │   ├── build_dataset.py        # PDF -> Q&A CSV
 │   ├── train_model.py          # fine-tune entrypoint
@@ -95,7 +95,7 @@ mitya/
 ## Status
 
 Complete and running end to end: fine-tuned model, RAG pipeline (P0–P7), and UI (P1–P10) are all
-built, evaluated on the target card, and committed. Per-topic detail in `status/INDEX.md`.
+built, evaluated on the target card, and committed.
 
 Known residuals, all documented rather than hidden:
 - **Answer quality is capped by the fine-tune**, not the retrieval pipeline (weak teacher-generated
@@ -104,4 +104,22 @@ Known residuals, all documented rather than hidden:
 - **Latency exceeds the pre-build estimates** (retrieval ~2.25s, TTFT ~7.9s), accepted for a solo
   local deploy on a 6GB card. `docs/RAG.md` §VI.
 - **Retrieval attribution is pending** — the absolute numbers exist, the per-stage deltas do not.
-  Plan at `plans/mitya-ablation/plan.md`.
+  The ablation arms are built (`scripts/eval_retrieval.py --arm`); the full six-arm table is not
+  written up yet.
+
+## License & attribution
+
+Code is MIT — see `LICENSE`. That covers **this repository's code only**. The pieces it runs on
+carry their own terms, and none of them are redistributed here:
+
+- **Base model** — `mistralai/Mistral-7B-Instruct-v0.3` (Apache-2.0), fine-tuned with QLoRA via
+  Unsloth. No adapters, merged weights, or GGUF files are published in this repository; `models/`
+  is gitignored. Anyone reproducing the pipeline pulls the base model themselves.
+- **Training data** — 6,979 synthetic Q&A pairs generated with the Gemini API. The dataset is not
+  published (`data/` is gitignored); this repository ships the *generator*, not its output. Anyone
+  regenerating it is bound by their own Gemini API terms.
+- **Corpus** — Constance Garnett's translations of Dostoevsky, public domain. Not redistributed
+  here either; the pipeline reads `.txt` files you supply.
+- **Dependencies** — nomic-embed-text-v1.5, FlashRank, fastembed, and qdrant-client are Apache-2.0;
+  FastAPI, llama.cpp, and Vue are MIT; Spectral is under the SIL Open Font License and is pulled at
+  build time via `@fontsource/spectral`, never vendored into this repository.
