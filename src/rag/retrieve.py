@@ -88,35 +88,45 @@ def retrieve(
     bm25,
     query_expanded: str,
     hard_filter: models.Filter | None,
+    legs: tuple[str, ...] = ("dense", "bm25"),
 ) -> list[models.ScoredPoint]:
     """Hybrid retrieve: dense (nomic) + sparse (BM25) prefetch, fused
     server-side with native RRF (ruling R7 -- no client-side merge, internal
     k not tunable; per-leg prefetch limits are the actual knobs). Returns the
     fused top Config.TOP_K_FUSED points, NOT reranked -- call rerank()
     separately.
+
+    `legs` exists only for the retrieval ablation (plans/mitya-ablation/plan.md):
+    dropping a leg is how the eval attributes recall to dense vs sparse. The
+    default is the shipped hybrid config, so no production caller passes it.
+    RRF over a single prefetch list is order-preserving, so a one-leg run is a
+    valid query rather than a degenerate one.
     """
-    # Dense leg: fastembed's TextEmbedding.embed() never auto-prefixes (see
-    # module docstring); .tolist() matches src/rag/ingest.py's embed_dense().
-    dense_vec = list(embedder.embed([_QUERY_PREFIX + query_expanded]))[0].tolist()
+    prefetch: list[models.Prefetch] = []
 
-    # Sparse leg: query_embed() (not embed()) is deliberate -- confirmed via
-    # fastembed/sparse/bm25.py and src/rag/ingest.py's embed_sparse() comment:
-    # .embed() (document/ingest side) emits raw TF weights meant to combine
-    # with the collection's server-side Modifier.IDF; .query_embed() (query
-    # side) instead assigns a flat weight of 1.0 per token. The two are
-    # intentionally asymmetric -- using .embed() here would be wrong, not a
-    # style choice.
-    sparse_vec = list(bm25.query_embed(query_expanded))[0]
-
-    response = client.query_points(
-        Config.QDRANT_COLLECTION,
-        prefetch=[
+    if "dense" in legs:
+        # fastembed's TextEmbedding.embed() never auto-prefixes (see module
+        # docstring); .tolist() matches src/rag/ingest.py's embed_dense().
+        dense_vec = list(embedder.embed([_QUERY_PREFIX + query_expanded]))[0].tolist()
+        prefetch.append(
             models.Prefetch(
                 query=dense_vec,
                 using="dense",
                 limit=Config.PREFETCH_LIMIT,
                 filter=hard_filter,
-            ),
+            )
+        )
+
+    if "bm25" in legs:
+        # query_embed() (not embed()) is deliberate -- confirmed via
+        # fastembed/sparse/bm25.py and src/rag/ingest.py's embed_sparse()
+        # comment: .embed() (document/ingest side) emits raw TF weights meant
+        # to combine with the collection's server-side Modifier.IDF;
+        # .query_embed() (query side) instead assigns a flat weight of 1.0 per
+        # token. The two are intentionally asymmetric -- using .embed() here
+        # would be wrong, not a style choice.
+        sparse_vec = list(bm25.query_embed(query_expanded))[0]
+        prefetch.append(
             models.Prefetch(
                 # SparseVector requires List[int]/List[float] (pydantic field
                 # types, verified against qdrant_client.http.models); fastembed
@@ -130,16 +140,24 @@ def retrieve(
                 using="bm25",
                 limit=Config.PREFETCH_LIMIT,
                 filter=hard_filter,
-            ),
-        ],
+            )
+        )
+
+    if not prefetch:
+        raise ValueError(f"retrieve() needs at least one leg, got legs={legs!r}")
+
+    response = client.query_points(
+        Config.QDRANT_COLLECTION,
+        prefetch=prefetch,
         query=models.FusionQuery(fusion=models.Fusion.RRF),
         limit=Config.TOP_K_FUSED,
         with_payload=True,
     )
     points = response.points
     logger.info(
-        "retrieve: fused %d points (prefetch_limit=%d, top_k_fused=%d, filtered=%s)",
-        len(points), Config.PREFETCH_LIMIT, Config.TOP_K_FUSED, hard_filter is not None,
+        "retrieve: fused %d points (legs=%s, prefetch_limit=%d, top_k_fused=%d, filtered=%s)",
+        len(points), ",".join(legs), Config.PREFETCH_LIMIT, Config.TOP_K_FUSED,
+        hard_filter is not None,
     )
     return points
 
