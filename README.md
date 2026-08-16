@@ -4,10 +4,38 @@ Local LLM that speaks like Fyodor Dostoevsky and answers questions grounded in h
 
 Two parts, plus a thin UI:
 - **Style** — Mistral-7B QLoRA fine-tune (Unsloth), merged and quantized (Q4_K_M / Q5_K_M) via `llama.cpp`. Done.
-- **Substance** — metadata-tagged RAG: per-book parsing, Qdrant hybrid dense/BM25 + native RRF + FlashRank rerank, single-pass in-character generation with a programmatic Sources list. Designed (`docs/RAG.md`), implementation next.
+- **Substance** — metadata-tagged RAG: per-book parsing, Qdrant hybrid dense/BM25 + native RRF + FlashRank rerank, single-pass in-character generation with a programmatic Sources list. Built and evaluated (`docs/RAG.md`).
 - **UI** — Vue 3 + Vite + TS single-page chat client over `/chat` SSE, "Evening Reading Room" theme (`DESIGN.md`). Built (`plans/mitya-ui/`, `frontend/`).
 
-See `docs/DESIGN.md` for the high-level architecture map, `DESIGN.md` for the UI visual design system, `docs/FINE_TUNE.md` for the training pipeline, `docs/RAG.md` for the settled RAG design (retrieval, caching, eval), `docs/TODO.md` for status.
+See `docs/DESIGN.md` for the high-level architecture map, `DESIGN.md` for the UI visual design system, `docs/FINE_TUNE.md` for the training pipeline, `docs/RAG.md` for the settled RAG design (retrieval, caching, eval), `status/INDEX.md` for per-topic status.
+
+## Measured
+
+All numbers from the target hardware (**GTX 1060, 6GB**) unless noted. Method and caveats in
+`docs/RAG.md` §VI–§VII.
+
+**Corpus & index** — 5 novels, 231 chapters parsed, **3,284 chunks** in Qdrant. Entity layer:
+678 people extracted by a teacher LLM over all 231 chapters, curated 625 → **256 canonical keys /
+441 aliases**, cross-translation name folding, zero same-book collisions at the gate.
+
+**Retrieval** — `recall@5 = 0.731` (19/26), `MRR = 0.408` on a hand-labeled set, scored on the
+fusion leg (dense nomic-embed-v1.5 + BM25, native RRF, 50/leg prefetch → 25 fused → FlashRank
+`ms-marco-MiniLM-L-12-v2` → 3).
+
+**Serving** — **5.0GB / 6.0GB VRAM** at 4096 ctx with full offload (967MiB free). TTFT ~7.9s,
+end-to-end ~21.3s at ~23.6 tok/s, retrieval-only ~2.25s (rerank-bound). Exact-match disk cache
+hit **0.008s** — ~2,600× the cold path. Single-flight `Semaphore(1)`; 503/504 resolved before the
+SSE stream opens, so a dead llama-server fails immediately instead of hanging a stream.
+
+**Fine-tune** — Mistral-7B-Instruct-v0.3, QLoRA r=32 / α=32 on all 7 projections, 3 epochs over
+**6,979 synthetic ChatML pairs**, merged and quantized to Q4_K_M / Q5_K_M / Q8_0.
+
+**Evaluation** — LLM-judged prompt-composition A/B, 36 queries × 2 arms, scored on persona /
+groundedness / fabrication. **No winner** (within noise), so both compositions were kept rather
+than pruned. The A/B's real yield was two systemic findings above any composition signal:
+meta-commentary answers (traced to the fine-tune's training data, not the serving prompt — trace
+verified clean) and stochastic empty completions (fixed: zero-token retry + sampling floor).
+Answer quality is capped by the fine-tune, not the retrieval pipeline — see `docs/RAG.md` §IX.
 
 ## Running the UI
 
@@ -46,8 +74,8 @@ mitya/
 │   ├── ingestion.py            # PDF -> text (OCR)
 │   ├── training.py             # QLoRA fine-tune (Unsloth)
 │   ├── generation.py           # synthetic Q&A generation (Gemini/Ollama)
-│   ├── rag/                    # planned: ingest, router, retrieve, context, generate, cache
-│   └── api/                    # planned: FastAPI app (/chat SSE, /health, /books)
+│   ├── rag/                    # ingest, names, entities, router, retrieve, context, generate, cache, judge
+│   └── api/                    # FastAPI app (/chat SSE, /health, /books) + frontend/dist mount
 ├── frontend/                    # Vue 3 + Vite + TS SPA (see plans/mitya-ui/)
 ├── scripts/
 │   ├── build_dataset.py        # PDF -> Q&A CSV
@@ -55,12 +83,25 @@ mitya/
 │   ├── quantize.sh             # merge + GGUF quantization
 │   ├── start_server.sh         # llama.cpp server (dev)
 │   ├── start_chat.sh           # llama.cpp CLI chat (dev)
-│   ├── build_entities.py       # planned: entity map for RAG
-│   ├── build_summaries.py      # planned: chapter summaries for RAG
-│   └── ingest_corpus.py        # planned: RAG corpus -> Qdrant
+│   ├── build_entities.py       # entity map for RAG (teacher LLM)
+│   ├── build_summaries.py      # chapter summaries for RAG (teacher LLM)
+│   ├── ingest_corpus.py        # RAG corpus -> Qdrant
+│   ├── eval_retrieval.py       # recall@5 + MRR
+│   ├── eval_quality.py         # prompt-composition A/B, LLM-judged
+│   └── measure_latency.py      # retrieval-only + end-to-end timings
 └── requirements.txt
 ```
 
 ## Status
 
-Fine-tuned model exists and runs via `scripts/start_chat.sh` / `start_server.sh`. RAG layer is designed (`docs/RAG.md`) and pending implementation — see `docs/TODO.md`.
+Complete and running end to end: fine-tuned model, RAG pipeline (P0–P7), and UI (P1–P10) are all
+built, evaluated on the target card, and committed. Per-topic detail in `status/INDEX.md`.
+
+Known residuals, all documented rather than hidden:
+- **Answer quality is capped by the fine-tune**, not the retrieval pipeline (weak teacher-generated
+  training data + an old q4 7B) — groundedness ~2.5/5, occasional meta-commentary. Not fixable at
+  the serving layer; needs a training-data pass. `docs/RAG.md` §VII.2, §IX.
+- **Latency exceeds the pre-build estimates** (retrieval ~2.25s, TTFT ~7.9s), accepted for a solo
+  local deploy on a 6GB card. `docs/RAG.md` §VI.
+- **Retrieval attribution is pending** — the absolute numbers exist, the per-stage deltas do not.
+  Plan at `plans/mitya-ablation/plan.md`.
