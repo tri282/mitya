@@ -29,5 +29,174 @@
         "mrr": 0.125
       }
     ]
+  },
+  {
+    "arm": "no-expansion",
+    "timestamp": "2026-08-16T19:07:11+00:00",
+    "expand": false,
+    "legs": [
+      "dense",
+      "bm25"
+    ],
+    "rerank_query": null,
+    "k": 5,
+    "route_matched": 6,
+    "route_checked": 6,
+    "buckets": [
+      {
+        "bucket": "PRIMARY (headline recall@5 / MRR)",
+        "k": 5,
+        "rows": 25,
+        "hits": 17,
+        "recall": 0.68,
+        "mrr": 0.4867
+      },
+      {
+        "bucket": "NEGATIVE-CONTROL (reported separately, not headline)",
+        "k": 5,
+        "rows": 2,
+        "hits": 0,
+        "recall": 0.0,
+        "mrr": 0.0
+      }
+    ]
+  },
+  {
+    "arm": "dense-only",
+    "timestamp": "2026-08-16T19:07:18+00:00",
+    "expand": true,
+    "legs": [
+      "dense"
+    ],
+    "rerank_query": null,
+    "k": 5,
+    "route_matched": 6,
+    "route_checked": 6,
+    "buckets": [
+      {
+        "bucket": "PRIMARY (headline recall@5 / MRR)",
+        "k": 5,
+        "rows": 25,
+        "hits": 17,
+        "recall": 0.68,
+        "mrr": 0.4167
+      },
+      {
+        "bucket": "NEGATIVE-CONTROL (reported separately, not headline)",
+        "k": 5,
+        "rows": 2,
+        "hits": 0,
+        "recall": 0.0,
+        "mrr": 0.0
+      }
+    ]
+  },
+  {
+    "arm": "sparse-only",
+    "timestamp": "2026-08-16T19:07:26+00:00",
+    "expand": true,
+    "legs": [
+      "bm25"
+    ],
+    "rerank_query": null,
+    "k": 5,
+    "route_matched": 6,
+    "route_checked": 6,
+    "buckets": [
+      {
+        "bucket": "PRIMARY (headline recall@5 / MRR)",
+        "k": 5,
+        "rows": 25,
+        "hits": 16,
+        "recall": 0.64,
+        "mrr": 0.404
+      },
+      {
+        "bucket": "NEGATIVE-CONTROL (reported separately, not headline)",
+        "k": 5,
+        "rows": 2,
+        "hits": 1,
+        "recall": 0.5,
+        "mrr": 0.25
+      }
+    ]
+  },
+  {
+    "arm": "rerank",
+    "timestamp": "2026-08-16T19:08:37+00:00",
+    "expand": true,
+    "legs": [
+      "dense",
+      "bm25"
+    ],
+    "rerank_query": "raw",
+    "k": 3,
+    "route_matched": 6,
+    "route_checked": 6,
+    "buckets": [
+      {
+        "bucket": "PRIMARY (headline recall@3 / MRR)",
+        "k": 3,
+        "rows": 25,
+        "hits": 14,
+        "recall": 0.56,
+        "mrr": 0.3733
+      },
+      {
+        "bucket": "NEGATIVE-CONTROL (reported separately, not headline)",
+        "k": 3,
+        "rows": 2,
+        "hits": 0,
+        "recall": 0.0,
+        "mrr": 0.0
+      },
+      {
+        "bucket": "RERANKED (same candidates, raw query)",
+        "k": 3,
+        "rows": 25,
+        "hits": 13,
+        "recall": 0.52,
+        "mrr": 0.5
+      }
+    ]
+  },
+  {
+    "arm": "rerank-expanded",
+    "timestamp": "2026-08-16T19:09:39+00:00",
+    "expand": true,
+    "legs": [
+      "dense",
+      "bm25"
+    ],
+    "rerank_query": "expanded",
+    "k": 3,
+    "route_matched": 6,
+    "route_checked": 6,
+    "buckets": [
+      {
+        "bucket": "PRIMARY (headline recall@3 / MRR)",
+        "k": 3,
+        "rows": 25,
+        "hits": 14,
+        "recall": 0.56,
+        "mrr": 0.3733
+      },
+      {
+        "bucket": "NEGATIVE-CONTROL (reported separately, not headline)",
+        "k": 3,
+        "rows": 2,
+        "hits": 0,
+        "recall": 0.0,
+        "mrr": 0.0
+      },
+      {
+        "bucket": "RERANKED (same candidates, expanded query)",
+        "k": 3,
+        "rows": 25,
+        "hits": 15,
+        "recall": 0.6,
+        "mrr": 0.5067
+      }
+    ]
   }
 ]

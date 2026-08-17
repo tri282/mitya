@@ -345,6 +345,26 @@ The retrieval and TTFT numbers exceed the pre-build estimates; they are accepted
 
 * ~30 labeled `query -> relevant chapter/chunk` pairs; report `recall@5` and `MRR`. Lets retrieval (prefixes, expansion, rerank) be tuned independently of generation — also the tripwire for RR5 (prefix misuse).
 
+**Ablation (2026-08-16, `scripts/eval_retrieval.py --arm`, results in `test/ablation.json`).** 27 rows: 25 primary + 2 negative controls reported separately. Router matched 6/6 expected-route rows on every arm.
+
+| Arm | k | recall@k | MRR | vs. baseline |
+|---|---|---|---|---|
+| **full** (shipped: expanded query, dense+BM25 RRF) | 5 | **0.720** (18/25) | 0.406 | — |
+| no-expansion (entity map off) | 5 | 0.680 (17/25) | 0.487 | -1 row, **+0.081 MRR** |
+| dense-only (BM25 leg dropped) | 5 | 0.680 (17/25) | 0.417 | -1 row |
+| sparse-only (dense leg dropped) | 5 | 0.640 (16/25) | 0.404 | -2 rows |
+| rerank — fused top-3 | 3 | 0.560 (14/25) | 0.373 | own baseline |
+| rerank — FlashRank on **raw** query (shipped) | 3 | 0.520 (13/25) | 0.500 | **-1 row**, +0.127 MRR |
+| rerank — FlashRank on **expanded** query | 3 | **0.600** (15/25) | **0.507** | +1 row, +0.134 MRR |
+
+**Read the deltas against the floor: 25 rows means one row is worth 0.040 recall, so anything under ~0.08 is a single row and is noise.** On that rule only two results clear the bar, and both barely.
+
+* **Hybrid fusion is doing real work, but modestly.** Full (0.720) beats both single legs; the dense leg is worth 2 rows, the sparse leg 1. Neither leg alone reproduces the fused score, so RRF is not decoration — but the effect is 1-2 rows, not a step change.
+* **Entity expansion does not move aggregate recall at n=25, and costs MRR.** It buys exactly one row of recall (0.680 -> 0.720) while *lowering* MRR by 0.081 — i.e. expansion surfaces one document the raw query misses, and pushes correct documents down the ranking on the rest. The eval set is Garnett-heavy and only 2 rows exercise the cross-translation folding expansion was built for, so this measures the layer on the wrong workload rather than refuting it. Not a reason to remove it; a reason to grow the eval set before defending it.
+* **ACTIONABLE — reranking the raw query is the wrong call.** The P6 impl-time judgment (carried forward unmeasured through P7) was to hand FlashRank the **raw** query. Measured: raw-query rerank *loses* a row against no reranking at all (0.560 -> 0.520), while expanded-query rerank *gains* one (0.560 -> 0.600) and edges MRR higher (0.507 vs 0.500). Both rerank arms beat the unreranked ordering on MRR, so the reranker earns its ~1.96s either way — it is being fed the wrong string. Switching `rerank()`'s query to the expanded form is a 1-line change in `src/api/app.py`; it is **not** taken yet, pending a second confirming run, since 2 rows is right at the noise floor.
+
+**Correction to the P4 baseline.** The long-quoted `recall@5 = 0.731 (19/26)` predates the P7 driver fix and counted the two negative-control rows inside the headline. On the current 27-row set with controls split out, the shipped configuration scores **0.720 (18/25)**. Quote 0.720; 0.731 is not reproducible with the current harness.
+
 ### 2. Answer quality
 
 * Three themed sets (Motivation / Philosophy / Ambiguity), 30–50 each.
