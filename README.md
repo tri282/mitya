@@ -19,9 +19,11 @@ unit, date, producer and provenance, is in `docs/v1/EVIDENCE.md`; method and cav
 678 people extracted by a teacher LLM over all 231 chapters, curated 625 → **256 canonical keys /
 441 aliases**, cross-translation name folding, zero same-book collisions at the gate.
 
-**Retrieval** — `recall@5 = 0.731` (19/26), `MRR = 0.408` on a hand-labeled set, scored on the
+**Retrieval** — `recall@5 = 0.720` (18/25), `MRR = 0.406` on a hand-labeled set, scored on the
 fusion leg (dense nomic-embed-v1.5 + BM25, native RRF, 50/leg prefetch → 25 fused → FlashRank
-`ms-marco-MiniLM-L-12-v2` → 3).
+`ms-marco-MiniLM-L-12-v2` → 3). *(Corrected 2026-08-19: the long-quoted `0.731 (19/26)` /
+`MRR = 0.408` predates the P7 eval-driver fix and counted the two negative-control rows inside
+the headline; see `docs/RAG.md` §VII.1 for the correction and current numbers.)*
 
 **Serving** — **5.0GB / 6.0GB VRAM** at 4096 ctx with full offload (967MiB free). TTFT ~7.9s,
 end-to-end ~21.3s at ~23.6 tok/s, retrieval-only ~2.25s (rerank-bound). Exact-match disk cache

@@ -1,6 +1,10 @@
 # scripts/eval_retrieval.py
 """Phase 4/7 verify: retrieval eval (design VII.1) -- recall@5 + MRR over the
-labeled query -> (book, part, chapter) pairs in test/retrieval_eval.json.
+labeled query -> targets pairs in test/retrieval_eval.json. Each row carries
+an immutable `id` and a `targets` list of one-or-more (book, part, chapter)
+dicts (mitya-v2 P0, R11) -- a hit is a match against ANY target, not just a
+single one, so questions with several legitimate source chapters score a
+correct retrieval as a hit rather than a miss.
 
 This is also the RR5 tripwire: several labeled pairs use a non-Garnett
 spelling ("Dunya", "Razumikhin", "Sonya", "Myshkin", "Zosima", "Mikhailovna")
@@ -105,11 +109,17 @@ def _load_json(path: str) -> dict:
         return json.load(f)
 
 
-def _rank_of(points: list, target: tuple) -> int | None:
-    """1-based rank of the target (book, part, chapter) in points, or None."""
+def _rank_of(points: list, targets: set[tuple]) -> int | None:
+    """1-based rank of the first point matching any of `targets`, or None.
+
+    `targets` is a set of (book, part, chapter) tuples (R11, multi-target
+    labels) -- a hit is any point whose payload matches ANY target, not just
+    a single one, so generic questions with several legitimate source
+    chapters score a correct retrieval as a hit instead of a miss.
+    """
     for i, point in enumerate(points, start=1):
-        payload = point.payload or {}
-        if (payload.get("book"), payload.get("part"), payload.get("chapter")) == target:
+        p = point.payload or {}
+        if (p.get("book"), p.get("part"), p.get("chapter")) in targets:
             return i
     return None
 
@@ -162,7 +172,7 @@ def evaluate(
     route_mismatches = 0
 
     for pair in pairs:
-        target = (pair["book"], pair["part"], pair["chapter"])
+        targets = {(t["book"], t["part"], t["chapter"]) for t in pair["targets"]}
         filters = pair.get("filters")
 
         # Real router path (was skipped entirely pre-P7 -- see module docstring).
@@ -200,9 +210,9 @@ def evaluate(
             query_used, resolved_names = pair["query"], []
 
         fused = retrieve(client, embedder, bm25, query_used, hard_filter=hard_filter, legs=legs)
-        rank = _rank_of(fused[:k], target)
+        rank = _rank_of(fused[:k], targets)
 
-        row = (pair["query"], target, rank)
+        row = (pair["query"], targets, rank)
         if pair.get("negative_control"):
             negative_control_rows.append(row)
         else:
@@ -214,11 +224,11 @@ def evaluate(
         if rerank_query is not None and not pair.get("negative_control"):
             query_for_rerank = query_used if rerank_query == "expanded" else pair["query"]
             reranked = rerank(query_for_rerank, fused, ranker)
-            reranked_rows.append((pair["query"], target, _rank_of(reranked[:k], target)))
+            reranked_rows.append((pair["query"], targets, _rank_of(reranked[:k], targets)))
 
         logger.info(
-            "query=%r target=%s rank=%s route=%s resolved_entities=%s filters=%s",
-            pair["query"], target, rank, route_name, resolved_names, filters,
+            "query=%r targets=%s rank=%s route=%s resolved_entities=%s filters=%s",
+            pair["query"], targets, rank, route_name, resolved_names, filters,
         )
 
     logger.info("=" * 60)
