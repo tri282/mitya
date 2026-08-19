@@ -23,6 +23,43 @@ logger = logging.getLogger(__name__)
 
 _ChapterTuple = tuple[object, object, object]
 
+# --- row families (mitya-v2 P0, charter §III CP0) -----------------------------
+# Every metric is a fraction, and a fraction needs to know which rows are in its
+# denominator. v1 had one boolean (`negative_control`) and therefore two buckets;
+# the four families P0 adds each need their own, because mixing denominators is
+# precisely what produced the 0.731 -> 0.720 correction (R13) and must not be
+# rebuilt at 6x the scale.
+FAMILIES = frozenset({
+    "primary",                  # headline recall@k / MRR / distinct-chapters-hit@k
+    "negative_control",         # reported separately, never in the headline (R14)
+    "entity_pair",              # paired translations; entity_fold_rate's denominator (R13)
+    "sensitive",                # sensitive-but-legitimate; false-refusal denominator
+    "adversarial",              # correct-refusal denominator
+    "book_named_no_chapter",    # the organic in-prompt scoping gap (R6)
+})
+
+# Families whose rows have a correct chapter and are therefore scored for
+# retrieval accuracy. The refusal families deliberately carry `targets: []` --
+# they go through retrieval to produce a score distribution for R15's threshold
+# calibration (P0 step 14), but there is no "right chapter" to find, so scoring
+# them would pollute recall's denominator with guaranteed misses.
+RETRIEVAL_SCORED_FAMILIES = frozenset({
+    "primary", "negative_control", "entity_pair", "book_named_no_chapter",
+})
+
+
+def family_of(row: dict) -> str:
+    """The row's denominator family, derived so the pre-family rows need no edit.
+
+    The 27 rows committed at P0 step 4 carry no `family` key and must never gain
+    one -- A9 makes them immutable. They are classified by the `negative_control`
+    boolean they already have, which is exactly the two-bucket split v1 used.
+    """
+    family = row.get("family")
+    if family:
+        return family
+    return "negative_control" if row.get("negative_control") else "primary"
+
 
 def _target_tuples(targets: list[dict]) -> set[_ChapterTuple]:
     return {(t["book"], t["part"], t["chapter"]) for t in targets}
@@ -227,6 +264,16 @@ def _demo() -> None:
     same_text = ["A short sentence. Another one here."] * 3
     z = style_distance(same_text, same_text)
     assert all(v is None for v in z.values()), "identical corpora must have zero reference variance"
+
+    # family derivation: legacy rows classify off `negative_control`, new rows
+    # off `family`, and every name the drafter can emit must be a known family.
+    assert family_of({"id": "r-0001"}) == "primary"
+    assert family_of({"id": "r-0026", "negative_control": True}) == "negative_control"
+    assert family_of({"id": "r-0031", "family": "entity_pair"}) == "entity_pair"
+    assert family_of({"family": "sensitive", "negative_control": False}) == "sensitive"
+    assert RETRIEVAL_SCORED_FAMILIES <= FAMILIES
+    assert "sensitive" not in RETRIEVAL_SCORED_FAMILIES
+    assert "adversarial" not in RETRIEVAL_SCORED_FAMILIES
 
     logger.info("src/rag/metrics.py self-check passed")
 
