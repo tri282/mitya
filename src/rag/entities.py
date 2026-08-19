@@ -111,11 +111,20 @@ class EntityMap:
         logger.info("EntityMap.resolve: query=%r resolved=%s", query, resolved_names)
         return expanded_query, resolved_names
 
-    def _scan(self, query_tokens: tuple[str, ...]) -> set[str]:
+    def _scan(self, query_tokens: tuple[str, ...]) -> list[str]:
         """Scan `query_tokens` for indexed surface spans, longest first at
         each start position (so "Lizaveta Prokofyevna" wins over a shorter
-        surface sharing its first token), then skip past the matched span."""
-        matched: set[str] = set()
+        surface sharing its first token), then skip past the matched span.
+
+        Returns keys in **query-occurrence order**, sorted within one span.
+        This used to return a set, and resolve() iterated it: with two
+        entities in one query the alias blocks swapped places depending on
+        PYTHONHASHSEED, so the same query produced different expanded text in
+        different processes, hence a different dense embedding and a different
+        ranking. Measured as recall@5 flipping 0.720/0.760 run to run (P0/R17).
+        Order is load-bearing here, not cosmetic.
+        """
+        matched: dict[str, None] = {}
         n = len(query_tokens)
         i = 0
         while i < n:
@@ -123,11 +132,11 @@ class EntityMap:
             for span in range(min(self._max_surface_len, n - i), 0, -1):
                 keys = self._index.get(query_tokens[i:i + span])
                 if keys:
-                    matched.update(keys)
+                    matched.update(dict.fromkeys(sorted(keys)))
                     matched_len = span
                     break
             i += matched_len if matched_len else 1
-        return matched
+        return list(matched)
 
     @staticmethod
     def _resolve_book(records: list[dict], active_book: str | None, key: str) -> dict | None:

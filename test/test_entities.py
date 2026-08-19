@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import sys
+import subprocess
 import tempfile
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -33,7 +34,31 @@ FIXTURE = {
             "book": "The Possessed",
         }
     ],
+    # Second entity so a query can match two records: the order their alias
+    # blocks land in is what R18's defect randomized.
+    "PyotrStepanovitch": [
+        {
+            "canonical": "Pyotr Verhovensky",
+            "aliases": ["Pyotr Stepanovitch", "Petrusha"],
+            "book": "The Possessed",
+        }
+    ],
 }
+
+# R18 regression. resolve()'s output feeds the dense embedder, so its word
+# order is model input, not cosmetics. _scan() used to return a set: with two
+# entities matched, the alias blocks swapped under PYTHONHASHSEED, giving the
+# same query a different embedding in different processes (measured as recall@5
+# flipping 0.720/0.760 across eval runs). Hash randomization is per-process, so
+# this can only be checked by running separate processes at different seeds.
+_ORDER_PROBE = """
+import json, sys
+sys.path.insert(0, {repo!r})
+import logging; logging.disable(logging.CRITICAL)
+from src.rag.entities import EntityMap
+q, names = EntityMap(path={fixture!r}).resolve("Stavrogin met Pyotr Stepanovitch")
+print(json.dumps([q, names]))
+"""
 
 
 def _write_fixture() -> str:
@@ -72,6 +97,21 @@ def main() -> None:
         _, resolved = entity_map.resolve("Stavrogin walked in", active_book="Demons")
         assert resolved == ["Stavrogin"], f"resolved={resolved!r} (expected expansion via alias)"
 
+    def r18_expansion_order_is_hash_seed_independent():
+        repo = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        code = _ORDER_PROBE.format(repo=repo, fixture=fixture_path)
+        outputs = set()
+        for seed in ("0", "1", "12345"):
+            env = {**os.environ, "PYTHONHASHSEED": seed}
+            out = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                                 text=True, env=env, check=True).stdout.strip()
+            outputs.add(out)
+        assert len(outputs) == 1, f"expansion varies by hash seed: {outputs}"
+        expanded, names = json.loads(outputs.pop())
+        # Occurrence order in the query, not set order: Stavrogin first.
+        assert names == ["Stavrogin", "Pyotr Verhovensky"], f"names={names!r}"
+        assert expanded.index("Nicolas") < expanded.index("Petrusha"), expanded
+
     def unmapped_active_book_raises():
         try:
             entity_map.resolve("Stavrogin walked in", active_book="Not A Real Book")
@@ -82,11 +122,12 @@ def main() -> None:
     check("canonical active_book still resolves", resolves_with_canonical_active_book)
     check("D3: raw alias active_book resolves via Config.resolve_book_title()", d3_resolves_with_raw_alias_active_book)
     check("unmapped active_book raises ValueError", unmapped_active_book_raises)
+    check("R18: expansion order is hash-seed independent", r18_expansion_order_is_hash_seed_independent)
 
     os.unlink(fixture_path)
 
     logger.info("=" * 60)
-    logger.info("%d passed, %d failed", 3 - failures, failures)
+    logger.info("%d passed, %d failed", 4 - failures, failures)
     if failures:
         sys.exit(1)
 

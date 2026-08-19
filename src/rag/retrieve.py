@@ -101,6 +101,12 @@ def retrieve(
     default is the shipped hybrid config, so no production caller passes it.
     RRF over a single prefetch list is order-preserving, so a one-leg run is a
     valid query rather than a degenerate one.
+
+    Determinism: Qdrant local mode scores every point (no HNSW, and it ignores
+    SearchParams entirely), so this function is deterministic given identical
+    inputs. "Given identical inputs" is the load-bearing part -- see
+    EntityMap._scan(), where a set made `query_expanded` itself vary across
+    processes (R18). Revisit if the collection moves to server mode (A1).
     """
     prefetch: list[models.Prefetch] = []
 

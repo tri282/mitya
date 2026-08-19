@@ -6,6 +6,14 @@ dicts (mitya-v2 P0, R11) -- a hit is a match against ANY target, not just a
 single one, so questions with several legitimate source chapters score a
 correct retrieval as a hit rather than a miss.
 
+Each bucket also reports `distinct-target-chapters-hit@k` (mitya-v2 P0, R10;
+src.rag.metrics.distinct_target_chapters_hit_at_k) alongside recall@k/MRR --
+the coverage fraction of a row's *own* target set found in top-k, immune to
+chunk density. recall@k/MRR are unchanged and remain the frozen, comparable
+baseline; on today's all-single-target set the new metric is bit-identical to
+recall@k (a single target's coverage is 1.0 on a hit, 0.0 on a miss) and only
+diverges once a genuine multi-target row is added.
+
 This is also the RR5 tripwire: several labeled pairs use a non-Garnett
 spelling ("Dunya", "Razumikhin", "Sonya", "Myshkin", "Zosima", "Mikhailovna")
 on purpose, so a fold regression or a missing "search_query: " prefix shows
@@ -56,6 +64,14 @@ verified nothing they claimed. Now:
     They are still retrieved and scored, just reported in a separate section
     so they inform without polluting the primary metric.
 
+Determinism (P0/R18). Retrieval IS deterministic -- Qdrant local mode scores
+every point exhaustively -- but it was measured flipping recall@5 between 0.720
+and 0.760 across 23 processes of one commit, because EntityMap._scan() returned
+a set, so the expanded query text reordered under PYTHONHASHSEED and the dense
+embedding changed with it. Fixed at the source. `--repeat N` re-runs the arm and
+reports the spread, which must be exactly 0; a nonzero spread means an input is
+varying across runs, not that there is a noise floor to average away.
+
 IMPORTANT -- same Qdrant local-mode lock as ingest_corpus.py: run only while
 the API server (if any) is stopped.
 
@@ -63,6 +79,7 @@ Usage:
     python scripts/eval_retrieval.py
     python scripts/eval_retrieval.py --pairs test/retrieval_eval.json
     python scripts/eval_retrieval.py --arm no-expansion --json test/ablation.json
+    python scripts/eval_retrieval.py --repeat 5                    # determinism check
 """
 
 import argparse
@@ -79,6 +96,11 @@ from qdrant_client import QdrantClient
 
 from src.config import Config
 from src.rag.entities import EntityMap
+from src.rag.metrics import (
+    RETRIEVAL_SCORED_FAMILIES,
+    distinct_target_chapters_hit_at_k,
+    family_of,
+)
 from src.rag.retrieve import build_hard_filter, build_ranker, rerank, retrieve
 from src.rag.router import route
 
@@ -125,16 +147,27 @@ def _rank_of(points: list, targets: set[tuple]) -> int | None:
 
 
 def _score_bucket(label: str, rows: list[tuple], k: int) -> dict | None:
-    """Log recall@k + MRR for one bucket of (query, target, rank) rows, and
-    return the headline numbers so --json can accumulate arms across runs."""
+    """Log recall@k + MRR for one bucket of (query, target, rank, dchit) rows,
+    and return the headline numbers so --json can accumulate arms across runs.
+
+    recall@k and MRR are computed exactly as before (frozen, comparable
+    baseline -- R11/step-4). `dchit` (R10's distinct-target-chapters-hit@k,
+    src.rag.metrics) is reported alongside as an additional line: on today's
+    all-single-target set it is mathematically identical to recall@k per row
+    (a single target's coverage fraction is 1.0 on a hit, 0.0 on a miss), so
+    the bucket mean equals recall@k bit-for-bit until the first genuine
+    multi-target row lands.
+    """
     if not rows:
         return None
-    hits = sum(1 for _, _, rank in rows if rank is not None)
-    mrr = sum(1.0 / rank if rank is not None else 0.0 for _, _, rank in rows) / len(rows)
+    hits = sum(1 for _, _, rank, _ in rows if rank is not None)
+    mrr = sum(1.0 / rank if rank is not None else 0.0 for _, _, rank, _ in rows) / len(rows)
+    dchit_mean = sum(dchit for _, _, _, dchit in rows) / len(rows)
     logger.info("-- %s (%d rows) --", label, len(rows))
     logger.info("recall@%d = %.3f (%d/%d)", k, hits / len(rows), hits, len(rows))
     logger.info("MRR = %.3f", mrr)
-    misses = [(q, t) for q, t, rank in rows if rank is None]
+    logger.info("distinct-target-chapters-hit@%d = %.3f", k, dchit_mean)
+    misses = [(q, t) for q, t, rank, _ in rows if rank is None]
     if misses:
         logger.info("%s misses:", label)
         for query, target in misses:
@@ -146,6 +179,7 @@ def _score_bucket(label: str, rows: list[tuple], k: int) -> dict | None:
         "hits": hits,
         "recall": round(hits / len(rows), 4),
         "mrr": round(mrr, 4),
+        "distinct_chapters_hit": round(dchit_mean, 4),
     }
 
 
@@ -165,15 +199,28 @@ def evaluate(
     legs = config["legs"]
     rerank_query = config["rerank_query"]
 
-    primary_rows: list[tuple] = []
-    negative_control_rows: list[tuple] = []
+    # One bucket per denominator family (charter §III CP0). The pre-family rows
+    # derive theirs from `negative_control` via family_of(), so this reproduces
+    # the previous two-bucket split exactly on the current set.
+    family_rows: dict[str, list[tuple]] = {}
     reranked_rows: list[tuple] = []
+    unscored: dict[str, int] = {}
     route_checked = 0
     route_mismatches = 0
 
     for pair in pairs:
         targets = {(t["book"], t["part"], t["chapter"]) for t in pair["targets"]}
         filters = pair.get("filters")
+        family = family_of(pair)
+
+        # The refusal families (sensitive, adversarial) have no correct chapter:
+        # they exist to produce a retrieval-score distribution for R15's
+        # threshold calibration, not to be scored for accuracy. Scoring them
+        # here would add guaranteed misses to a denominator they do not belong
+        # to -- the 0.731 bug, in a new costume.
+        if family not in RETRIEVAL_SCORED_FAMILIES:
+            unscored[family] = unscored.get(family, 0) + 1
+            continue
 
         # Real router path (was skipped entirely pre-P7 -- see module docstring).
         route_name, scope = route(pair["query"], filters, structure, summaries)
@@ -211,20 +258,25 @@ def evaluate(
 
         fused = retrieve(client, embedder, bm25, query_used, hard_filter=hard_filter, legs=legs)
         rank = _rank_of(fused[:k], targets)
+        dchit = distinct_target_chapters_hit_at_k(
+            [p.payload or {} for p in fused[:k]], pair["targets"]
+        )
 
-        row = (pair["query"], targets, rank)
-        if pair.get("negative_control"):
-            negative_control_rows.append(row)
-        else:
-            primary_rows.append(row)
+        family_rows.setdefault(family, []).append((pair["query"], targets, rank, dchit))
 
         # Rerank arms score a second bucket over the SAME fused candidate pool,
         # so the arm is self-baselining in one pass (fused[:k] above vs
         # reranked[:k] here) -- rerank can never be compared to the k=5 headline.
-        if rerank_query is not None and not pair.get("negative_control"):
+        if rerank_query is not None and family != "negative_control":
             query_for_rerank = query_used if rerank_query == "expanded" else pair["query"]
             reranked = rerank(query_for_rerank, fused, ranker)
-            reranked_rows.append((pair["query"], targets, _rank_of(reranked[:k], targets)))
+            reranked_top_k = reranked[:k]
+            reranked_dchit = distinct_target_chapters_hit_at_k(
+                [p.payload or {} for p in reranked_top_k], pair["targets"]
+            )
+            reranked_rows.append(
+                (pair["query"], targets, _rank_of(reranked_top_k, targets), reranked_dchit)
+            )
 
         logger.info(
             "query=%r targets=%s rank=%s route=%s resolved_entities=%s filters=%s",
@@ -235,10 +287,21 @@ def evaluate(
     logger.info("arm=%s (expand=%s, legs=%s, rerank_query=%s, k=%d)",
                 arm, config["expand"], ",".join(legs), rerank_query, k)
     logger.info("router: %d/%d expected-route rows matched", route_checked - route_mismatches, route_checked)
+    for fam, n in sorted(unscored.items()):
+        # Skipped above, but never silent: a row that vanished from every
+        # denominator without a line in the output is how a set silently shrinks.
+        logger.info("%s: %d rows skipped -- no correct chapter; R15 calibration (step 14) "
+                    "scores these on its own path", fam.upper(), n)
 
     buckets = [
-        _score_bucket(f"PRIMARY (headline recall@{k} / MRR)", primary_rows, k),
-        _score_bucket("NEGATIVE-CONTROL (reported separately, not headline)", negative_control_rows, k),
+        _score_bucket(f"PRIMARY (headline recall@{k} / MRR)", family_rows.get("primary", []), k),
+        _score_bucket("NEGATIVE-CONTROL (reported separately, not headline)",
+                      family_rows.get("negative_control", []), k),
+        *(
+            _score_bucket(f"{fam.upper()} (own denominator, not headline)", family_rows[fam], k)
+            for fam in sorted(family_rows)
+            if fam not in ("primary", "negative_control")
+        ),
         _score_bucket(f"RERANKED (same candidates, {rerank_query} query)", reranked_rows, k),
     ]
     return {
@@ -267,7 +330,32 @@ def _append_result(path: str, record: dict) -> None:
     logger.info("appended arm %r to %s (%d records)", record["arm"], path, len(results))
 
 
-def main(pairs_path: str, arm: str, json_path: str | None) -> None:
+def _report_spread(records: list[dict]) -> None:
+    """Log the run-to-run spread of the headline bucket across repeated runs.
+
+    P0 step 11's determinism check. Retrieval is deterministic, so the spread
+    must be exactly 0 -- but that is a property to TEST, not assume: it was
+    0.04 until the EntityMap._scan() set-ordering fix (R18). A nonzero spread
+    means some input to retrieval varies across runs, and no paired test
+    downstream is valid until it is found.
+
+    Caveat: --repeat runs in ONE process, so it cannot see hash-seed-dependent
+    variation -- the exact defect R18 found. The cross-process check is N
+    separate invocations appending to the same --json file.
+    """
+    for key in ("recall", "mrr"):
+        vals = [b[key] for r in records for b in r["buckets"] if b["bucket"].startswith("PRIMARY")]
+        if not vals:
+            continue
+        mean = sum(vals) / len(vals)
+        sd = (sum((v - mean) ** 2 for v in vals) / (len(vals) - 1)) ** 0.5 if len(vals) > 1 else 0.0
+        counts = {v: vals.count(v) for v in sorted(set(vals))}
+        logger.info("SPREAD %s over %d runs: mean=%.4f sd=%.4f min=%.4f max=%.4f values=%s",
+                    key, len(vals), mean, sd, min(vals), max(vals),
+                    " ".join(f"{v:.4f}x{n}" for v, n in counts.items()))
+
+
+def main(pairs_path: str, arm: str, json_path: str | None, repeat: int = 1) -> None:
     logger.info("loading dense embedder: %s", Config.EMBED_MODEL)
     embedder = TextEmbedding(model_name=Config.EMBED_MODEL)
 
@@ -292,10 +380,19 @@ def main(pairs_path: str, arm: str, json_path: str | None) -> None:
     pairs = load_pairs(pairs_path)
     logger.info("loaded %d labeled pairs from %s (arm=%s)", len(pairs), pairs_path, arm)
 
-    record = evaluate(pairs, entity_map, client, embedder, bm25, structure, summaries,
-                      arm=arm, ranker=ranker)
+    records = []
+    for i in range(repeat):
+        if repeat > 1:
+            logger.info("#" * 60)
+            logger.info("run %d/%d", i + 1, repeat)
+        records.append(evaluate(pairs, entity_map, client, embedder, bm25, structure, summaries,
+                                arm=arm, ranker=ranker))
+    if repeat > 1:
+        logger.info("#" * 60)
+        _report_spread(records)
     if json_path:
-        _append_result(json_path, record)
+        for record in records:
+            _append_result(json_path, record)
 
 
 if __name__ == "__main__":
@@ -305,7 +402,9 @@ if __name__ == "__main__":
                     help="ablation arm (see module docstring); 'full' is the shipped config")
     ap.add_argument("--json", dest="json_path", default=None,
                     help="append this arm's headline numbers to a JSON results file")
+    ap.add_argument("--repeat", type=int, default=1,
+                    help="run the arm N times and report the run-to-run spread (P0 step 11)")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    main(args.pairs, args.arm, args.json_path)
+    main(args.pairs, args.arm, args.json_path, repeat=args.repeat)
