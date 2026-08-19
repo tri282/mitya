@@ -1,147 +1,348 @@
 [
   {
+    "id": "r-0001",
     "query": "Describe the moment Raskolnikov kills the pawnbroker with an axe",
-    "book": "Crime and Punishment", "part": 1, "chapter": 7,
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 1,
+        "chapter": 7
+      }
+    ],
     "note": "grounded: summaries.json 'Crime and Punishment|1|7' -- axe murder of Alyona and Lizaveta"
   },
   {
+    "id": "r-0002",
     "query": "Raskolnikov breaks down and confesses the murder to Sonia",
-    "book": "Crime and Punishment", "part": 5, "chapter": 4,
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 5,
+        "chapter": 4
+      }
+    ],
     "note": "grounded: summaries.json 'Crime and Punishment|5|4'"
   },
   {
+    "id": "r-0003",
     "query": "Raskolnikov kneels and kisses the earth at the Hay Market before turning himself in",
-    "book": "Crime and Punishment", "part": 6, "chapter": 8,
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 6,
+        "chapter": 8
+      }
+    ],
     "note": "grounded: summaries.json 'Crime and Punishment|6|8'"
   },
   {
+    "id": "r-0004",
     "query": "How does Razumikhin help Raskolnikov after the murder",
-    "book": "Crime and Punishment", "part": 2, "chapter": 2,
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 2,
+        "chapter": 2
+      }
+    ],
     "note": "cross-translation spelling: 'Razumikhin' (P&V) vs Garnett 'Razumihin' -- RR5 tripwire"
   },
   {
+    "id": "r-0005",
     "query": "Svidrigailov lures Dunya to his room under a pretense",
-    "book": "Crime and Punishment", "part": 6, "chapter": 5,
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 6,
+        "chapter": 5
+      }
+    ],
     "note": "cross-translation spelling: 'Dunya' (P&V) vs Garnett 'Dounia'; grounded: summaries.json 'Crime and Punishment|6|5'"
   },
   {
+    "id": "r-0006",
     "query": "Sonya reads Raskolnikov the story of Lazarus",
-    "book": "Crime and Punishment", "part": 4, "chapter": 4,
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 4,
+        "chapter": 4
+      }
+    ],
     "note": "cross-translation spelling: 'Sonya' (P&V) vs Garnett 'Sonia'; grounded: summaries.json 'Crime and Punishment|4|4'"
   },
   {
+    "id": "r-0007",
     "query": "The Grand Inquisitor's speech to the silent Christ",
-    "book": "The Brothers Karamazov", "part": 5, "chapter": 5,
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 5,
+        "chapter": 5
+      }
+    ],
     "note": "grounded: summaries.json 'The Brothers Karamazov|5|5'"
   },
   {
+    "id": "r-0008",
     "query": "Ivan argues that the suffering of innocent children makes him reject God's harmony",
-    "book": "The Brothers Karamazov", "part": 5, "chapter": 4,
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 5,
+        "chapter": 4
+      }
+    ],
     "note": "grounded: summaries.json 'The Brothers Karamazov|5|4' ('Rebellion')"
   },
   {
+    "id": "r-0009",
     "query": "Father Zosima's body begins to decompose, scandalizing the monastery",
-    "book": "The Brothers Karamazov", "part": 7, "chapter": 1,
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 7,
+        "chapter": 1
+      }
+    ],
     "note": "grounded: summaries.json 'The Brothers Karamazov|7|1'; cross-translation spelling (P7): 'Zosima' (P&V) vs Garnett/entities.json 'Zossima' -- resolves only via names.fold()'s doubled-consonant collapse, RR5 tripwire"
   },
   {
+    "id": "r-0010",
     "query": "Dmitri watches his father through the bedroom window on the night of the murder",
-    "book": "The Brothers Karamazov", "part": 8, "chapter": 4,
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 8,
+        "chapter": 4
+      }
+    ],
     "note": "grounded: summaries.json 'The Brothers Karamazov|8|4'"
   },
   {
+    "id": "r-0011",
     "query": "The prosecutor's closing rebuttal at Dmitri's trial",
-    "book": "The Brothers Karamazov", "part": 12, "chapter": 14,
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 12,
+        "chapter": 14
+      }
+    ],
     "note": "grounded: summaries.json 'The Brothers Karamazov|12|14'"
   },
   {
+    "id": "r-0012",
     "query": "Katerina Ivanovna questions Ivan about his belief in Dmitri's guilt",
-    "book": "The Brothers Karamazov", "part": 11, "chapter": 5,
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 11,
+        "chapter": 5
+      }
+    ],
     "note": "grounded: summaries.json 'The Brothers Karamazov|11|5'; NB 'Katerina Ivanovna' also names a different person in Crime and Punishment -- book-scoped entity resolution test"
   },
   {
+    "id": "r-0013",
     "query": "Myshkin meets Rogojin on the train to Petersburg",
-    "book": "The Idiot", "part": 1, "chapter": 1,
+    "targets": [
+      {
+        "book": "The Idiot",
+        "part": 1,
+        "chapter": 1
+      }
+    ],
     "note": "cross-translation spelling: 'Myshkin' (P&V) vs Garnett 'Muishkin'; grounded: summaries.json 'The Idiot|1|1'"
   },
   {
+    "id": "r-0014",
     "query": "Prince Myshkin arrives to lodge at the Ivolgin household",
-    "book": "The Idiot", "part": 1, "chapter": 8,
+    "targets": [
+      {
+        "book": "The Idiot",
+        "part": 1,
+        "chapter": 8
+      }
+    ],
     "note": "grounded: summaries.json 'The Idiot|1|8'"
   },
   {
+    "id": "r-0015",
     "query": "Lizabetha Prokofievna worries about a rumored engagement between Myshkin and Aglaya",
-    "book": "The Idiot", "part": 4, "chapter": 5,
+    "targets": [
+      {
+        "book": "The Idiot",
+        "part": 4,
+        "chapter": 5
+      }
+    ],
     "note": "grounded: summaries.json 'The Idiot|4|5'"
   },
   {
+    "id": "r-0016",
     "query": "Myshkin's epilepsy and his impoverished return from treatment in Switzerland",
-    "book": "The Idiot", "part": 1, "chapter": 1,
+    "targets": [
+      {
+        "book": "The Idiot",
+        "part": 1,
+        "chapter": 1
+      }
+    ],
     "note": "grounded: summaries.json 'The Idiot|1|1'"
   },
   {
+    "id": "r-0017",
     "query": "The conspirators gather at the grotto to murder Shatov",
-    "book": "The Possessed", "part": 3, "chapter": 6,
+    "targets": [
+      {
+        "book": "The Possessed",
+        "part": 3,
+        "chapter": 6
+      }
+    ],
     "note": "grounded: summaries.json 'The Possessed|3|6'"
   },
   {
+    "id": "r-0018",
     "query": "Pyotr Verhovensky spreads rumors about Yulia Mihailovna and manages his revolutionary quintet",
-    "book": "The Possessed", "part": 3, "chapter": 4,
+    "targets": [
+      {
+        "book": "The Possessed",
+        "part": 3,
+        "chapter": 4
+      }
+    ],
     "note": "grounded: summaries.json 'The Possessed|3|4'"
   },
   {
+    "id": "r-0019",
     "query": "Yulia Mikhailovna organizes a provincial fete surrounded by her circle of local admirers",
-    "book": "The Possessed", "part": 2, "chapter": 5,
+    "targets": [
+      {
+        "book": "The Possessed",
+        "part": 2,
+        "chapter": 5
+      }
+    ],
     "note": "cross-translation spelling (P7): 'Mikhailovna' (P&V, kh) vs Garnett/entities.json 'Mihailovna' (h) -- resolves only via names.fold()'s kh->h rule, RR5 tripwire; grounded: summaries.json 'The Possessed|2|5'"
   },
   {
+    "id": "r-0020",
     "query": "What happens in Demons when the quintet plans Shatov's death",
-    "book": "The Possessed", "part": 3, "chapter": 6,
-    "filters": {"book": "Demons"},
+    "targets": [
+      {
+        "book": "The Possessed",
+        "part": 3,
+        "chapter": 6
+      }
+    ],
+    "filters": {
+      "book": "Demons"
+    },
     "expected_route": "DEFAULT",
     "note": "book-title alias test (P7: now exercised via build_hard_filter, not dead code): 'Demons' -> canonical 'The Possessed' (Config.BOOK_TITLE_ALIASES); 'filters' forces the real build_hard_filter() alias-resolution path; expect router.route() == DEFAULT (summary-intent present but no resolvable part/chapter scope)"
   },
   {
+    "id": "r-0021",
     "query": "In The Devils, Virginsky tries to stop the murder of Shatov",
-    "book": "The Possessed", "part": 3, "chapter": 6,
-    "filters": {"book": "The Devils"},
+    "targets": [
+      {
+        "book": "The Possessed",
+        "part": 3,
+        "chapter": 6
+      }
+    ],
+    "filters": {
+      "book": "The Devils"
+    },
     "expected_route": "DEFAULT",
     "note": "book-title alias test (P7: now exercised via build_hard_filter, not dead code): 'The Devils' -> canonical 'The Possessed'; 'filters' forces the real build_hard_filter() alias-resolution path; expect router.route() == DEFAULT (no summary-intent keyword in the query at all)"
   },
   {
+    "id": "r-0022",
     "query": "Stepan Trofimovitch lives for twenty years under Varvara Petrovna's patronage",
-    "book": "The Possessed", "part": 1, "chapter": 1,
+    "targets": [
+      {
+        "book": "The Possessed",
+        "part": 1,
+        "chapter": 1
+      }
+    ],
     "note": "grounded: summaries.json 'The Possessed|1|1'"
   },
   {
+    "id": "r-0023",
     "query": "The narrator drives Liza away and thrusts money into her hand",
-    "book": "Notes from the Underground", "part": 2, "chapter": 10,
+    "targets": [
+      {
+        "book": "Notes from the Underground",
+        "part": 2,
+        "chapter": 10
+      }
+    ],
     "note": "grounded: summaries.json 'Notes from the Underground|2|10'"
   },
   {
+    "id": "r-0024",
     "query": "What happens in Notes from Underground part 2 chapter 10",
-    "book": "Notes from the Underground", "part": 2, "chapter": 10,
+    "targets": [
+      {
+        "book": "Notes from the Underground",
+        "part": 2,
+        "chapter": 10
+      }
+    ],
     "expected_route": "STRUCTURAL",
-    "expected_scope": {"book": "Notes from the Underground", "part": 2, "chapter": 10},
+    "expected_scope": {
+      "book": "Notes from the Underground",
+      "part": 2,
+      "chapter": 10
+    },
     "note": "STRUCTURAL routing test (summary-intent 'what happens in' + resolvable scope) + book-title alias 'Notes from Underground' -> canonical 'Notes from the Underground'; expect router.route() == STRUCTURAL (P7: now checked, not just claimed)"
   },
   {
+    "id": "r-0025",
     "query": "summarize The Brothers Karamazov book 5 chapter 5",
-    "book": "The Brothers Karamazov", "part": 5, "chapter": 5,
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 5,
+        "chapter": 5
+      }
+    ],
     "expected_route": "STRUCTURAL",
-    "expected_scope": {"book": "The Brothers Karamazov", "part": 5, "chapter": 5},
+    "expected_scope": {
+      "book": "The Brothers Karamazov",
+      "part": 5,
+      "chapter": 5
+    },
     "note": "STRUCTURAL routing test: 'summarize' keyword + 'book 5 chapter 5' resolvable scope; expect router.route() == STRUCTURAL (P7: now checked, not just claimed)"
   },
   {
+    "id": "r-0026",
     "query": "recap what happens when Raskolnikov confesses to the police",
-    "book": "Crime and Punishment", "part": 6, "chapter": 8,
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 6,
+        "chapter": 8
+      }
+    ],
     "expected_route": "DEFAULT",
     "negative_control": true,
     "note": "summary-intent keyword ('recap') with NO resolvable chapter scope in the text -- expect router.route() == DEFAULT (ruling R14 AND condition), even though intent is present. Negative control (P7, per P4 review docs/RUNBOOK-P4.md sec V): its broad phrasing drags recall@5 down with no retrieval-tuning value, so it is scored separately, not in the headline metric."
   },
   {
+    "id": "r-0027",
     "query": "summarize Raskolnikov's theory of the extraordinary man",
-    "book": "Crime and Punishment", "part": 3, "chapter": 5,
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 3,
+        "chapter": 5
+      }
+    ],
     "expected_route": "DEFAULT",
     "negative_control": true,
     "note": "thematic 'summarize X' with no resolvable chapter -- must stay DEFAULT per ruling R14, this is the router's negative control case. Negative control (P7, per P4 review docs/RUNBOOK-P4.md sec V): scored separately, not in the headline metric."
