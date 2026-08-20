@@ -101,7 +101,13 @@ from src.rag.metrics import (
     distinct_target_chapters_hit_at_k,
     family_of,
 )
-from src.rag.retrieve import build_hard_filter, build_ranker, rerank, retrieve
+from src.rag.retrieve import (
+    build_hard_filter,
+    build_ranker,
+    rerank,
+    retrieve,
+    retrieve_structural_excerpts,
+)
 from src.rag.router import route
 
 logger = logging.getLogger(__name__)
@@ -256,7 +262,19 @@ def evaluate(
         else:
             query_used, resolved_names = pair["query"], []
 
-        fused = retrieve(client, embedder, bm25, query_used, hard_filter=hard_filter, legs=legs)
+        # Dispatch on the route, exactly as src/api/app.py does (R19). Pre-R19
+        # this file computed the route, asserted it, then ran the DEFAULT hybrid
+        # path for every row -- so STRUCTURAL rows were scored on a pipeline
+        # production never uses for them, and missed on query text that is
+        # almost pure metadata. A harness that does not mirror serving measures
+        # the harness.
+        if route_name == "STRUCTURAL":
+            fused = retrieve_structural_excerpts(
+                client, embedder, pair["query"],
+                scope["book"], scope["part"], scope["chapter"],
+            )
+        else:
+            fused = retrieve(client, embedder, bm25, query_used, hard_filter=hard_filter, legs=legs)
         rank = _rank_of(fused[:k], targets)
         dchit = distinct_target_chapters_hit_at_k(
             [p.payload or {} for p in fused[:k]], pair["targets"]
