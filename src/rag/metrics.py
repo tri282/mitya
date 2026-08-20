@@ -36,6 +36,7 @@ FAMILIES = frozenset({
     "sensitive",                # sensitive-but-legitimate; false-refusal denominator
     "adversarial",              # correct-refusal denominator
     "book_named_no_chapter",    # the organic in-prompt scoping gap (R6)
+    "structural",               # STRUCTURAL-routed; own denominator (R19)
 })
 
 # Families whose rows have a correct chapter and are therefore scored for
@@ -45,7 +46,15 @@ FAMILIES = frozenset({
 # them would pollute recall's denominator with guaranteed misses.
 RETRIEVAL_SCORED_FAMILIES = frozenset({
     "primary", "negative_control", "entity_pair", "book_named_no_chapter",
+    "structural",
 })
+
+# `structural` is scored, but its hit is close to tautological: the router
+# resolves the chapter and retrieve_structural_excerpts() hard-filters to it, so
+# the target is found unless the plumbing itself is broken. That is worth
+# measuring -- it is the STRUCTURAL path's end-to-end tripwire -- but it is not
+# ranking quality, and mixing it into the headline would inflate recall with
+# rows that cannot miss. Hence its own denominator (R19).
 
 
 def family_of(row: dict) -> str:

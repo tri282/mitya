@@ -115,7 +115,7 @@ def _target_from_key(key: str) -> dict:
 
 
 WORKLOAD_FAMILY = {
-    "structural": "primary",
+    "structural": "structural",  # R19: own denominator, hit is near-tautological
     "minor-entity": "primary",
     "cross-book": "primary",
     "cross-translation": "entity_pair",
