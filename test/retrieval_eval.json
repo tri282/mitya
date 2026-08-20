@@ -346,5 +346,297 @@
     "expected_route": "DEFAULT",
     "negative_control": true,
     "note": "thematic 'summarize X' with no resolvable chapter -- must stay DEFAULT per ruling R14, this is the router's negative control case. Negative control (P7, per P4 review docs/RUNBOOK-P4.md sec V): scored separately, not in the headline metric."
+  },
+  {
+    "id": "r-0028",
+    "query": "Why does Mitya brutally beat up the old captain in front of his young son?",
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 4,
+        "chapter": 7
+      }
+    ],
+    "note": "grounded: summaries.json 'The Brothers Karamazov|4|7' (Snegiryov recounts the marketplace humiliation Ilusha witnessed); the beating itself is never narrated on-page",
+    "family": "primary"
+  },
+  {
+    "id": "r-0029",
+    "query": "Why does Porfiry Petrovich keep playing psychological mind games instead of just arresting the murderer right away?",
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 3,
+        "chapter": 5
+      },
+      {
+        "book": "Crime and Punishment",
+        "part": 4,
+        "chapter": 5
+      },
+      {
+        "book": "Crime and Punishment",
+        "part": 6,
+        "chapter": 2
+      }
+    ],
+    "note": "multi-target (R11): the cat-and-mouse runs across 3|5 and 4|5; 6|2 is where Porfiry states the motive outright",
+    "family": "primary"
+  },
+  {
+    "id": "r-0030",
+    "query": "Describe the scene where the drunk man is trampled by a horse carriage in the middle of the street.",
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 2,
+        "chapter": 7
+      }
+    ],
+    "note": "grounded: summaries.json 'Crime and Punishment|2|7' (Marmeladov trampled by the carriage)",
+    "family": "primary"
+  },
+  {
+    "id": "r-0031",
+    "query": "Tell me about the disastrous literary fete where the speakers get humiliated and the crowd turns into a chaotic mob.",
+    "targets": [
+      {
+        "book": "The Possessed",
+        "part": 3,
+        "chapter": 1
+      }
+    ],
+    "note": "grounded: 'The Possessed|3|1' (Yulia Mihailovna's literary matinee); 3|2 is aftermath only",
+    "family": "primary"
+  },
+  {
+    "id": "r-0032",
+    "query": "Why does Stavrogin sit completely still with his hands behind his back and let Shatov slap him in the face?",
+    "targets": [
+      {
+        "book": "The Possessed",
+        "part": 1,
+        "chapter": 5
+      }
+    ],
+    "note": "grounded: 'The Possessed|1|5' (chapter closes with Shatov striking Nikolay)",
+    "family": "primary"
+  },
+  {
+    "id": "r-0033",
+    "query": "Why does Myshkin trade crosses with Rogozhin, and what does it actually mean for their relationship?",
+    "targets": [
+      {
+        "book": "The Idiot",
+        "part": 2,
+        "chapter": 4
+      }
+    ],
+    "note": "grounded: 'The Idiot|2|4' (Holbein conversation, then the exchange of crosses)",
+    "family": "primary"
+  },
+  {
+    "id": "r-0034",
+    "query": "Describe the moment the woman throws the massive bundle of money into the fireplace while everyone watches.",
+    "targets": [
+      {
+        "book": "The Idiot",
+        "part": 1,
+        "chapter": 16
+      }
+    ],
+    "note": "grounded: 'The Idiot|1|16' (Nastasia throws the 100,000 roubles in the fire, dares Gania)",
+    "family": "primary"
+  },
+  {
+    "id": "r-0035",
+    "query": "Why does the narrator claim that humans would purposefully go mad or cause destruction just to prove they aren't 'piano keys'?",
+    "targets": [
+      {
+        "book": "Notes from the Underground",
+        "part": 1,
+        "chapter": 8
+      }
+    ],
+    "note": "grounded: 'Notes from the Underground|1|8' (piano-key / free-will argument); 1|9 restates it",
+    "family": "primary"
+  },
+  {
+    "id": "r-0036",
+    "query": "How does the farewell dinner party with his former schoolmates end up going completely wrong for the narrator?",
+    "targets": [
+      {
+        "book": "Notes from the Underground",
+        "part": 2,
+        "chapter": 4
+      }
+    ],
+    "note": "grounded: 'Notes from the Underground|2|4' (wrong time, Zverkov's condescension, the toast); 2|3 is only the arrangement",
+    "family": "primary"
+  },
+  {
+    "id": "r-0037",
+    "query": "What happens in Crime and Punishment part 2 chapter 5",
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 2,
+        "chapter": 5
+      }
+    ],
+    "note": "STRUCTURAL-routing candidate (step-5 gap: only Notes from the Underground and Brothers Karamazov currently covered) -- verify router.route() resolves this phrasing to STRUCTURAL with this exact scope before accepting",
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "Crime and Punishment",
+      "part": 2,
+      "chapter": 5
+    }
+  },
+  {
+    "id": "r-0038",
+    "query": "What happens in The Idiot part 1 chapter 9",
+    "targets": [
+      {
+        "book": "The Idiot",
+        "part": 1,
+        "chapter": 9
+      }
+    ],
+    "note": "STRUCTURAL-routing candidate (step-5 gap: only Notes from the Underground and Brothers Karamazov currently covered) -- verify router.route() resolves this phrasing to STRUCTURAL with this exact scope before accepting",
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "The Idiot",
+      "part": 1,
+      "chapter": 9
+    }
+  },
+  {
+    "id": "r-0039",
+    "query": "What happens in The Possessed part 1 chapter 4",
+    "targets": [
+      {
+        "book": "The Possessed",
+        "part": 1,
+        "chapter": 4
+      }
+    ],
+    "note": "STRUCTURAL-routing candidate (step-5 gap: only Notes from the Underground and Brothers Karamazov currently covered) -- verify router.route() resolves this phrasing to STRUCTURAL with this exact scope before accepting",
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "The Possessed",
+      "part": 1,
+      "chapter": 4
+    }
+  },
+  {
+    "id": "r-0040",
+    "query": "What role does Zverkov play in Notes from the Underground?",
+    "targets": [
+      {
+        "book": "Notes from the Underground",
+        "part": 2,
+        "chapter": 3
+      },
+      {
+        "book": "Notes from the Underground",
+        "part": 2,
+        "chapter": 4
+      }
+    ],
+    "note": "minor-entity coverage gap (step-5 table): 'Zverkov' absent from all existing rows. Multi-target (R11): 2|3 arranges the dinner, 2|4 is where Zverkov is present and characterized",
+    "family": "primary"
+  },
+  {
+    "id": "r-0041",
+    "query": "What role does Shigalov play in The Possessed?",
+    "targets": [
+      {
+        "book": "The Possessed",
+        "part": 2,
+        "chapter": 7
+      }
+    ],
+    "note": "minor-entity coverage gap (step-5 table): 'Shigalov' absent from all existing rows. grounded: summaries.json 'The Possessed|2|7' -- Shigalov presents his theory of social control there; in 3|4 he is only a listed quintet member",
+    "family": "primary"
+  },
+  {
+    "id": "r-0042",
+    "query": "What role does Andrey Semyonovitch Lebeziatnikov play in Crime and Punishment?",
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 5,
+        "chapter": 1
+      },
+      {
+        "book": "Crime and Punishment",
+        "part": 5,
+        "chapter": 3
+      }
+    ],
+    "note": "minor-entity coverage gap (step-5 table): 'Lebeziatnikov' absent from all existing rows. Multi-target (R11): 5|1 is the Luzhin debate you flagged, 5|3 is his defining act -- exposing Luzhin's framing of Sonia",
+    "family": "primary"
+  },
+  {
+    "id": "r-0043",
+    "query": "What role does Ferfitchkin play in Notes from the Underground?",
+    "targets": [
+      {
+        "book": "Notes from the Underground",
+        "part": 2,
+        "chapter": 3
+      },
+      {
+        "book": "Notes from the Underground",
+        "part": 2,
+        "chapter": 4
+      }
+    ],
+    "note": "minor-entity coverage gap (step-5 table): 'Ferfitchkin' absent from all existing rows. Same target pair as the Zverkov row by design -- different name, same episode, so it tests minor-name resolution rather than a new chapter",
+    "family": "primary"
+  },
+  {
+    "id": "r-0044",
+    "query": "How does Crime and Punishment's treatment of confession compare to The Idiot's?",
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 5,
+        "chapter": 4
+      },
+      {
+        "book": "Crime and Punishment",
+        "part": 6,
+        "chapter": 8
+      },
+      {
+        "book": "The Idiot",
+        "part": 3,
+        "chapter": 7
+      }
+    ],
+    "note": "cross-book row (step-5 gap: 0 rows span >1 book). C&P confession: 5|4 to Sonia, 6|8 to the police. The Idiot: 3|7, Hippolyte reads his 'Necessary Explanation'. 7|1 (Siberia) dropped -- aftermath of the confession, not the act. Idiot 3|5 dropped -- he only produces the document there, 3|7 is the reading",
+    "family": "primary"
+  },
+  {
+    "id": "r-0045",
+    "query": "How does Crime and Punishment's treatment of suffering compare to The Possessed's?",
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 6,
+        "chapter": 2
+      },
+      {
+        "book": "The Possessed",
+        "part": 3,
+        "chapter": 7
+      }
+    ],
+    "note": "cross-book row (step-5 gap). C&P 6|2: Porfiry urges Raskolnikov to accept suffering. The Possessed 3|7: Stepan Trofimovitch's fevered flight and deathbed turn with the Gospel-seller -- the book's one redemptive-suffering thread. 3|2 was fete aftermath, unrelated",
+    "family": "primary"
   }
 ]
