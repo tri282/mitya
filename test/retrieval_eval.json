@@ -1044,5 +1044,160 @@
     "family": "sensitive",
     "shape": "murder-depicted",
     "phrasing": "plain"
+  },
+  {
+    "id": "r-0090",
+    "query": "How is the epileptic seizure described in The Idiot?",
+    "targets": [
+      {
+        "book": "The Idiot",
+        "part": 2,
+        "chapter": 5
+      }
+    ],
+    "note": "R6 pair 'epilepsy', arm 1 of 2. Epileptic fits are depicted in BOTH The Idiot (Myshkin) and Karamazov (Smerdyakov) -- the book name is the only disambiguator, no character is named. Target: Idiot 2|5, the fit that interrupts Rogojin on the stairs.",
+    "family": "book_named_no_chapter",
+    "pair_key": "epilepsy"
+  },
+  {
+    "id": "r-0091",
+    "query": "How is the epileptic seizure described in The Brothers Karamazov?",
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 11,
+        "chapter": 6
+      },
+      {
+        "book": "The Brothers Karamazov",
+        "part": 12,
+        "chapter": 8
+      }
+    ],
+    "note": "R6 pair 'epilepsy', arm 2 of 2. Identical query modulo the book title. Multi-target (R11): 11|6 is Smerdyakov recovering from the fits and explaining them to Ivan, 12|8 is the prosecution characterizing him as an epileptic incapable of the crime.",
+    "family": "book_named_no_chapter",
+    "pair_key": "epilepsy"
+  },
+  {
+    "id": "r-0092",
+    "query": "Which character takes his own life in Crime and Punishment, and how?",
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 6,
+        "chapter": 6
+      }
+    ],
+    "note": "R6 pair 'suicide', arm 1 of 2. A suicide occurs in at least three novels (Svidrigailov, Kirillov, Ippolit's attempt) -- no character named, so only the title scopes it. Target: C&P 6|6, Svidrigailov shoots himself in the temple after announcing he is going to America.",
+    "family": "book_named_no_chapter",
+    "pair_key": "suicide"
+  },
+  {
+    "id": "r-0093",
+    "query": "Which character takes his own life in The Possessed, and how?",
+    "targets": [
+      {
+        "book": "The Possessed",
+        "part": 3,
+        "chapter": 6
+      }
+    ],
+    "note": "R6 pair 'suicide', arm 2 of 2. Target: Possessed 3|6, Kirillov signs the confession Pyotr Stepanovitch wants and then shoots himself.",
+    "family": "book_named_no_chapter",
+    "pair_key": "suicide"
+  },
+  {
+    "id": "r-0094",
+    "query": "Who challenges someone to a duel in Notes from the Underground, and what comes of it?",
+    "targets": [
+      {
+        "book": "Notes from the Underground",
+        "part": 2,
+        "chapter": 4
+      },
+      {
+        "book": "Notes from the Underground",
+        "part": 2,
+        "chapter": 5
+      }
+    ],
+    "note": "R6 pair 'duel', arm 1 of 2. Duels or duel-challenges appear in NFU, Karamazov (Zossima) and The Possessed (Stavrogin/Gaganov). Multi-target: 2|4 is the challenge thrown at the dinner and dismissed, 2|5 is the narrator pursuing Zverkov intending to slap him and demand satisfaction.",
+    "family": "book_named_no_chapter",
+    "pair_key": "duel"
+  },
+  {
+    "id": "r-0095",
+    "query": "Who challenges someone to a duel in The Possessed, and what comes of it?",
+    "targets": [
+      {
+        "book": "The Possessed",
+        "part": 2,
+        "chapter": 3
+      }
+    ],
+    "note": "R6 pair 'duel', arm 2 of 2. Target: Possessed 2|3, Stavrogin duels Gaganov with Kirillov as second. NOT 2|4, which is the aftermath and public reaction -- a likely mislabel worth keeping an eye on.",
+    "family": "book_named_no_chapter",
+    "pair_key": "duel"
+  },
+  {
+    "id": "r-0096",
+    "query": "How does a father's public humiliation affect his family in Crime and Punishment?",
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 1,
+        "chapter": 2
+      }
+    ],
+    "note": "R6 pair 'humiliated_father', arm 1 of 2. The destitute, self-disgracing father recurs in C&P (Marmeladov) and Karamazov (Snegiryov) -- generic phrasing, no name. Target: C&P 1|2, Marmeladov's tavern confession about Katerina Ivanovna and Sonia.",
+    "family": "book_named_no_chapter",
+    "pair_key": "humiliated_father"
+  },
+  {
+    "id": "r-0097",
+    "query": "How does a father's public humiliation affect his family in The Brothers Karamazov?",
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 4,
+        "chapter": 7
+      }
+    ],
+    "note": "R6 pair 'humiliated_father', arm 2 of 2. Target: BK 4|7, Captain Snegiryov recounting the marketplace beating that his son Ilusha witnessed.",
+    "family": "book_named_no_chapter",
+    "pair_key": "humiliated_father"
+  },
+  {
+    "id": "r-0098",
+    "query": "Where does someone confess in front of a hostile audience in The Idiot?",
+    "targets": [
+      {
+        "book": "The Idiot",
+        "part": 3,
+        "chapter": 5
+      },
+      {
+        "book": "The Idiot",
+        "part": 3,
+        "chapter": 7
+      }
+    ],
+    "note": "R6 pair 'public_confession', arm 1 of 2. Public confession before a jeering audience occurs in The Idiot (Hippolyte) and Karamazov (Ivan in court). Multi-target: 3|5 produces the sealed 'A Necessary Explanation', 3|7 is the reading itself and the guests' contempt.",
+    "family": "book_named_no_chapter",
+    "pair_key": "public_confession"
+  },
+  {
+    "id": "r-0099",
+    "query": "Where does someone confess in front of a hostile audience in The Brothers Karamazov?",
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 12,
+        "chapter": 5
+      }
+    ],
+    "note": "R6 pair 'public_confession', arm 2 of 2. Target: BK 12|5, Ivan confessing in open court that he incited Smerdyakov, producing the money, while visibly breaking down.",
+    "family": "book_named_no_chapter",
+    "pair_key": "public_confession"
   }
 ]
