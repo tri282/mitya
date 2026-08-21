@@ -179,6 +179,7 @@ class TeacherClient:
         max_retries: int = Config.TEACHER_MAX_RETRIES,
         timeout_ms: int = Config.TEACHER_TIMEOUT_MS,
         max_output_tokens: int = Config.TEACHER_MAX_OUTPUT_TOKENS,
+        temperature: float = 0.0,
     ):
         key = api_key or Config.GOOGLE_API_KEY
         if not key:
@@ -204,7 +205,11 @@ class TeacherClient:
         self._config = types.GenerateContentConfig(
             safety_settings=SAFETY_SETTINGS,
             response_mime_type="application/json",
-            temperature=0.0,
+            # 0.0 everywhere in production. Injectable only so the judge-variance
+            # probe (P0 step 9a) can separate "the judge is deterministic" from
+            # "the rubric is unambiguous" -- at temperature 0 those two look
+            # identical, and they demand different fixes.
+            temperature=temperature,
             max_output_tokens=max_output_tokens,
         )
         logger.info(
