@@ -1,40 +1,182 @@
 [
-  {"theme": "Motivation", "query": "Why did Raskolnikov convince himself murder was justified?"},
-  {"theme": "Motivation", "query": "What drove Ivan Karamazov to reject God's harmony even as he loved his brother?"},
-  {"theme": "Motivation", "query": "Why does Prince Myshkin forgive those who exploit his kindness?"},
-  {"theme": "Motivation", "query": "What made Stavrogin confess his crime to Bishop Tikhon, only to withdraw the confession?"},
-  {"theme": "Motivation", "query": "Why does the Underground Man torment Liza after she offers him tenderness?"},
-  {"theme": "Motivation", "query": "What motivates Sonia to endure her family's shame without bitterness?"},
-  {"theme": "Motivation", "query": "Why does Dmitri Karamazov choose exile in Siberia instead of fleeing?"},
-  {"theme": "Motivation", "query": "What drives Pyotr Verhovensky to push his revolutionary circle toward murder?"},
-  {"theme": "Motivation", "query": "Why does Svidrigailov keep pursuing Dounia even after she rejects him utterly?"},
-  {"theme": "Motivation", "query": "What compels Smerdyakov to both commit the murder and later confess to it?"},
-  {"theme": "Motivation", "query": "Why does Grushenka torment both Dmitri and old Karamazov before choosing?"},
-  {"theme": "Motivation", "query": "What motivates Razumihin's devotion to Raskolnikov despite his coldness?"},
-
-  {"theme": "Philosophy", "query": "Explain Raskolnikov's theory of the extraordinary man."},
-  {"theme": "Philosophy", "query": "What is the meaning of the Grand Inquisitor's argument against Christ's gift of freedom?"},
-  {"theme": "Philosophy", "query": "How does Ivan's idea that everything is permitted without God relate to Smerdyakov's crime?"},
-  {"theme": "Philosophy", "query": "What is Kirillov's philosophy of the man-god who conquers the fear of death through suicide?"},
-  {"theme": "Philosophy", "query": "Explain the Underground Man's rejection of the Crystal Palace and rational self-interest."},
-  {"theme": "Philosophy", "query": "What does Father Zosima teach about active love versus love in dreams?"},
-  {"theme": "Philosophy", "query": "How does Myshkin's idea that beauty will save the world relate to Nastasia Filippovna's fate?"},
-  {"theme": "Philosophy", "query": "What is Shatov's argument that a nation needs its own god to survive?"},
-  {"theme": "Philosophy", "query": "What does the novel suggest about suffering as a path to redemption through Sonia?"},
-  {"theme": "Philosophy", "query": "What is the philosophical significance of the story of Lazarus to Raskolnikov?"},
-  {"theme": "Philosophy", "query": "What is Raskolnikov's inner conflict between conscience and his theory of transgression?"},
-  {"theme": "Philosophy", "query": "What does Ippolit's confession in The Idiot say about the meaning of a man's remaining days?"},
-
-  {"theme": "Ambiguity", "query": "Was Raskolnikov's confession true repentance or simple exhaustion?"},
-  {"theme": "Ambiguity", "query": "Is Svidrigailov's suicide an act of despair or a final mercy toward Dounia?"},
-  {"theme": "Ambiguity", "query": "Did Ivan intend for Smerdyakov to kill their father, even without ever saying so?"},
-  {"theme": "Ambiguity", "query": "Is Stavrogin beyond redemption, or still capable of it, by the novel's end?"},
-  {"theme": "Ambiguity", "query": "Was Father Zosima's teaching vindicated or undermined by his body's decay?"},
-  {"theme": "Ambiguity", "query": "Is the Underground Man's cruelty to Liza a rejection of love or a fear of it?"},
-  {"theme": "Ambiguity", "query": "Did Dmitri Karamazov kill his father in spirit, even though not in fact?"},
-  {"theme": "Ambiguity", "query": "Is Myshkin's goodness a form of wisdom or a fatal kind of innocence?"},
-  {"theme": "Ambiguity", "query": "Was Nastasia Filippovna's choice of Rogojin over Myshkin self-destruction or clarity?"},
-  {"theme": "Ambiguity", "query": "Does Grushenka's love for Dmitri redeem her, or does it come too late?"},
-  {"theme": "Ambiguity", "query": "Is Pyotr Verhovensky a true believer in revolution, or merely an opportunist?"},
-  {"theme": "Ambiguity", "query": "Did Sonia save Raskolnikov, or did he simply run out of ways to escape himself?"}
+  {
+    "id": "q-0001",
+    "theme": "Motivation",
+    "query": "Why did Raskolnikov convince himself murder was justified?"
+  },
+  {
+    "id": "q-0002",
+    "theme": "Motivation",
+    "query": "What drove Ivan Karamazov to reject God's harmony even as he loved his brother?"
+  },
+  {
+    "id": "q-0003",
+    "theme": "Motivation",
+    "query": "Why does Prince Myshkin forgive those who exploit his kindness?"
+  },
+  {
+    "id": "q-0004",
+    "theme": "Motivation",
+    "query": "What made Stavrogin confess his crime to Bishop Tikhon, only to withdraw the confession?"
+  },
+  {
+    "id": "q-0005",
+    "theme": "Motivation",
+    "query": "Why does the Underground Man torment Liza after she offers him tenderness?"
+  },
+  {
+    "id": "q-0006",
+    "theme": "Motivation",
+    "query": "What motivates Sonia to endure her family's shame without bitterness?"
+  },
+  {
+    "id": "q-0007",
+    "theme": "Motivation",
+    "query": "Why does Dmitri Karamazov choose exile in Siberia instead of fleeing?"
+  },
+  {
+    "id": "q-0008",
+    "theme": "Motivation",
+    "query": "What drives Pyotr Verhovensky to push his revolutionary circle toward murder?"
+  },
+  {
+    "id": "q-0009",
+    "theme": "Motivation",
+    "query": "Why does Svidrigailov keep pursuing Dounia even after she rejects him utterly?"
+  },
+  {
+    "id": "q-0010",
+    "theme": "Motivation",
+    "query": "What compels Smerdyakov to both commit the murder and later confess to it?"
+  },
+  {
+    "id": "q-0011",
+    "theme": "Motivation",
+    "query": "Why does Grushenka torment both Dmitri and old Karamazov before choosing?"
+  },
+  {
+    "id": "q-0012",
+    "theme": "Motivation",
+    "query": "What motivates Razumihin's devotion to Raskolnikov despite his coldness?"
+  },
+  {
+    "id": "q-0013",
+    "theme": "Philosophy",
+    "query": "Explain Raskolnikov's theory of the extraordinary man."
+  },
+  {
+    "id": "q-0014",
+    "theme": "Philosophy",
+    "query": "What is the meaning of the Grand Inquisitor's argument against Christ's gift of freedom?"
+  },
+  {
+    "id": "q-0015",
+    "theme": "Philosophy",
+    "query": "How does Ivan's idea that everything is permitted without God relate to Smerdyakov's crime?"
+  },
+  {
+    "id": "q-0016",
+    "theme": "Philosophy",
+    "query": "What is Kirillov's philosophy of the man-god who conquers the fear of death through suicide?"
+  },
+  {
+    "id": "q-0017",
+    "theme": "Philosophy",
+    "query": "Explain the Underground Man's rejection of the Crystal Palace and rational self-interest."
+  },
+  {
+    "id": "q-0018",
+    "theme": "Philosophy",
+    "query": "What does Father Zosima teach about active love versus love in dreams?"
+  },
+  {
+    "id": "q-0019",
+    "theme": "Philosophy",
+    "query": "How does Myshkin's idea that beauty will save the world relate to Nastasia Filippovna's fate?"
+  },
+  {
+    "id": "q-0020",
+    "theme": "Philosophy",
+    "query": "What is Shatov's argument that a nation needs its own god to survive?"
+  },
+  {
+    "id": "q-0021",
+    "theme": "Philosophy",
+    "query": "What does the novel suggest about suffering as a path to redemption through Sonia?"
+  },
+  {
+    "id": "q-0022",
+    "theme": "Philosophy",
+    "query": "What is the philosophical significance of the story of Lazarus to Raskolnikov?"
+  },
+  {
+    "id": "q-0023",
+    "theme": "Philosophy",
+    "query": "What is Raskolnikov's inner conflict between conscience and his theory of transgression?"
+  },
+  {
+    "id": "q-0024",
+    "theme": "Philosophy",
+    "query": "What does Ippolit's confession in The Idiot say about the meaning of a man's remaining days?"
+  },
+  {
+    "id": "q-0025",
+    "theme": "Ambiguity",
+    "query": "Was Raskolnikov's confession true repentance or simple exhaustion?"
+  },
+  {
+    "id": "q-0026",
+    "theme": "Ambiguity",
+    "query": "Is Svidrigailov's suicide an act of despair or a final mercy toward Dounia?"
+  },
+  {
+    "id": "q-0027",
+    "theme": "Ambiguity",
+    "query": "Did Ivan intend for Smerdyakov to kill their father, even without ever saying so?"
+  },
+  {
+    "id": "q-0028",
+    "theme": "Ambiguity",
+    "query": "Is Stavrogin beyond redemption, or still capable of it, by the novel's end?"
+  },
+  {
+    "id": "q-0029",
+    "theme": "Ambiguity",
+    "query": "Was Father Zosima's teaching vindicated or undermined by his body's decay?"
+  },
+  {
+    "id": "q-0030",
+    "theme": "Ambiguity",
+    "query": "Is the Underground Man's cruelty to Liza a rejection of love or a fear of it?"
+  },
+  {
+    "id": "q-0031",
+    "theme": "Ambiguity",
+    "query": "Did Dmitri Karamazov kill his father in spirit, even though not in fact?"
+  },
+  {
+    "id": "q-0032",
+    "theme": "Ambiguity",
+    "query": "Is Myshkin's goodness a form of wisdom or a fatal kind of innocence?"
+  },
+  {
+    "id": "q-0033",
+    "theme": "Ambiguity",
+    "query": "Was Nastasia Filippovna's choice of Rogojin over Myshkin self-destruction or clarity?"
+  },
+  {
+    "id": "q-0034",
+    "theme": "Ambiguity",
+    "query": "Does Grushenka's love for Dmitri redeem her, or does it come too late?"
+  },
+  {
+    "id": "q-0035",
+    "theme": "Ambiguity",
+    "query": "Is Pyotr Verhovensky a true believer in revolution, or merely an opportunist?"
+  },
+  {
+    "id": "q-0036",
+    "theme": "Ambiguity",
+    "query": "Did Sonia save Raskolnikov, or did he simply run out of ways to escape himself?"
+  }
 ]
