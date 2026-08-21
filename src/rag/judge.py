@@ -15,8 +15,11 @@ Scores one (query, answer) pair on the three axes the phase file specifies:
   * groundedness -- is the answer's substance consistent with the retrieved
     passages (`passages_block`, i.e. what retrieval actually returned -- the
     programmatic Sources), not just internally plausible?
-  * fabricated events -- does the answer invent plot, characters, or events
-    absent from `passages_block`?
+  * fabricated events -- how many plot events, characters, or details does
+    the answer invent that are absent from `passages_block`? A **count**, not
+    a boolean, since mitya-v2 P0 step 9: one bit of resolution cannot
+    attribute a move in the aggregate to anything. An answer that invents one
+    detail and one that invents six were previously the same observation.
 
 Judging against `passages_block` (never against an inline citation in the
 answer, and never from the judge's own knowledge of the novels) is
@@ -55,9 +58,13 @@ literary voice throughout, no assistant-like breaks in character; 1 = reads \
 like a generic assistant)
   "groundedness": integer 1-5 (5 = every substantive claim is consistent \
 with RETRIEVED PASSAGES; 1 = largely unrelated to them)
-  "fabricated_events": boolean (true if the response invents plot events, \
-characters, or details absent from RETRIEVED PASSAGES; false otherwise)
-  "rationale": string, one or two sentences justifying the three scores above
+  "fabricated_events": integer >= 0 -- the NUMBER of distinct plot events, \
+characters, or concrete details asserted by the RESPONSE that are absent from \
+RETRIEVED PASSAGES (0 if none). Count each distinct invention once, however \
+many times it is repeated; do not count interpretation, opinion, or emotional \
+framing as invention -- only asserted matters of fact about the novels.
+  "rationale": string, one or two sentences justifying the three scores above; \
+if fabricated_events > 0, name the inventions you counted
 """
 
 _REQUIRED_KEYS = {"persona_retention", "groundedness", "fabricated_events", "rationale"}
@@ -65,7 +72,7 @@ _REQUIRED_KEYS = {"persona_retention", "groundedness", "fabricated_events", "rat
 
 def judge_answer(client: TeacherClient, query: str, answer: str, passages_block: str) -> dict:
     """One judge call -> {"persona_retention": int, "groundedness": int,
-    "fabricated_events": bool, "rationale": str}.
+    "fabricated_events": int (a count), "rationale": str}.
 
     Raises `src.rag.teacher.TeacherError` on a fatal judge-API failure (see
     `TeacherClient.generate_json`'s own retry/quota handling). A structurally
@@ -86,6 +93,16 @@ def judge_answer(client: TeacherClient, query: str, answer: str, passages_block:
     missing = _REQUIRED_KEYS - result.keys()
     if missing:
         raise ValueError(f"judge: response missing keys {missing}: {result!r}")
+
+    # `fabricated_events` is a count as of P0 step 9. A bool would pass an
+    # isinstance(int) check (True == 1) and silently enter the mean as a 1,
+    # which is exactly the pre-step-9 resolution this upgrade removes -- so
+    # reject bools explicitly rather than coercing them.
+    fabricated = result["fabricated_events"]
+    if isinstance(fabricated, bool) or not isinstance(fabricated, int) or fabricated < 0:
+        raise ValueError(
+            f"judge: fabricated_events must be an integer count >= 0, got {fabricated!r}"
+        )
 
     logger.info(
         "judge: persona_retention=%s groundedness=%s fabricated_events=%s",

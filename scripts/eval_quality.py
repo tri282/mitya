@@ -25,10 +25,11 @@ composition in `--modes` (default both "A" and "B", ruling R19's A/B), this:
      triple with `src.rag.judge.judge_answer()` -- reuses `src/rag/teacher.py`'s
      metered `TeacherClient` (rate limiting + retry discipline per
      `docs/RUNBOOK.md`), never a fresh API integration.
-  4. Writes every `(theme, query, mode, answer, sources, judge_scores)` row to
+  4. Writes every `(id, theme, query, mode, answer, sources, judge_scores)` row to
      a JSON transcript (`--out`) for human review, AND a compact
      `<out>_summary.json` beside it -- per-mode means (persona_retention,
-     groundedness), fabrication rate, error counts, a per-theme breakdown, and
+     groundedness), fabrication rate AND mean fabricated-event count, error
+     counts, a per-theme breakdown, and
      the 5 lowest-scoring rows per mode. The summary is the at-a-glance A/B
      decision surface (also logged as a table); the transcript is for drilling
      into specific answers.
@@ -93,11 +94,16 @@ def _load_json(path: str) -> dict | list:
         return json.load(f)
 
 
-def _row_key(row: dict) -> tuple[str, str, str]:
-    """Identity of a transcript cell -- one (theme, query, mode) triple. Used to
-    merge a resumed/appended run onto an existing transcript: a re-run of the
-    same cell overwrites, it does not duplicate."""
-    return (row["theme"], row["query"], row["mode"])
+def _row_key(row: dict) -> tuple[str, str]:
+    """Identity of a transcript cell -- one (row id, mode) pair. Used to merge a
+    resumed/appended run onto an existing transcript: a re-run of the same cell
+    overwrites, it does not duplicate.
+
+    Keyed on the immutable `id` (A9) rather than the query text, so a row whose
+    wording is revised before it is frozen does not strand its prior transcript
+    cell as an orphan. Falls back to the query for pre-step-9 transcripts,
+    written before the quality set had ids."""
+    return (row.get("id") or row["query"], row["mode"])
 
 
 def _write_transcript(merged: dict[tuple, dict], out_path: str) -> None:
@@ -130,7 +136,8 @@ def _summarize(results: list[dict], modes: list[str]) -> dict:
         judged = [r for r in rows if r.get("judge")]
         personas = [r["judge"]["persona_retention"] for r in judged]
         grounds = [r["judge"]["groundedness"] for r in judged]
-        fabricated = [r for r in judged if r["judge"].get("fabricated_events")]
+        fabricated_counts = [r["judge"].get("fabricated_events") or 0 for r in judged]
+        fabricated = [c for c in fabricated_counts if c]
 
         summary["per_mode"][mode] = {
             "n": len(rows),
@@ -138,6 +145,9 @@ def _summarize(results: list[dict], modes: list[str]) -> dict:
             "mean_persona_retention": _mean(personas),
             "mean_groundedness": _mean(grounds),
             "fabrication_rate": round(len(fabricated) / len(judged), 3) if judged else None,
+            # Mean over ALL judged rows including the zeros -- the rate says how
+            # often the model invents, this says how much (P0 step 9).
+            "mean_fabricated_events": _mean(fabricated_counts),
             "generation_errors": sum(1 for r in rows if r.get("generation_error")),
             "judge_errors": sum(1 for r in rows if r.get("judge_error")),
         }
@@ -150,6 +160,7 @@ def _summarize(results: list[dict], modes: list[str]) -> dict:
         )
         summary["worst_rows"][mode] = [
             {
+                "id": r.get("id"),
                 "theme": r["theme"],
                 "query": r["query"],
                 "persona_retention": r["judge"]["persona_retention"],
@@ -179,14 +190,14 @@ def _print_summary(summary: dict, modes: list[str]) -> None:
     Persona retention is weighted in the R19 call (see phase-7.md); this only
     prints the numbers, it does not declare a winner."""
     logger.info("=== A/B summary (persona/groundedness are 1-5 means; higher better, fabrication lower better) ===")
-    header = f"{'mode':<6}{'n_judged':>10}{'persona':>10}{'ground':>10}{'fabric':>9}{'gen_err':>9}{'judge_err':>11}"
+    header = f"{'mode':<6}{'n_judged':>10}{'persona':>10}{'ground':>10}{'fab_rate':>10}{'fab_mean':>10}{'gen_err':>9}{'judge_err':>11}"
     logger.info(header)
     for mode in modes:
         m = summary["per_mode"][mode]
         logger.info(
-            "%-6s%10s%10s%10s%9s%9s%11s",
+            "%-6s%10s%10s%10s%10s%10s%9s%11s",
             mode, m["n_judged"], m["mean_persona_retention"], m["mean_groundedness"],
-            m["fabrication_rate"], m["generation_errors"], m["judge_errors"],
+            m["fabrication_rate"], m["mean_fabricated_events"], m["generation_errors"], m["judge_errors"],
         )
 
 
@@ -282,7 +293,8 @@ async def run(
                     judge_error = str(exc)
                     logger.error("judge failed query=%r mode=%s: %s", query, mode, exc)
 
-            merged[(theme, query, mode)] = {
+            merged[(row.get("id") or query, mode)] = {
+                "id": row.get("id"),
                 "theme": theme,
                 "query": query,
                 "mode": mode,

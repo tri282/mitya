@@ -31,9 +31,14 @@ No network, no Qdrant, no judge call -- reads test/retrieval_eval.json,
 data/rag/structure.json, and `git show HEAD:...` only. Exit code is nonzero on
 any error, so this can become a pre-commit / CI gate later.
 
+`--quality` validates test/quality_eval.json instead, running only the two
+checks that apply to a judge-scored set (ids, append-only) -- it has no
+`targets` to resolve and no families, but A9 binds it identically.
+
 Usage:
     python scripts/validate_eval_set.py
     python scripts/validate_eval_set.py --pairs test/retrieval_eval.json
+    python scripts/validate_eval_set.py --quality
 """
 
 import argparse
@@ -52,6 +57,7 @@ from src.rag.metrics import FAMILIES, RETRIEVAL_SCORED_FAMILIES, family_of
 logger = logging.getLogger(__name__)
 
 ID_RE = re.compile(r"^r-\d{4}$")
+QUALITY_ID_RE = re.compile(r"^q-\d{4}$")  # test/quality_eval.json (step 9); same A9 rules, own id space
 
 
 def _load_json(path: str) -> dict:
@@ -100,8 +106,9 @@ def check_targets_resolve(pairs: list[dict], structure: dict) -> list[str]:
     return errors
 
 
-def check_ids(pairs: list[dict]) -> list[str]:
-    """Check 2: every row has an id, ids are unique, format is r-\\d{4}."""
+def check_ids(pairs: list[dict], id_re: re.Pattern = ID_RE) -> list[str]:
+    """Check 2: every row has an id, ids are unique, format matches `id_re`
+    (r-\\d{4} for the retrieval set, q-\\d{4} for the quality set)."""
     errors = []
     seen: dict[str, int] = {}
     for i, row in enumerate(pairs):
@@ -109,8 +116,8 @@ def check_ids(pairs: list[dict]) -> list[str]:
         if not rid:
             errors.append(f"row at index {i} (query={row.get('query')!r}) has no id")
             continue
-        if not ID_RE.match(rid):
-            errors.append(f"{rid}: id does not match the established format r-\\d{{4}}")
+        if not id_re.match(rid):
+            errors.append(f"{rid}: id does not match the established format {id_re.pattern}")
         if rid in seen:
             errors.append(f"{rid}: duplicate id (also at index {seen[rid]})")
         else:
@@ -199,6 +206,36 @@ def report_denominators(pairs: list[dict]) -> dict[str, int]:
     return counts
 
 
+def report_themes(rows: list[dict]) -> dict[str, int]:
+    """Quality-set counterpart to `report_denominators`. The quality set has no
+    families -- `theme` is its only stratifier, and a judge mean is only
+    readable per theme, so the counts are reported the same way."""
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row.get("theme", "(none)")] = counts.get(row.get("theme", "(none)"), 0) + 1
+    counts["total"] = len(rows)
+    logger.info("themes: %s", " ".join(f"{t}={n}" for t, n in sorted(counts.items())))
+    return counts
+
+
+def validate_quality(rows_path: str) -> tuple[bool, list[str]]:
+    """Validate test/quality_eval.json (step 9). Only two of the five checks
+    apply: the quality set has no `targets` to resolve and no families -- its
+    rows are judge-scored, not retrieval-scored. What it does share is A9:
+    immutable ids, append-only, so a frozen baseline arm (the `local-q4km`
+    re-measure, step 13) stays comparable to every later version on the id
+    intersection."""
+    rows = _load_pairs(rows_path)
+    errors = check_ids(rows, QUALITY_ID_RE) + check_append_only(rows, _load_head_pairs(rows_path))
+
+    report_themes(rows)
+    for e in errors:
+        logger.error(e)
+    ok = not errors
+    logger.info("validate_eval_set (quality): %s (%d rows, %d errors)", "PASSED" if ok else "FAILED", len(rows), len(errors))
+    return ok, errors
+
+
 def validate(pairs_path: str, structure_path: str) -> tuple[bool, list[str]]:
     pairs = _load_pairs(pairs_path)
     structure = _load_json(structure_path)
@@ -279,6 +316,13 @@ def _demo() -> None:
     assert len(check_families([{"id": "r-0044", "family": "primary", "negative_control": True, "targets": [{"book": "Book A", "part": 1, "chapter": 1}]}])) == 1
     assert check_families([{"id": "r-0001", "targets": [{"book": "Book A", "part": 1, "chapter": 1}]}]) == []  # legacy row
 
+    # Quality-set id space: q-\d{4} accepted, r-\d{4} rejected in that mode.
+    assert check_ids([{"id": "q-0001", "query": "x"}], QUALITY_ID_RE) == []
+    assert len(check_ids([{"id": "r-0001", "query": "x"}], QUALITY_ID_RE)) == 1
+    assert report_themes([{"theme": "Motivation"}, {"theme": "Motivation"}, {"theme": "Guilt"}]) == {
+        "Motivation": 2, "Guilt": 1, "total": 3,
+    }
+
     logger.info("scripts/validate_eval_set.py self-check passed")
 
 
@@ -287,6 +331,8 @@ if __name__ == "__main__":
     ap.add_argument("--pairs", default=os.path.join("test", "retrieval_eval.json"))
     ap.add_argument("--structure", default=Config.STRUCTURE_PATH)
     ap.add_argument("--demo", action="store_true", help="run the self-check instead of validating")
+    ap.add_argument("--quality", action="store_true",
+                    help="validate the quality set (test/quality_eval.json) instead: ids + append-only only")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -294,6 +340,11 @@ if __name__ == "__main__":
     if args.demo:
         _demo()
         sys.exit(0)
+
+    if args.quality:
+        path = args.pairs if args.pairs != os.path.join("test", "retrieval_eval.json") else os.path.join("test", "quality_eval.json")
+        ok, _ = validate_quality(path)
+        sys.exit(0 if ok else 1)
 
     ok, _ = validate(args.pairs, args.structure)
     sys.exit(0 if ok else 1)
