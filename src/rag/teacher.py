@@ -185,6 +185,18 @@ class TeacherClient:
         if not key:
             raise TeacherError("GOOGLE_API_KEY is not set; add it to .env")
 
+        # This client speaks the google-genai SDK and nothing else. Non-Google
+        # ids exist in Config.MODEL_LIMITS as a quota registry (charter D1
+        # wants >= 2 provider families for v2 serving) but have no transport
+        # yet -- fail here with the reason rather than at call time with a
+        # confusing 404 from the wrong endpoint.
+        provider = Config.limits_for(model).get("provider")
+        if provider not in (None, "google"):
+            raise TeacherError(
+                f"model {model!r} is provider {provider!r}; TeacherClient only speaks "
+                "google-genai. It is registered for its quota row, not yet wired."
+            )
+
         self.model = model
         self.limiter = limiter or RateLimiter()
         self.max_retries = max_retries

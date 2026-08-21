@@ -317,6 +317,13 @@ async def run(
                 "route": route_name,
                 "resolved_entities": resolved_entities,
                 "sources": sources,
+                # The context the judge actually saw. Stored so a transcript can
+                # be RE-judged later without regenerating -- v1 kept only
+                # `sources` (chapter refs), which made the step-9a probe judge
+                # against an empty context and cost it two of its three axes
+                # (R25). Groundedness and fabricated_events are both defined
+                # against these passages; without them they cannot be measured.
+                "passages_block": passages_block,
                 "answer": answer,
                 "generation_error": error,
                 "judge": judge_result,
