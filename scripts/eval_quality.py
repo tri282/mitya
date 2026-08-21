@@ -144,10 +144,18 @@ def _summarize(results: list[dict], modes: list[str]) -> dict:
             "n_judged": len(judged),
             "mean_persona_retention": _mean(personas),
             "mean_groundedness": _mean(grounds),
+            # HEADLINE. The boolean "did it invent anything" is the only form of
+            # this axis the judge applies repeatably: on 30 fixed answers with
+            # correct context it reproduced the boolean 80% of the time but the
+            # exact count only 50% (P0 step 9a / R27). Report the rate.
             "fabrication_rate": round(len(fabricated) / len(judged), 3) if judged else None,
-            # Mean over ALL judged rows including the zeros -- the rate says how
-            # often the model invents, this says how much (P0 step 9).
-            "mean_fabricated_events": _mean(fabricated_counts),
+            # DIAGNOSTIC ONLY -- do not publish, do not gate, do not compare
+            # across runs. The count is kept because it is the raw evidence and
+            # a stronger judge may one day make it usable, but at 0.500
+            # exact-agreement it cannot carry a claim. R27 also measured that
+            # ASKING for it more precisely (enumerate-then-count) made it worse,
+            # not better: 0.200 agreement and 3x the variance.
+            "mean_fabricated_events_UNRELIABLE": _mean(fabricated_counts),
             "generation_errors": sum(1 for r in rows if r.get("generation_error")),
             "judge_errors": sum(1 for r in rows if r.get("judge_error")),
         }
@@ -190,14 +198,17 @@ def _print_summary(summary: dict, modes: list[str]) -> None:
     Persona retention is weighted in the R19 call (see phase-7.md); this only
     prints the numbers, it does not declare a winner."""
     logger.info("=== A/B summary (persona/groundedness are 1-5 means; higher better, fabrication lower better) ===")
-    header = f"{'mode':<6}{'n_judged':>10}{'persona':>10}{'ground':>10}{'fab_rate':>10}{'fab_mean':>10}{'gen_err':>9}{'judge_err':>11}"
+    # fab_rate only. The mean count is deliberately absent from this table:
+    # it is the decision surface, and an unreliable number on it gets quoted
+    # (R27). It stays in the JSON summary under an _UNRELIABLE key.
+    header = f"{'mode':<6}{'n_judged':>10}{'persona':>10}{'ground':>10}{'fab_rate':>10}{'gen_err':>9}{'judge_err':>11}"
     logger.info(header)
     for mode in modes:
         m = summary["per_mode"][mode]
         logger.info(
-            "%-6s%10s%10s%10s%10s%10s%9s%11s",
+            "%-6s%10s%10s%10s%10s%9s%11s",
             mode, m["n_judged"], m["mean_persona_retention"], m["mean_groundedness"],
-            m["fabrication_rate"], m["mean_fabricated_events"], m["generation_errors"], m["judge_errors"],
+            m["fabrication_rate"], m["generation_errors"], m["judge_errors"],
         )
 
 
