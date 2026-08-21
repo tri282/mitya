@@ -205,7 +205,12 @@ class Config:
     # to N times when an attempt yields no tokens.
     GEN_TEMPERATURE = float(os.getenv("GEN_TEMPERATURE", "0.6"))
     GEN_TOP_P = float(os.getenv("GEN_TOP_P", "0.9"))
-    EMPTY_RETRIES = int(os.getenv("EMPTY_RETRIES", "1"))
+    # 4, not 1. Measured on the 1060 (P0 step 9a / R28), one theme, k=3:
+    # 19.4% empty with no guard, 16.7% at EMPTY_RETRIES=1, 8.3% at 4. The
+    # residual is not transient -- it concentrates in specific queries that
+    # fail across independent runs and settings, and it is NOT prompt size
+    # (the failing prompts are smaller than the passing ones).
+    EMPTY_RETRIES = int(os.getenv("EMPTY_RETRIES", "4"))
     CACHE_ENABLED = os.getenv("CACHE_ENABLED", "true").lower() == "true"
     CACHE_DIR = os.path.join(DATA_DIR, "cache")
 
