@@ -10,6 +10,11 @@ load_dotenv()
 
 class Config:
     GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+    # Additional provider keys (charter D1 wants >= 2 families for v2 serving).
+    # Read from the environment only -- never logged, never defaulted, and no
+    # client speaks to them yet; see MODEL_LIMITS' "NOT YET WIRED" block.
+    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
     TESSERACT_PATH = os.getenv("TESSERACT_PATH", "/usr/bin/tesseract")
     # gemini-1.5-flash (the previous default) no longer exists in the API listing.
     # Only used by src/generation.py; the RAG side has its own TEACHER_MODEL.
@@ -112,20 +117,46 @@ class Config:
     # ("2.5 Flash: no longer available to new users"). Unverified ids are
     # usable but unproven; confirm with a one-row smoke run before a batch.
     MODEL_LIMITS = {
-        # id                              rpm     tpm     rpd   verified
-        "models/gemini-3.7-flash":       {"rpm": 5,  "tpm": 250_000, "rpd": 20,  "verified": False},
-        "models/gemini-3.6-flash":       {"rpm": 5,  "tpm": 250_000, "rpd": 20,  "verified": False},
-        "models/gemini-3.5-flash":       {"rpm": 5,  "tpm": 250_000, "rpd": 20,  "verified": True},
-        "models/gemini-3-flash-preview": {"rpm": 5,  "tpm": 250_000, "rpd": 20,  "verified": True},
-        "models/gemini-3.5-flash-lite":  {"rpm": 15, "tpm": 250_000, "rpd": 500, "verified": False},
-        "models/gemini-3.1-flash-lite":  {"rpm": 15, "tpm": 250_000, "rpd": 500, "verified": True},
+        # id                              provider   rpm     tpm      rpd    tpd    verified
+        "models/gemini-3.7-flash":       {"provider": "google", "rpm": 5,  "tpm": 250_000, "rpd": 20,   "tpd": None,     "verified": False},
+        "models/gemini-3.6-flash":       {"provider": "google", "rpm": 5,  "tpm": 250_000, "rpd": 20,   "tpd": None,     "verified": False},
+        "models/gemini-3.5-flash":       {"provider": "google", "rpm": 5,  "tpm": 250_000, "rpd": 20,   "tpd": None,     "verified": True},
+        "models/gemini-3-flash-preview": {"provider": "google", "rpm": 5,  "tpm": 250_000, "rpd": 20,   "tpd": None,     "verified": True},
+        "models/gemini-3.5-flash-lite":  {"provider": "google", "rpm": 15, "tpm": 250_000, "rpd": 500,  "tpd": None,     "verified": True},
+        "models/gemini-3.1-flash-lite":  {"provider": "google", "rpm": 15, "tpm": 250_000, "rpd": 500,  "tpd": None,     "verified": True},
+
+        # --- NOT YET WIRED --------------------------------------------------
+        # Registry only. `TeacherClient` speaks the google-genai SDK and
+        # nothing else, so selecting one of these today raises at client
+        # construction, not at call time. They are here because the charter
+        # requires >= 2 provider families for v2 serving (D1) and because
+        # quota rows are the thing that decides whether a measurement run is
+        # even possible -- worth recording while the numbers are in hand.
+        #
+        # Both are materially weaker than the Gemini free tier for BATCH work,
+        # and not for the reason that looks obvious:
+        #   * OpenRouter's free pool caps at 50 rpd -- below 9a's 87-call run.
+        #   * Groq's rpd is generous (1000) but tpm is 8000, roughly 3% of
+        #     Gemini's. A judge call carrying a passages_block is thousands of
+        #     tokens, so tpm binds long before rpm or rpd does. The limiter
+        #     already reserves TPM budget per call (`estimate_tokens`), so this
+        #     shows up as throttling, not errors.
+        "openrouter/free":               {"provider": "openrouter", "rpm": 20, "tpm": None,   "rpd": 50,   "tpd": None,     "verified": False},
+        "openai/gpt-oss-120b":           {"provider": "groq",       "rpm": 30, "tpm": 8_000,  "rpd": 1000, "tpd": 200_000,  "verified": False},
+        "qwen/qwen3.6-27b":              {"provider": "groq",       "rpm": 30, "tpm": 8_000,  "rpd": 1000, "tpd": 200_000,  "verified": False},
     }
+
+    # `tpd` is recorded but NOT enforced -- RateLimiter windows on rpm/tpm/rpd
+    # only. Building a day-long token window for a provider with no client is
+    # speculative; do it when a Groq run is actually scheduled.
+    # `tpm: None` means the provider publishes no per-minute token cap.
+    NO_TPM_LIMIT = 10 ** 9  # sentinel for RateLimiter, which needs a real int
 
     # Unknown id -> the STRICTER tier, never the looser one. Guessing high
     # burns real quota and turns a batch into a 429 storm partway through;
     # guessing low only makes it slow. A warning is logged so the id gets
     # added to the table rather than silently running at a guess forever.
-    UNKNOWN_MODEL_LIMITS = {"rpm": 5, "tpm": 250_000, "rpd": 20, "verified": False}
+    UNKNOWN_MODEL_LIMITS = {"provider": None, "rpm": 5, "tpm": 250_000, "rpd": 20, "tpd": None, "verified": False}
 
     @classmethod
     def limits_for(cls, model: str) -> dict:
@@ -158,7 +189,8 @@ class Config:
         base = cls.limits_for(cls.JUDGE_MODEL)
         return {
             "rpm": cls.JUDGE_RPM or base["rpm"],
-            "tpm": cls.JUDGE_TPM or base["tpm"],
+            # base["tpm"] is None for providers with no per-minute token cap.
+            "tpm": cls.JUDGE_TPM or base["tpm"] or cls.NO_TPM_LIMIT,
             "rpd": cls.JUDGE_RPD or base["rpd"],
         }
 
