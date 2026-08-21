@@ -93,13 +93,74 @@ class Config:
     TEACHER_TIMEOUT_MS = int(os.getenv("TEACHER_TIMEOUT_MS", "120000"))
     TEACHER_MAX_OUTPUT_TOKENS = int(os.getenv("TEACHER_MAX_OUTPUT_TOKENS", "2048"))
 
+    # --- Gemini free-tier quota table -------------------------------------
+    # Per-model free-tier limits (rpm, tpm, rpd). They are NOT derivable from
+    # the model id and they differ by an order of magnitude between tiers, so
+    # they live in one table instead of being copied into per-consumer env
+    # vars. Source: the AI Studio dashboard rows, supplied 2026-08-21.
+    #
+    # The tiers are the whole story for planning a measurement run:
+    #   * flash        -- stronger, rpd 20. Twenty calls a DAY. Fine for a
+    #                     judgement call on a handful of rows, useless for a
+    #                     batch. A 144-call run takes 8 days at this tier.
+    #   * flash-lite   -- weaker, rpd 500. The only tier that can carry an
+    #                     eval batch, and what every v1 number was measured on.
+    #
+    # `verified` records whether THIS repo has seen the id resolve on a live
+    # call (test/bakeoff/RESULTS.md), not whether the dashboard lists it -- the
+    # bake-off's whole finding was that the dashboard lists models that 404
+    # ("2.5 Flash: no longer available to new users"). Unverified ids are
+    # usable but unproven; confirm with a one-row smoke run before a batch.
+    MODEL_LIMITS = {
+        # id                              rpm     tpm     rpd   verified
+        "models/gemini-3.7-flash":       {"rpm": 5,  "tpm": 250_000, "rpd": 20,  "verified": False},
+        "models/gemini-3.6-flash":       {"rpm": 5,  "tpm": 250_000, "rpd": 20,  "verified": False},
+        "models/gemini-3.5-flash":       {"rpm": 5,  "tpm": 250_000, "rpd": 20,  "verified": True},
+        "models/gemini-3-flash-preview": {"rpm": 5,  "tpm": 250_000, "rpd": 20,  "verified": True},
+        "models/gemini-3.5-flash-lite":  {"rpm": 15, "tpm": 250_000, "rpd": 500, "verified": False},
+        "models/gemini-3.1-flash-lite":  {"rpm": 15, "tpm": 250_000, "rpd": 500, "verified": True},
+    }
+
+    # Unknown id -> the STRICTER tier, never the looser one. Guessing high
+    # burns real quota and turns a batch into a 429 storm partway through;
+    # guessing low only makes it slow. A warning is logged so the id gets
+    # added to the table rather than silently running at a guess forever.
+    UNKNOWN_MODEL_LIMITS = {"rpm": 5, "tpm": 250_000, "rpd": 20, "verified": False}
+
+    @classmethod
+    def limits_for(cls, model: str) -> dict:
+        """Free-tier limits for a model id, falling back to the strict tier."""
+        limits = cls.MODEL_LIMITS.get(model)
+        if limits is None:
+            logging.getLogger(__name__).warning(
+                "no quota row for model %r -- assuming the strict tier (%d rpm / %d rpd). "
+                "Add it to Config.MODEL_LIMITS once its dashboard row is known.",
+                model, cls.UNKNOWN_MODEL_LIMITS["rpm"], cls.UNKNOWN_MODEL_LIMITS["rpd"],
+            )
+            return cls.UNKNOWN_MODEL_LIMITS
+        return limits
+
     # --- RAG: LLM judge (P7 answer-quality eval, scripts/eval_quality.py) ---
-    # Reuses TeacherClient (src/rag/teacher.py) and its rate-limit fields
-    # above rather than a second RateLimiter -- defaults to the same
-    # already-verified free-tier model (test/bakeoff/RESULTS.md) since the
-    # judge is a small, occasional call volume, not a full-corpus batch;
-    # override via .env if a different model/quota is preferred for judging.
+    # Reuses TeacherClient (src/rag/teacher.py), but NOT the teacher's quota:
+    # before 2026-08-21 the judge could be pointed at a different model while
+    # the RateLimiter still read TEACHER_RPM/TPM/RPD, so any judge/teacher
+    # model split silently ran against the wrong quota (too slow at best, a
+    # 429 storm at worst). Judge limits now derive from JUDGE_MODEL's own row.
     JUDGE_MODEL = os.getenv("JUDGE_MODEL", TEACHER_MODEL)
+    JUDGE_RPM = int(os.getenv("JUDGE_RPM", "0")) or None
+    JUDGE_TPM = int(os.getenv("JUDGE_TPM", "0")) or None
+    JUDGE_RPD = int(os.getenv("JUDGE_RPD", "0")) or None
+
+    @classmethod
+    def judge_limits(cls) -> dict:
+        """JUDGE_MODEL's quota, with explicit env overrides winning. Overrides
+        exist because a paid key or a raised limit is not in the table."""
+        base = cls.limits_for(cls.JUDGE_MODEL)
+        return {
+            "rpm": cls.JUDGE_RPM or base["rpm"],
+            "tpm": cls.JUDGE_TPM or base["tpm"],
+            "rpd": cls.JUDGE_RPD or base["rpd"],
+        }
 
     # --- RAG: serving ---
     LLAMA_SERVER_URL = os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080")

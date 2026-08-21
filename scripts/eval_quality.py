@@ -82,7 +82,7 @@ from src.rag.generate import (
 from src.rag.judge import judge_answer
 from src.rag.retrieve import build_ranker, rerank, retrieve, retrieve_structural_excerpts
 from src.rag.router import route
-from src.rag.teacher import TeacherClient, TeacherError
+from src.rag.teacher import RateLimiter, TeacherClient, TeacherError
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +214,17 @@ async def _collect_answer(messages: list[dict]) -> tuple[str, str | None]:
         return "", f"llama-server unreachable: {exc}"
     except LlamaServerTimeout as exc:
         return "", f"llama-server timed out: {exc}"
-    return "".join(parts), None
+
+    # An empty stream is a generation FAILURE, not an answer worth zero. Before
+    # this check (P0 step 9a) it returned ("", None), so the row looked healthy,
+    # went to the judge, and came back scored 1/1 with the rationale "the
+    # response is empty" -- and those 1s entered v1's published means as if
+    # they measured quality. 7 of 36 mode-A rows and 3 of 36 mode-B rows were
+    # this. Excluding them flips the persona delta's sign.
+    answer = "".join(parts)
+    if not answer.strip():
+        return "", "llama-server returned an empty response (no tokens streamed)"
+    return answer, None
 
 
 async def run(
@@ -239,8 +249,14 @@ async def run(
 
     judge_client: TeacherClient | None = None
     if not skip_judge:
-        logger.info("loading judge client: %s", Config.JUDGE_MODEL)
-        judge_client = TeacherClient(model=Config.JUDGE_MODEL)
+        # The judge gets a limiter built from JUDGE_MODEL's own quota row --
+        # not the teacher's. The two models can differ by 25x on rpd.
+        jl = Config.judge_limits()
+        logger.info("loading judge client: %s (%d rpm / %d rpd)", Config.JUDGE_MODEL, jl["rpm"], jl["rpd"])
+        judge_client = TeacherClient(
+            model=Config.JUDGE_MODEL,
+            limiter=RateLimiter(rpm=jl["rpm"], tpm=jl["tpm"], rpd=jl["rpd"]),
+        )
 
     queries: list[dict] = _load_json(themes_path)
     if themes_only:
