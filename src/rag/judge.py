@@ -81,10 +81,18 @@ def judge_answer(client: TeacherClient, query: str, answer: str, passages_block:
     (the A/B runner) records a visible `judge_error` row instead of trusting
     a malformed score.
     """
+    # An empty answer is a generation failure and must never be judged. The
+    # judge will happily score it 1/1 ("the response is empty, therefore...")
+    # and that 1 is indistinguishable in the mean from a real bad answer --
+    # which is exactly how 10 of v1's 72 cells entered the published numbers.
+    # The caller records a generation_error row instead (P0 step 9a).
+    if not answer or not answer.strip():
+        raise ValueError("judge: refusing to score an empty answer -- that is a generation failure, not a 1")
+
     prompt = _JUDGE_PROMPT.format(
         query=query,
         passages_block=passages_block or "(retrieval returned no passages)",
-        answer=answer or "(empty response)",
+        answer=answer,
     )
     result = client.generate_json(prompt)
     if not isinstance(result, dict):
