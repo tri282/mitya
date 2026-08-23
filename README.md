@@ -21,9 +21,12 @@ unit, date, producer and provenance, is in `docs/v1/EVIDENCE.md`; method and cav
 
 **Retrieval** — `recall@5 = 0.720` (18/25), `MRR = 0.406` on a hand-labeled set, scored on the
 fusion leg (dense nomic-embed-v1.5 + BM25, native RRF, 50/leg prefetch → 25 fused → FlashRank
-`ms-marco-MiniLM-L-12-v2` → 3). *(Corrected 2026-08-19: the long-quoted `0.731 (19/26)` /
-`MRR = 0.408` predates the P7 eval-driver fix and counted the two negative-control rows inside
-the headline; see `docs/RAG.md` §VII.1 for the correction and current numbers.)*
+`ms-marco-MiniLM-L-12-v2` → 3). *(Superseded 2026-08-21. `0.731 (19/26)` / `MRR = 0.408` counted
+the two negative-control rows inside the headline; `0.720` then turned out to be one draw of a
+bimodal distribution caused by a set-ordering defect in the entity map, measured by a harness that
+ran the wrong retrieval path for structural rows. Current: `recall@5 = 0.7250` (29/40),
+`MRR = 0.5287` on the `primary` family. See `docs/RAG.md` §VII.1 — the full ablation is withdrawn,
+not merely restated.)*
 
 **Serving** — **5.0GB / 6.0GB VRAM** at 4096 ctx with full offload (967MiB free). TTFT ~7.9s,
 end-to-end ~21.3s at ~23.6 tok/s, retrieval-only ~2.25s (rerank-bound). Exact-match disk cache
