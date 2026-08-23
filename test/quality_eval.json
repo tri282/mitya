@@ -178,5 +178,75 @@
     "id": "q-0036",
     "theme": "Ambiguity",
     "query": "Did Sonia save Raskolnikov, or did he simply run out of ways to escape himself?"
+  },
+  {
+    "id": "q-0037",
+    "theme": "Textual",
+    "query": "I think somebody admits to the crime during Raskolnikov's first interrogation with Porfiry. Can you tell me what happened there?"
+  },
+  {
+    "id": "q-0038",
+    "theme": "Textual",
+    "query": "What happens in Part 4, Chapter 6 of Crime and Punishment?"
+  },
+  {
+    "id": "q-0039",
+    "theme": "Textual",
+    "query": "Summarize Book VII, Chapter 3 of The Brothers Karamazov."
+  },
+  {
+    "id": "q-0040",
+    "theme": "Textual",
+    "query": "What happens in Part 2, Chapter 4 of The Idiot?"
+  },
+  {
+    "id": "q-0041",
+    "theme": "Textual",
+    "query": "What happens in Part 3, Chapter 5 of The Possessed?"
+  },
+  {
+    "id": "q-0042",
+    "theme": "Motivation",
+    "query": "Why did Sonya tell Raskolnikov to go to the crossroads, bow down and kiss the earth? What was that supposed to do for him?"
+  },
+  {
+    "id": "q-0043",
+    "theme": "Motivation",
+    "query": "Raskolnikov was handsome, well-born and educated. Is poverty really enough to explain how he arrived at the extraordinary-man theory?"
+  },
+  {
+    "id": "q-0044",
+    "theme": "Motivation",
+    "query": "Why does Shatov take his pregnant wife back without a word of reproach, and why does that night change him?"
+  },
+  {
+    "id": "q-0045",
+    "theme": "Philosophy",
+    "query": "What does it actually mean to be guilty before everyone, for everyone and for everything? Who says it and why would anyone believe it?"
+  },
+  {
+    "id": "q-0046",
+    "theme": "Philosophy",
+    "query": "How do the three Karamazov brothers each stand for a different part of Russian society?"
+  },
+  {
+    "id": "q-0047",
+    "theme": "Philosophy",
+    "query": "Explain Shigalov's system and how starting from unlimited freedom ends in unlimited despotism."
+  },
+  {
+    "id": "q-0048",
+    "theme": "Ambiguity",
+    "query": "Is Grushenka more than just a figure of passion? Her interest in Alyosha felt almost motherly to me rather than seductive."
+  },
+  {
+    "id": "q-0049",
+    "theme": "Ambiguity",
+    "query": "Myshkin and Rogojin exchange crosses and call each other brothers, yet the novel ends with them beside Nastasia Philipovna's body. Is that brotherhood or possession?"
+  },
+  {
+    "id": "q-0050",
+    "theme": "Ambiguity",
+    "query": "Is Stepan Trofimovitch's flight down the high road a real conversion, or his last performance?"
   }
 ]
