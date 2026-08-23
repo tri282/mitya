@@ -345,7 +345,76 @@ The retrieval and TTFT numbers exceed the pre-build estimates; they are accepted
 
 * ~30 labeled `query -> relevant chapter/chunk` pairs; report `recall@5` and `MRR`. Lets retrieval (prefixes, expansion, rerank) be tuned independently of generation — also the tripwire for RR5 (prefix misuse).
 
-**Ablation (2026-08-16, `scripts/eval_retrieval.py --arm`, results in `test/ablation.json`).** 27 rows: 25 primary + 2 negative controls reported separately. Router matched 6/6 expected-route rows on every arm.
+> **CORRECTION (v2 phase 0, 2026-08-21) — the ablation below is WITHDRAWN.** Every number in it
+> was produced by a harness that did not mirror serving, and every delta in it sits below this
+> eval set's detection threshold. It is kept in place as the record of what was published, not as
+> a result. Three independent defects, in the order they were found:
+>
+> **1. R18 (2026-08-19) — every v1 retrieval number is a draw from a distribution.**
+> `EntityMap._scan()` returned a `set`, so a two-entity query's alias blocks reordered under
+> `PYTHONHASHSEED`: different expanded text, different embedding, different dense ranking.
+> Measured bimodal `recall@5` 0.720 / 0.760 across 23 processes on a single commit. This was a
+> **serving defect, not an eval artifact** — serving calls the same `resolve()`, so two users
+> asking the identical two-entity question in different workers received different chunks. Fixed
+> in `src/rag/entities.py` (`_scan()` returns an occurrence-ordered list); 12/12 identical across
+> separate processes afterwards, spread exactly 0. The repeat-run check is now permanent and must
+> be **cross-process**: one process fixes the hash seed and sees nothing. Generalization worth
+> carrying: a set or dict whose iteration order reaches *model input* is a nondeterminism bug, not
+> a style issue.
+>
+> **2. R19 (2026-08-20) — the harness never used the route it computed.** `eval_retrieval.py`
+> called `route()`, asserted the result against `expected_route`, logged `route ok`, and then ran
+> the DEFAULT hybrid path for every row regardless. `retrieve_structural_excerpts()` — the
+> function production calls — was imported by `src/api/app.py` and `scripts/eval_quality.py` and
+> by nothing in the retrieval harness. Structural queries are nearly pure metadata (a book title
+> and two numbers), so the DEFAULT path missed all four while production finds every one at rank
+> 1. The "router matched 6/6 expected-route rows on every arm" claim was this defect stated as a
+> success: the router was right, and was then ignored. Post-fix, on the 45-row set, deterministic
+> over 3 processes:
+>
+> ```
+> before (broken harness):  PRIMARY n=43   recall@5 0.6512  MRR 0.4512
+> after  (R19):             PRIMARY n=40   recall@5 0.7250  MRR 0.5287
+>                           STRUCTURAL n=3 recall@5 1.0000  MRR 1.0000
+> ```
+>
+> `structural` became its own family with its own denominator: a row whose chapter is
+> regex-resolved and hard-filtered **cannot miss**, and guaranteed hits inside the headline
+> denominator is the `0.731` bug in a new costume. Any route added to `router.py` must be
+> dispatched here too, or the harness silently measures a pipeline production does not run.
+>
+> **3. R20 (2026-08-20) — the deltas were below the detection threshold, and always will be.**
+> Four arms re-measured post-fix at primary n=40, paired McNemar,
+> `MDE = 2.8 x sqrt(p_disc / n)` at 80% power / alpha 0.05:
+>
+> | comparison | delta | p_disc | MDE | callable? |
+> |---|---|---|---|---|
+> | full vs dense-only | +0.025 | 0.075 | 0.121 | no |
+> | full vs sparse-only | -0.025 | 0.075 | 0.121 | no |
+> | full vs no-expansion | 0.000 | 0.100 | 0.140 | no effect to detect |
+> | dense-only vs sparse-only | -0.050 | 0.150 | 0.171 | no |
+> | dense-only vs no-expansion | -0.025 | 0.175 | 0.185 | no |
+> | sparse-only vs no-expansion | +0.025 | 0.075 | 0.121 | no |
+>
+> Every observed delta is 3-7x below callable. The n that would resolve them is 470-940 rows;
+> n=150 yields MDE ~0.072 and is short of all of them. **The MDE-vs-n curve does not flatten at a
+> useful point — it never crosses one.** The directions flipped as well: post-fix `dense-only`
+> (0.7500) beats `full` (0.7250), where v1 published the dense leg as worth 2 rows and the sparse
+> leg 1. That is not a new finding; it is the same noise read a second time.
+>
+> **Rule adopted, binding on everything in this section and after it: publish the MDE alongside
+> every delta, or do not publish the delta.** Corollary: no configuration knob may be selected
+> against this set unless its effect clears ~14 recall points at n=40. RRF prefetch limits, leg
+> selection, expansion on/off and chapter-dedupe (measured: +1 row) are all inside the noise. The
+> **ACTIONABLE** item below — switching `rerank()` to the expanded query on a 2-row delta — is
+> therefore **not adoptable on this evidence**, and was never taken.
+>
+> **What the set is for**, restated: a regression tripwire and a coverage instrument, not an
+> arbitrator of small configuration choices. It has caught two real breaks (R18, R19) and zero
+> tuning wins. Growth follows the coverage axis, not n — three structural rows costing 1.1
+> minutes of verification exposed R19. The set is now 99 rows.
+
+**Ablation (2026-08-16, `scripts/eval_retrieval.py --arm`, results in `test/ablation.json`) — WITHDRAWN, see the correction above.** 27 rows: 25 primary + 2 negative controls reported separately. Router matched 6/6 expected-route rows on every arm.
 
 | Arm | k | recall@k | MRR | vs. baseline |
 |---|---|---|---|---|
@@ -363,14 +432,80 @@ The retrieval and TTFT numbers exceed the pre-build estimates; they are accepted
 * **Entity expansion does not move aggregate recall at n=25, and costs MRR.** It buys exactly one row of recall (0.680 -> 0.720) while *lowering* MRR by 0.081 — i.e. expansion surfaces one document the raw query misses, and pushes correct documents down the ranking on the rest. The eval set is Garnett-heavy and only 2 rows exercise the cross-translation folding expansion was built for, so this measures the layer on the wrong workload rather than refuting it. Not a reason to remove it; a reason to grow the eval set before defending it.
 * **ACTIONABLE — reranking the raw query is the wrong call.** The P6 impl-time judgment (carried forward unmeasured through P7) was to hand FlashRank the **raw** query. Measured: raw-query rerank *loses* a row against no reranking at all (0.560 -> 0.520), while expanded-query rerank *gains* one (0.560 -> 0.600) and edges MRR higher (0.507 vs 0.500). Both rerank arms beat the unreranked ordering on MRR, so the reranker earns its ~1.96s either way — it is being fed the wrong string. Switching `rerank()`'s query to the expanded form is a 1-line change in `src/api/app.py`; it is **not** taken yet, pending a second confirming run, since 2 rows is right at the noise floor.
 
-**Correction to the P4 baseline.** The long-quoted `recall@5 = 0.731 (19/26)` predates the P7 driver fix and counted the two negative-control rows inside the headline. On the current 27-row set with controls split out, the shipped configuration scores **0.720 (18/25)**. Quote 0.720; 0.731 is not reproducible with the current harness.
+**Correction to the P4 baseline (2026-08-16).** The long-quoted `recall@5 = 0.731 (19/26)` predates the P7 driver fix and counted the two negative-control rows inside the headline. On the 27-row set with controls split out, the shipped configuration scores **0.720 (18/25)**. `0.731` is not reproducible with any harness this project has run.
+
+**Further correction (v2 phase 0, R18 + R19).** `0.720` is superseded in turn. It was measured under the entity-ordering defect, so it was one draw of a bimodal 0.720/0.760, and it was measured by a harness that ran the DEFAULT path for structural rows. Post-fix numbers, in the two forms worth quoting:
+
+* **`recall@5 = 0.7250` (29/40), `MRR = 0.5287`** — `primary` family, 45-row set, current harness. This is the number to quote going forward.
+* **`0.760` (19/25)** — the same fix re-scored on v1's frozen 25-row intersection, where `r-0025` now hits. Quoted only when comparing against a v1 number on the same rows (A9: two set versions compare on their intersection).
+
+`0.720` was never the retriever's recall on those rows. It was the recall of a pipeline production does not run.
 
 ### 2. Answer quality
 
-* Three themed sets (Motivation / Philosophy / Ambiguity), 30–50 each.
+* Four themed sets (Motivation / Philosophy / Ambiguity, 15 each; `Textual`, 5), **50 rows** at
+  set version v2.0. `Textual` exists because every one of the original 36 rows resolved to the
+  DEFAULT hybrid path, leaving the STRUCTURAL route unmeasured for answer quality even after R19
+  made the harness dispatch on route.
 * Judge (manual or LLM-judge): stays in-persona, grounded in the retrieved chunks, no fabricated events. Grounding is checked against the programmatic Sources, not inline citations.
 * Includes the **prompt-composition A/B**: context-in-system ("recollections" framing) vs context-in-user-turn, judged on persona retention + groundedness.
 * **A/B outcome (P7, 36 queries × A/B, LLM-judge):** no winner — A and B are within noise (persona 3.11 vs 3.22, groundedness 2.44 vs 2.53 on 1–5; B fabricates slightly more, 0.50 vs 0.47). **Both compositions kept** in `src/rag/generate.py`; the delete-loser prune is not taken. The eval instead surfaced two systemic issues dominating any A/B signal: meta-commentary answers (learned from the fine-tune's weak gemini-2.5-flash training outputs — model/data floor, prompt trace verified clean) and stochastic empty completions (fixed: empty-retry + sampling floor, `253a8ee`). Revisit A/B only after a better training-data/model pass.
+
+> **CORRECTION (v2 phase 0, 2026-08-21) — the A/B numbers above are WITHDRAWN, and the
+> measurement contract has changed.** The conclusion ("no winner, keep both") survives; the
+> evidence offered for it does not.
+>
+> **1. R24 — ten of the 72 cells were empty answers scored 1/1.** 7 of 36 mode-A rows and 3 of 36
+> mode-B rows carried `answer: ""` with `generation_error: null`. All ten were judged, all ten
+> came back `persona_retention: 1, groundedness: 1` with rationales reading *"the response is
+> empty"*, and all ten entered the published means indistinguishably from genuinely poor answers.
+> Two layers had to fail and both did: `_collect_answer()` returned `("", None)` when a stream
+> completed with zero tokens, and `judge_answer()` substituted `answer or "(empty response)"`,
+> making the empty string judgeable rather than rejecting it. Both are fixed. Restricted to the 26
+> pairs where both arms produced a non-empty answer:
+>
+> | axis | published (n=36) | corrected (n=26) |
+> |---|---|---|
+> | persona delta (B−A) | +0.111 | **−0.231** (sign flips) |
+> | persona corr(A,B) | −0.059 | +0.092 |
+> | persona MDE | 1.147 | 1.176 |
+> | groundedness delta | +0.083 | +0.038 |
+> | groundedness corr(A,B) | +0.625 | **+0.852** |
+> | groundedness MDE | 0.551 | **0.395** |
+>
+> The arms also had different failure rates (7 empty vs 3), so part of what was reported as a
+> comparison of answer quality was a comparison of generation reliability.
+>
+> **2. R23 — apply the §VII.1 rule here too: both deltas were far inside their MDEs.** +0.111
+> persona against MDE 1.147, +0.083 groundedness against MDE 0.551. Composition B is therefore
+> not *wrong*, it is **unjustified** — a different claim, and the one this section now makes. The
+> two axes are not equally usable: groundedness pairs properly (r = +0.852 corrected), so query
+> difficulty is a shared property the paired design cancels and more rows buy real power. Persona
+> retention does not pair at all (r ≈ 0, `sd_diff` larger than either arm's own sd), so n is the
+> wrong lever for it.
+>
+> **3. R25 — the generator carries 93% of persona-retention variance; the judge is exonerated.**
+> Judge test-retest on *fixed* inputs gives within-variance 0.089. The same cells re-generated
+> give 1.333. Averaging draws is the only lever on that axis — growing n and rewriting the rubric
+> were both measured and both refuted. **The unit of measurement is now the cell mean over
+> k = 3 draws**, not a single generation; a cell needs ≥2 usable draws or it is recorded as
+> failed and excluded (`scripts/eval_quality.py --draws`). Baseline and candidate must share the
+> same k or their means are not comparable.
+>
+> **4. R27 — `fabricated_events` is published as a boolean, never as a count.** The judge
+> reproduces its own count on unchanged input 50% of the time; the boolean reaches 80%.
+> Enumerate-then-count, tried as the fix, made it worse (0.200 agreement, 3x the variance). The
+> count survives as `mean_fabricated_events_UNRELIABLE` — diagnostic evidence only, never gated,
+> never compared across runs. The boolean does carry independent signal (corr −0.460 with
+> groundedness; 6 of 30 cells scored low-grounded but clean), which is why the axis is kept at
+> all. **The `0.50 vs 0.47` figures above are counts-era numbers and are not comparable to
+> anything published after this correction.**
+>
+> **5. R28 — empty completions are retried four times, not once.** Exhausted-empty rate 19.4% →
+> 8.3% at `EMPTY_RETRIES=4`. The residual is per-query and reproducible across independent runs at
+> different settings — it is not prompt size (the failing prompts are *smaller* than the passing
+> ones). Failures are recorded rather than dropped: excluding them flatters the configuration by
+> deleting the queries it handles worst.
 
 ### 3. Latency
 
@@ -386,7 +521,7 @@ Semantic cache; conversation memory / `interpretive_bias`; interpretive-restrain
 
 ## IX. Residual Risks (summary)
 
-* Persona may ignore or parrot injected context (fine-tune never saw context in prompts) — **materialized** in the P7 eval: groundedness ~2.5/5 and frequent meta-commentary answers, on both A and B. Root cause is the weak fine-tune (bad gemini-2.5-flash training data + old q4 7B), not the recollections framing or prompt plumbing (trace verified clean, §VII.2). Not resolvable at the serving layer; needs a better training-data/model pass.
+* Persona may ignore or parrot injected context (fine-tune never saw context in prompts) — **materialized** in the P7 eval: groundedness ~2.5/5 and frequent meta-commentary answers, on both A and B. Root cause is the weak fine-tune (bad gemini-2.5-flash training data + old q4 7B), not the recollections framing or prompt plumbing (trace verified clean, §VII.2). Not resolvable at the serving layer; needs a better training-data/model pass. *(Corrected 2026-08-21, R24: the `~2.5/5` figure includes ten empty answers the judge scored 1/1. The risk still materialized — it is the qualitative finding that stands, not the number.)*
 * The Idiot's heading scheme and BK's book count are verified from the files at impl (`structure.json` counts are the tripwire).
 * Latency measured on the real card (§VI); retrieval (~2.25s) and TTFT (~7.9s) exceed pre-build estimates, accepted for a solo local deploy.
 * FlashRank exact model id and fastembed's nomic prefix behavior are impl-time verifications.
