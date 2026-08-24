@@ -196,7 +196,7 @@ class Config:
 
     # --- RAG: serving ---
     LLAMA_SERVER_URL = os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080")
-    CTX_SIZE   = int(os.getenv("CTX_SIZE", "4096"))
+    CTX_SIZE   = int(os.getenv("CTX_SIZE", "3072"))
     MAX_TOKENS = int(os.getenv("MAX_TOKENS", "400"))
     # Sampling. A modest temperature (vs llama-server's ~0.8 default) cuts the
     # rate at which the weak q4 7B samples EOS as its first token and returns
