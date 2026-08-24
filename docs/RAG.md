@@ -290,7 +290,7 @@ Extend the existing `Config` class (typed values), plus `Config.validate_rag()` 
 
 * Paths: `RAG_DIR`, `VECTOR_DB_DIR`, `ENTITIES_PATH`, `SUMMARIES_PATH`, `STRUCTURE_PATH`.
 * Retrieval: `EMBED_MODEL`, `RERANK_MODEL`, `PREFETCH_LIMIT=50`, `TOP_K_FUSED=25`, `TOP_K_RERANK=3`, `RERANK_ENABLED=true`.
-* Serving: `LLAMA_SERVER_URL=http://127.0.0.1:8080`, `CTX_SIZE=4096`, `MAX_TOKENS=400`, `CACHE_ENABLED=true`.
+* Serving: `LLAMA_SERVER_URL=http://127.0.0.1:8080`, `CTX_SIZE=3072`, `MAX_TOKENS=400`, `CACHE_ENABLED=true`.
 
 **Why** extending the plain `Config` over pydantic-settings: matches the existing idiom, a dozen fields don't earn a new dependency; validation at startup covers the real failure (missing artifacts).
 

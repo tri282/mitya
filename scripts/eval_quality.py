@@ -132,7 +132,9 @@ def _cell_stats(rows: list[dict], min_draws: int) -> tuple[list[dict], int]:
     measurement, not the draw (R25): judge test-retest on fixed inputs gives
     within-variance 0.089 while re-generating the same cells gives 1.333, so a
     single draw measures that draw's luck, not the configuration. The cell mean's
-    standard error falls as 1.155/sqrt(k).
+    standard error falls as sqrt(within-variance/k) -- on the frozen 50-row set
+    within-variance is 2.367, i.e. 0.888 at k = 3 (R29 supersedes R25's 1.155
+    constant, which came from one theme).
 
     A cell needs `min_draws` judged draws to enter the means. Below that it is
     counted as failed and EXCLUDED: at R28's residual ~8% generation-failure rate
@@ -465,9 +467,11 @@ if __name__ == "__main__":
     ap.add_argument("--append", action="store_true",
                     help="merge onto the existing --out transcript (keyed by id/mode/draw) instead of overwriting")
     ap.add_argument("--draws", type=int, default=3,
-                    help="generations per (row, mode) cell -- k. Default 3, the frozen value: per-draw "
-                         "variance is 1.333 so the cell mean's SE is 1.155/sqrt(k); k=3 cuts per-cell "
-                         "noise 42%%, k=5 reaches only 55%% for 67%% more cost (R25). A baseline and a "
+                    help="generations per (row, mode) cell -- k. Default 3, the frozen value: k=3 "
+                         "cuts per-cell noise 42%%, k=5 reaches only 55%% for 67%% more cost (R25). "
+                         "Measured within-cell variance on the frozen 50-row set is 2.367, so the "
+                         "cell mean's SE at k=3 is 0.888 -- not the 0.667 R25's single-theme 1.333 "
+                         "predicted (R29). A baseline and a "
                          "candidate must use the SAME k or their means are not comparable. Use 1 for "
                          "smoke tests only.")
     ap.add_argument("--skip-judge", action="store_true", help="write transcripts without calling the judge API")
