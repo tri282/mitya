@@ -50,3 +50,13 @@ qdrant-client>=1.10
 fastembed
 flashrank
 diskcache
+
+# --- telemetry (v2 P1; C1 settled by R32) ---
+# Traces + metrics from one set of instrumentation calls. Export is opt-in:
+# with no OTEL_EXPORTER_OTLP_ENDPOINT the SDK builds spans and drops them, so a
+# dev run needs neither docker nor a collector.
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-httpx
+opentelemetry-exporter-otlp-proto-http

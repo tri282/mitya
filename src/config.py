@@ -214,6 +214,19 @@ class Config:
     CACHE_ENABLED = os.getenv("CACHE_ENABLED", "true").lower() == "true"
     CACHE_DIR = os.path.join(DATA_DIR, "cache")
 
+    # --- Telemetry (v2 P1, C1 settled by R32: OpenTelemetry span tree) ---
+    # Tracing is ON by default but EXPORT is not: with no endpoint configured
+    # the SDK still builds spans and drops them, so a dev run needs no Jaeger
+    # and no docker. Point OTEL_EXPORTER_OTLP_ENDPOINT at the collector to
+    # ship them (Jaeger all-in-one listens for OTLP/HTTP on :4318).
+    OTEL_ENABLED = os.getenv("OTEL_ENABLED", "true").lower() == "true"
+    OTEL_SERVICE_NAME = os.getenv("OTEL_SERVICE_NAME", "mitya-rag")
+    OTEL_EXPORTER_OTLP_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+    # Print spans as JSON on stdout. For local work with no collector running,
+    # and for verifying the tree where the host cannot reach one.
+    OTEL_CONSOLE_EXPORT = os.getenv("OTEL_CONSOLE_EXPORT", "false").lower() == "true"
+
+
     # --- RAG: prompt composition A/B (P7, ruling R19) ---
     # A (design default): context in the system prompt, framed as the
     # author's own recollections. B: context in the user turn instead. Both

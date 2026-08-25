@@ -14,9 +14,11 @@ on them:
        the request.
     2. Concurrent tasks do not share an id. v1's Semaphore(1) hides this today;
        P4's load ramp will not.
-    3. An inbound X-Request-ID is validated, not echoed. An arbitrary header
-       reaching a log record is a log-injection primitive (newlines forge log
-       lines) and lets a caller collide with another request's id.
+    3. The id is DERIVED from the active trace, not minted beside it. OTel's
+       server span is created outside every user middleware, so a separately
+       minted id would disagree with the trace id and paste-the-id would resolve
+       to two different things. An inbound X-Request-ID is never read --
+       correlation is W3C traceparent, which also removes the injection surface.
     4. Every record reaching the handler renders under LOG_FORMAT. A record
        without the attribute raises KeyError inside logging and the line is lost
        -- silently, because logging swallows formatting errors to stderr.
@@ -29,17 +31,23 @@ import sys
 
 sys.path.insert(0, ".")
 
+from opentelemetry import trace  # noqa: E402
+from opentelemetry.sdk.trace import TracerProvider  # noqa: E402
+
 from src.observability import (  # noqa: E402
     LOG_FORMAT,
     NO_REQUEST,
     RequestIdFilter,
     RequestIdMiddleware,
-    coerce_request_id,
     current_request_id,
     new_request_id,
+    request_id_from_active_span,
     reset_request_id,
     set_request_id,
 )
+
+trace.set_tracer_provider(TracerProvider())
+_tracer = trace.get_tracer(__name__)
 
 
 def test_sentinel_outside_request() -> None:
@@ -87,26 +95,23 @@ def test_concurrent_tasks_do_not_bleed() -> None:
     assert current_request_id() == NO_REQUEST, "task-local ids must not leak to the caller"
 
 
-def test_coerce_rejects_untrusted_input() -> None:
+def test_id_is_derived_from_the_active_trace() -> None:
+    """The request id IS the trace id, rendered the way trace UIs display it."""
+    assert request_id_from_active_span() is None, "no span in scope -> nothing to derive"
+
+    with _tracer.start_as_current_span("root") as span:
+        derived = request_id_from_active_span()
+        expected = format(span.get_span_context().trace_id, "032x")
+        assert derived == expected, (derived, expected)
+        assert len(derived) == 32 and all(c in "0123456789abcdef" for c in derived)
+
+
+def test_minted_id_matches_trace_id_shape() -> None:
+    """Where no trace exists the minted id must be indistinguishable in shape,
+    or log parsing and dashboards need two formats."""
     minted = new_request_id()
-    assert coerce_request_id(minted) == minted, "a canonical UUID is preserved"
-
-    # Same UUID, non-canonical spelling: re-serialization normalizes it, so the
-    # value that reaches a log record is always canonical.
-    assert coerce_request_id(minted.upper()) == minted
-
-    for hostile in (
-        None,
-        "",
-        "not-a-uuid",
-        "abc\ninjected WARNING forged log line",
-        "../../etc/passwd",
-        "%(asctime)s",
-        "x" * 4096,
-    ):
-        got = coerce_request_id(hostile)
-        assert got != hostile, f"untrusted value echoed back: {hostile!r}"
-        assert coerce_request_id(got) == got, "a minted id must itself be canonical"
+    assert len(minted) == 32 and all(c in "0123456789abcdef" for c in minted)
+    assert minted != new_request_id(), "ids must not repeat"
 
 
 def test_filter_renders_under_log_format() -> None:
@@ -174,21 +179,53 @@ def test_middleware_sets_echoes_and_resets() -> None:
     assert status == 200 and body == b"ok"
     echoed = headers[b"x-request-id"].decode()
     assert observed[0] == observed[1] == echoed, (observed, echoed)
-    assert coerce_request_id(echoed) == echoed, "minted id must be canonical"
+    assert len(echoed) == 32
     assert current_request_id() == NO_REQUEST, "the id must not outlive the request"
 
-    # A well-formed inbound id is adopted, so a client can correlate its own logs.
+    # Two requests, two ids.
     observed.clear()
-    supplied = new_request_id()
-    _, headers, _ = _drive(app, headers=[(b"x-request-id", supplied.encode())])
-    assert headers[b"x-request-id"].decode() == supplied
-    assert observed[0] == supplied
+    _, headers2, _ = _drive(app)
+    assert headers2[b"x-request-id"] != headers[b"x-request-id"]
 
-    # A hostile one is not.
+    # An inbound X-Request-ID is IGNORED, not adopted: correlation is
+    # traceparent, and echoing caller-controlled text into logs forges lines.
     observed.clear()
-    _, headers, _ = _drive(app, headers=[(b"x-request-id", b"forged\nWARNING evil")])
-    assert headers[b"x-request-id"] != b"forged\nWARNING evil"
-    assert observed[0] not in ("forged\nWARNING evil", NO_REQUEST)
+    hostile = b"forged\nWARNING evil"
+    _, headers3, _ = _drive(app, headers=[(b"x-request-id", hostile)])
+    assert headers3[b"x-request-id"] != hostile
+    assert observed[0] != hostile.decode("latin-1")
+    assert len(observed[0]) == 32
+
+
+def test_middleware_derives_id_from_surrounding_span() -> None:
+    """With a span in scope the middleware must adopt its trace id, not mint."""
+    observed: list[str] = []
+
+    async def stub_app(scope, receive, send):
+        observed.append(current_request_id())
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    app = RequestIdMiddleware(stub_app)
+
+    async def run():
+        with _tracer.start_as_current_span("server") as span:
+            expected = format(span.get_span_context().trace_id, "032x")
+            scope = {"type": "http", "method": "GET", "path": "/", "headers": []}
+            sent = []
+
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+
+            async def send(message):
+                sent.append(message)
+
+            await app(scope, receive, send)
+            start = next(m for m in sent if m["type"] == "http.response.start")
+            return expected, dict(start["headers"])[b"x-request-id"].decode()
+
+    expected, echoed = asyncio.run(run())
+    assert observed[0] == expected == echoed, (observed, expected, echoed)
 
 
 def test_middleware_resets_on_exception() -> None:

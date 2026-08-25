@@ -36,13 +36,23 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastembed import SparseTextEmbedding, TextEmbedding
+from opentelemetry import trace
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
 
 from src.config import Config
 from src.observability import (
+    STAGE_CACHE,
+    STAGE_CONTEXT,
+    STAGE_ENTITIES,
+    STAGE_GENERATE_FIRST,
+    STAGE_GENERATE_STREAM,
+    STAGE_RERANK,
+    STAGE_RETRIEVE,
+    STAGE_ROUTE,
     RequestIdMiddleware,
     configure_logging,
+    configure_tracing,
     current_request_id,
 )
 from src.rag.context import build_context
@@ -126,10 +136,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# Registered here rather than after the routes: ASGI middleware wraps the whole
-# app, so ordering against route registration is irrelevant -- but it must be
-# added before the first request, and this is the only statement that runs at
-# import time between app construction and the route decorators.
+# Order matters, and only this way round: FastAPIInstrumentor registers its own
+# middleware, and Starlette runs the LAST-added middleware outermost. Ours must
+# run first so the request_id ContextVar is set before the tracer mints the root
+# span -- that is what lets RequestIdGenerator derive trace_id from request_id
+# instead of falling back to random (R32).
+tracer = configure_tracing(app)
 app.add_middleware(RequestIdMiddleware)
 
 
@@ -189,7 +201,9 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
     await state.sem.acquire()
 
     # --- cache check (inside the semaphore, per design §III.4/§III.6) ---
-    cached = state.cache.get(body.query, filters)
+    with tracer.start_as_current_span(STAGE_CACHE) as span:
+        cached = state.cache.get(body.query, filters)
+        span.set_attribute("cache.hit", cached is not None)
     if cached is not None:
         logger.info(
             "chat: query=%r filters=%s session_id=%s cache_hit=true", body.query, filters, body.session_id,
@@ -217,31 +231,57 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
 
     # --- route -> resolve/expand -> retrieve -> rerank -> build_context ---
     try:
-        route_name, scope = route(body.query, filters, state.structure, state.summaries)
+        with tracer.start_as_current_span(STAGE_ROUTE) as span:
+            route_name, scope = route(body.query, filters, state.structure, state.summaries)
+            span.set_attribute("route.name", route_name)
+            span.set_attribute("route.scope_resolved", scope is not None)
+
         active_book = filters.get("book") if filters else None
-        expanded_query, resolved_entities = state.entities.resolve(body.query, active_book=active_book)
+        with tracer.start_as_current_span(STAGE_ENTITIES) as span:
+            expanded_query, resolved_entities = state.entities.resolve(
+                body.query, active_book=active_book
+            )
+            span.set_attribute("entities.resolved_count", len(resolved_entities))
 
         filter_relaxed = False
-        if route_name == "STRUCTURAL" and scope is not None:
-            points = retrieve_structural_excerpts(
-                state.qdrant, state.embedder, expanded_query,
-                scope["book"], scope["part"], scope["chapter"],
-            )
-        else:
-            hard_filter = build_hard_filter(filters)
-            points = retrieve(state.qdrant, state.embedder, state.bm25, expanded_query, hard_filter)
-            if not points and hard_filter is not None:
-                # Fallback (design §IV.3): a hard filter that matches zero
-                # chunks retries once unfiltered rather than dead-ending.
-                filter_relaxed = True
-                logger.info(
-                    "chat: filter_relaxed=true query=%r filters=%s", body.query, filters,
+        with tracer.start_as_current_span(STAGE_RETRIEVE) as span:
+            span.set_attribute("retrieve.route", route_name)
+            if route_name == "STRUCTURAL" and scope is not None:
+                # Hard chapter filter: no BM25 leg and no rerank, which is why
+                # this route reaches first token ~45% faster (R30).
+                points = retrieve_structural_excerpts(
+                    state.qdrant, state.embedder, expanded_query,
+                    scope["book"], scope["part"], scope["chapter"],
                 )
-                points = retrieve(state.qdrant, state.embedder, state.bm25, expanded_query, None)
-            points = rerank(body.query, points, state.ranker)
+            else:
+                hard_filter = build_hard_filter(filters)
+                points = retrieve(
+                    state.qdrant, state.embedder, state.bm25, expanded_query, hard_filter
+                )
+                if not points and hard_filter is not None:
+                    # Fallback (design §IV.3): a hard filter that matches zero
+                    # chunks retries once unfiltered rather than dead-ending.
+                    filter_relaxed = True
+                    logger.info(
+                        "chat: filter_relaxed=true query=%r filters=%s", body.query, filters,
+                    )
+                    points = retrieve(
+                        state.qdrant, state.embedder, state.bm25, expanded_query, None
+                    )
+            span.set_attribute("retrieve.points", len(points))
+            span.set_attribute("retrieve.filter_relaxed", filter_relaxed)
 
-        passages_block, sources = build_context(route_name, points, state.summaries, scope)
-        no_context = not sources
+        if not (route_name == "STRUCTURAL" and scope is not None):
+            with tracer.start_as_current_span(STAGE_RERANK) as span:
+                span.set_attribute("rerank.points_in", len(points))
+                points = rerank(body.query, points, state.ranker)
+                span.set_attribute("rerank.points_out", len(points))
+
+        with tracer.start_as_current_span(STAGE_CONTEXT) as span:
+            passages_block, sources = build_context(route_name, points, state.summaries, scope)
+            no_context = not sources
+            span.set_attribute("context.sources", len(sources))
+            span.set_attribute("context.no_context", no_context)
         if no_context:
             logger.info("chat: no_context=true query=%r", body.query)
     except ValueError as exc:
@@ -260,12 +300,26 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
     # Prime the stream before opening the HTTP response body: a connect/read
     # failure here still has a response to attach 503/504 to (design §IV.2).
     t_first_token: float | None = None
+    gen_first_span = tracer.start_span(STAGE_GENERATE_FIRST)
     try:
-        first_token = await gen.__anext__()
-        t_first_token = time.monotonic()
-    except StopAsyncIteration:
-        first_token = None
-        t_first_token = time.monotonic()
+        with trace.use_span(gen_first_span, end_on_exit=True, record_exception=False):
+            try:
+                first_token = await gen.__anext__()
+                t_first_token = time.monotonic()
+                gen_first_span.set_attribute("generate.empty", False)
+            except StopAsyncIteration:
+                # No token ever arrived -- every EMPTY_RETRIES attempt came
+                # back empty, and all of them were paid for inside this single
+                # __anext__(). Leaving t_first_token unset is the point (R33):
+                # setting it here reported "time to give up" as ttft_ms, which
+                # is not a time-to-first-token at all, and it made
+                # ttft_ms == total_ms on exactly the requests whose latency was
+                # least trustworthy. ttft_ms is None when there is no first
+                # token, which is what None is for. The span still records the
+                # elapsed time, and the httpx child spans show the attempts --
+                # so the cost stays visible without being mislabelled.
+                first_token = None
+                gen_first_span.set_attribute("generate.empty", True)
     except LlamaServerUnavailable as exc:
         state.sem.release()
         raise HTTPException(status_code=503, detail="llama-server unreachable") from exc
@@ -275,6 +329,7 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
 
     async def event_stream():
         answer_parts: list[str] = []
+        stream_span = tracer.start_span(STAGE_GENERATE_STREAM)
         try:
             if first_token:
                 answer_parts.append(first_token)
@@ -288,10 +343,13 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                 # this cannot become a 503/504 -- surface as a terminal SSE
                 # error event instead of hanging (design §IV.2).
                 logger.error("chat: mid-stream failure query=%r: %s", body.query, exc)
+                stream_span.set_attribute("generate.mid_stream_error", type(exc).__name__)
                 yield _sse("error", {"detail": str(exc)})
                 return
 
             answer = "".join(answer_parts)
+            stream_span.set_attribute("generate.tokens", len(answer_parts))
+            stream_span.set_attribute("generate.answer_chars", len(answer))
             footer = "" if no_context else build_sources_footer(sources)
             yield _sse("sources", {"sources": sources, "footer": footer})
 
@@ -317,6 +375,10 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                 [p.id for p in points], ttft_ms, total_ms, filter_relaxed, no_context, body.session_id,
             )
         finally:
+            # Ended here, not by a context manager: the span opens in this
+            # generator and must close whether the stream completed, errored
+            # mid-flight, or the client disconnected.
+            stream_span.end()
             state.sem.release()
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
