@@ -40,6 +40,11 @@ from pydantic import BaseModel
 from qdrant_client import QdrantClient
 
 from src.config import Config
+from src.observability import (
+    RequestIdMiddleware,
+    configure_logging,
+    current_request_id,
+)
 from src.rag.context import build_context
 from src.rag.entities import EntityMap
 from src.rag.generate import (
@@ -56,9 +61,10 @@ from src.rag.router import route
 
 # app.py is the ASGI entrypoint (`uvicorn src.api.app:app`), not a script with
 # a `__main__` guard, so nothing else calls logging.basicConfig -- without
-# this, our own logger.info() calls below are silently dropped. Format
-# matches the rest of the RAG codebase (src/rag/ingest.py, scripts/*.py).
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+# this, our own logger.info() calls below are silently dropped. Format is
+# src/rag/ingest.py's plus the P1 correlation id: every record carries the
+# request it belongs to, so no call site has to pass one by hand.
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 # BM25 model id is hardcoded here to match scripts/ingest_corpus.py:45 and
@@ -86,6 +92,10 @@ async def lifespan(app: FastAPI):
     missing artifacts (Config.validate_rag) or an empty Qdrant collection both
     raise before the server starts accepting requests."""
     Config.validate_rag()
+    # Second call, deliberate: uvicorn installs its own handlers (propagate=False)
+    # after importing this module, so the import-time call at :67 cannot reach
+    # them. Lifespan runs late enough. Idempotent -- see configure_logging().
+    configure_logging(logging.INFO)
     logger.info("lifespan: loading RAG artifacts and models...")
 
     app.state.embedder = TextEmbedding(Config.EMBED_MODEL)
@@ -115,6 +125,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+# Registered here rather than after the routes: ASGI middleware wraps the whole
+# app, so ordering against route registration is irrelevant -- but it must be
+# added before the first request, and this is the only statement that runs at
+# import time between app construction and the route decorators.
+app.add_middleware(RequestIdMiddleware)
 
 
 def _sse(event: str, payload: dict) -> str:
@@ -184,6 +200,7 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                 yield _sse("token", {"text": cached["answer"]})
                 yield _sse("sources", {"sources": cached["sources"], "footer": cached["footer"]})
                 yield _sse("meta", {
+                    "request_id": current_request_id(),
                     "route_name": "CACHE",
                     "chunk_ids": [],
                     "ttft_ms": None,
@@ -284,6 +301,7 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
             total_ms = int((time.monotonic() - t_start) * 1000)
             ttft_ms = int((t_first_token - t_start) * 1000) if t_first_token is not None else None
             yield _sse("meta", {
+                "request_id": current_request_id(),
                 "route_name": route_name,
                 "chunk_ids": [p.id for p in points],
                 "ttft_ms": ttft_ms,
