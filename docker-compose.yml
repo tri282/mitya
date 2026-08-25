@@ -1,0 +1,51 @@
+# Mitya v2 -- operator-plane infrastructure (charter D8: Compose only, no
+# bespoke admin UI, no Kubernetes). The app itself is NOT containerized: it
+# needs the host's GPU today and will need host-local Qdrant storage after that.
+services:
+  # Trace backend for the P1 telemetry spine (C1 settled by R32).
+  # all-in-one = collector + query + UI in one image, in-memory storage.
+  # In-memory is deliberate: it keeps G8 (durable storage) deferred to P5, at
+  # the cost of losing traces on restart. Step 10's "storage growth per 1k
+  # requests" therefore measures RAM, not disk.
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: mitya-jaeger
+    # Host networking, not a published port. Two reasons, both specific to this
+    # machine and both verified:
+    #
+    # 1. The bridge path does not work here. Jaeger serves fine inside the
+    #    container (HTTP 200 on / and /api/services over both IPv4 and IPv6
+    #    loopback), but a connection from the host to the container IP is
+    #    refused instantly, so docker-proxy accepts on 127.0.0.1, fails to reach
+    #    the container, and closes -- which is exactly the "empty page" the
+    #    browser reports.
+    # 2. Published container ports are DNAT'd through Docker's own iptables
+    #    chain, which is evaluated BEFORE firewalld's zones -- so "-p 16686:16686"
+    #    is reachable from the LAN even though enp5s0/wlp6s0 sit in firewalld's
+    #    `drop` zone. Host networking puts these sockets back under firewalld.
+    #
+    # The bind addresses below are still the control that matters: both are
+    # pinned to loopback, because Jaeger all-in-one has NO authentication and
+    # its trace UI shows full request contents to anyone who can reach it.
+    network_mode: host
+    # EVERY listener is pinned to loopback, not just the two this project uses.
+    # all-in-one opens nine ports and the defaults bind 0.0.0.0 -- under
+    # network_mode: host that puts them on the LAN interfaces. Measured before
+    # this was added: 16685, 14250, 14268, 14269 and 5778 all accepted on the
+    # host's LAN address. 16685 is the query gRPC API, which READS TRACES: same
+    # data as the UI, no authentication.
+    command:
+      - "--query.http-server.host-port=127.0.0.1:16686"   # UI
+      - "--query.grpc-server.host-port=127.0.0.1:16685"   # query gRPC -- reads traces
+      - "--collector.otlp.http.host-port=127.0.0.1:4318"  # what the app exports to
+      - "--collector.otlp.grpc.host-port=127.0.0.1:4317"
+      - "--collector.grpc-server.host-port=127.0.0.1:14250"
+      - "--collector.http-server.host-port=127.0.0.1:14268"
+      - "--admin.http.host-port=127.0.0.1:14269"
+      - "--http-server.host-port=127.0.0.1:5778"          # agent config endpoint
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      # Ring buffer. 50k traces is far more than this deployment produces and
+      # bounds the footprint; raise it only against a measured need.
+      MEMORY_MAX_TRACES: "50000"
+    restart: unless-stopped
