@@ -1,0 +1,217 @@
+# test/test_observability.py
+"""P1 step 1 verify: the request_id join key (src/observability.py).
+
+Plain-assert script, not pytest (pytest is not installed in .venv -- see
+plans/mitya-rag/05-impl/phase-4.md). Offline: no server, no Qdrant, no GPU, no
+network. The ASGI middleware is exercised directly against a stub app, which is
+the whole point of it being pure ASGI.
+
+Four things here are invisible when wrong and permanent once later phases build
+on them:
+
+    1. The id survives `await`. If it did not, every record emitted during the
+       streamed token phase would lose its join key -- and that phase is most of
+       the request.
+    2. Concurrent tasks do not share an id. v1's Semaphore(1) hides this today;
+       P4's load ramp will not.
+    3. An inbound X-Request-ID is validated, not echoed. An arbitrary header
+       reaching a log record is a log-injection primitive (newlines forge log
+       lines) and lets a caller collide with another request's id.
+    4. Every record reaching the handler renders under LOG_FORMAT. A record
+       without the attribute raises KeyError inside logging and the line is lost
+       -- silently, because logging swallows formatting errors to stderr.
+"""
+
+import asyncio
+import io
+import logging
+import sys
+
+sys.path.insert(0, ".")
+
+from src.observability import (  # noqa: E402
+    LOG_FORMAT,
+    NO_REQUEST,
+    RequestIdFilter,
+    RequestIdMiddleware,
+    coerce_request_id,
+    current_request_id,
+    new_request_id,
+    reset_request_id,
+    set_request_id,
+)
+
+
+def test_sentinel_outside_request() -> None:
+    assert current_request_id() == NO_REQUEST, (
+        "offline callers must render as an explicit non-request, not None"
+    )
+
+
+def test_survives_await() -> None:
+    async def run() -> str:
+        token = set_request_id("abc")
+        try:
+            await asyncio.sleep(0)
+            return current_request_id()
+        finally:
+            reset_request_id(token)
+
+    assert asyncio.run(run()) == "abc"
+
+
+def test_concurrent_tasks_do_not_bleed() -> None:
+    """Two interleaved requests keep their own ids.
+
+    Each task sets the id, yields control (forcing the other task to run in
+    between), then reads it back. A module-level global passes every other test
+    in this file and fails this one.
+    """
+
+    async def one(request_id: str, out: dict) -> None:
+        token = set_request_id(request_id)
+        try:
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            out[request_id] = current_request_id()
+        finally:
+            reset_request_id(token)
+
+    async def run() -> dict:
+        out: dict = {}
+        await asyncio.gather(one("req-a", out), one("req-b", out))
+        return out
+
+    seen = asyncio.run(run())
+    assert seen == {"req-a": "req-a", "req-b": "req-b"}, seen
+    assert current_request_id() == NO_REQUEST, "task-local ids must not leak to the caller"
+
+
+def test_coerce_rejects_untrusted_input() -> None:
+    minted = new_request_id()
+    assert coerce_request_id(minted) == minted, "a canonical UUID is preserved"
+
+    # Same UUID, non-canonical spelling: re-serialization normalizes it, so the
+    # value that reaches a log record is always canonical.
+    assert coerce_request_id(minted.upper()) == minted
+
+    for hostile in (
+        None,
+        "",
+        "not-a-uuid",
+        "abc\ninjected WARNING forged log line",
+        "../../etc/passwd",
+        "%(asctime)s",
+        "x" * 4096,
+    ):
+        got = coerce_request_id(hostile)
+        assert got != hostile, f"untrusted value echoed back: {hostile!r}"
+        assert coerce_request_id(got) == got, "a minted id must itself be canonical"
+
+
+def test_filter_renders_under_log_format() -> None:
+    """A record with no id still formats -- KeyError here loses the line."""
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    handler.addFilter(RequestIdFilter())
+
+    log = logging.getLogger("test_observability.filter")
+    log.propagate = False
+    log.setLevel(logging.INFO)
+    log.addHandler(handler)
+
+    log.info("outside a request")
+    token = set_request_id("req-xyz")
+    try:
+        log.info("inside a request")
+    finally:
+        reset_request_id(token)
+
+    lines = stream.getvalue().splitlines()
+    assert f"[{NO_REQUEST}]" in lines[0], lines[0]
+    assert "[req-xyz]" in lines[1], lines[1]
+
+
+def _drive(app, headers=None):
+    """Run one ASGI request against `app`, returning (status, headers, body)."""
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/chat",
+        "headers": headers or [],
+    }
+    sent: list = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+
+    asyncio.run(app(scope, receive, send))
+    start = next(m for m in sent if m["type"] == "http.response.start")
+    body = b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body")
+    return start["status"], dict(start["headers"]), body
+
+
+def test_middleware_sets_echoes_and_resets() -> None:
+    observed: list[str] = []
+
+    async def stub_app(scope, receive, send):
+        # Read the id both before and after the response starts: the second read
+        # is the streaming phase, which is where BaseHTTPMiddleware would have
+        # lost it.
+        observed.append(current_request_id())
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await asyncio.sleep(0)
+        observed.append(current_request_id())
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    app = RequestIdMiddleware(stub_app)
+
+    status, headers, body = _drive(app)
+    assert status == 200 and body == b"ok"
+    echoed = headers[b"x-request-id"].decode()
+    assert observed[0] == observed[1] == echoed, (observed, echoed)
+    assert coerce_request_id(echoed) == echoed, "minted id must be canonical"
+    assert current_request_id() == NO_REQUEST, "the id must not outlive the request"
+
+    # A well-formed inbound id is adopted, so a client can correlate its own logs.
+    observed.clear()
+    supplied = new_request_id()
+    _, headers, _ = _drive(app, headers=[(b"x-request-id", supplied.encode())])
+    assert headers[b"x-request-id"].decode() == supplied
+    assert observed[0] == supplied
+
+    # A hostile one is not.
+    observed.clear()
+    _, headers, _ = _drive(app, headers=[(b"x-request-id", b"forged\nWARNING evil")])
+    assert headers[b"x-request-id"] != b"forged\nWARNING evil"
+    assert observed[0] not in ("forged\nWARNING evil", NO_REQUEST)
+
+
+def test_middleware_resets_on_exception() -> None:
+    async def boom(scope, receive, send):
+        raise RuntimeError("handler failed")
+
+    app = RequestIdMiddleware(boom)
+    try:
+        _drive(app)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("the middleware must not swallow handler errors")
+    assert current_request_id() == NO_REQUEST
+
+
+def main() -> None:
+    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    for fn in tests:
+        fn()
+        print(f"  ok  {fn.__name__}")
+    print(f"\n{len(tests)} passed")
+
+
+if __name__ == "__main__":
+    main()
