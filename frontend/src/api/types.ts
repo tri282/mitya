@@ -38,6 +38,10 @@ export interface MetaEvent {
   // resolves -- it IS the OTel trace id in hex, not a parallel identifier.
   // Server has emitted this since step 1; this interface had drifted.
   request_id: string
+  // P1 step 4. One synthetic tenant until P5 makes identity real -- the
+  // caller-supplied X-Tenant-ID header, or the server's default when absent
+  // or rejected for shape (see src/observability.py's parse_tenant()).
+  tenant: string
   route_name: string
   chunk_ids: (string | number)[] // Qdrant ids (int or uuid)
   ttft_ms: number | null

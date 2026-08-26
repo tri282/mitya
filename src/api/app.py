@@ -55,6 +55,7 @@ from src.observability import (
     configure_logging,
     configure_tracing,
     current_request_id,
+    current_tenant,
 )
 from src.pricing import FREE, Cost, cost_usd, is_metered, total_usd
 from src.rag.context import build_context
@@ -200,6 +201,12 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
     filters = body.filters.model_dump(exclude_none=True) if body.filters else None
     t_start = time.monotonic()
 
+    # Root span only (P1 step 4, A12) -- not on the seven stage spans below,
+    # which are children of this one and inherit its trace. A per-stage copy
+    # would be seven writes of one constant per request, and Jaeger already
+    # filters a trace by a root attribute.
+    trace.get_current_span().set_attribute("tenant", current_tenant())
+
     await state.sem.acquire()
 
     # --- cache check (inside the semaphore, per design §III.4/§III.6) ---
@@ -218,6 +225,7 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                 yield _sse("sources", {"sources": cached["sources"], "footer": cached["footer"]})
                 yield _sse("meta", {
                     "request_id": current_request_id(),
+                    "tenant": current_tenant(),
                     "route_name": "CACHE",
                     "chunk_ids": [],
                     "ttft_ms": None,
@@ -413,6 +421,7 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
             cost = total_usd([_generation_cost()])
             yield _sse("meta", {
                 "request_id": current_request_id(),
+                "tenant": current_tenant(),
                 "route_name": route_name,
                 "chunk_ids": [p.id for p in points],
                 "ttft_ms": ttft_ms,

@@ -61,11 +61,15 @@ DEFAULT_ROUTE_STAGES = [
 ]
 
 
-def _emit(route_name: str) -> list:
+def _emit(route_name: str, tenant: str | None = "acme") -> list:
     """Replay src/api/app.py's span structure for one request."""
     _exporter.clear()
     structural = route_name == "STRUCTURAL"
-    with tracer.start_as_current_span("POST /chat"):
+    with tracer.start_as_current_span("POST /chat") as root:
+        if tenant is not None:
+            # P1 step 4: root span only, not on any of the seven stage
+            # children -- see src/api/app.py's chat() handler.
+            root.set_attribute("tenant", tenant)
         with tracer.start_as_current_span(STAGE_CACHE) as s:
             s.set_attribute("cache.hit", False)
             set_cost(s)
@@ -188,6 +192,20 @@ def test_prefill_defers_its_cost_rather_than_claiming_to_be_free() -> None:
     first = _by_name(_emit("DEFAULT"))[STAGE_GENERATE_FIRST]
     assert first.attributes["cost.usd"] == 0.0
     assert first.attributes["cost.deferred_to"] == STAGE_GENERATE_STREAM
+
+
+def test_tenant_is_on_the_root_span_only() -> None:
+    """P1 step 4: tenant is a root-span attribute, not repeated on the seven
+    stage children -- they inherit the trace, so a per-stage copy is seven
+    writes of one constant per request and step 10's storage number pays
+    for it."""
+    spans = _emit("DEFAULT", tenant="acme")
+    root = _by_name(spans)["POST /chat"]
+    assert root.attributes["tenant"] == "acme"
+    for s in spans:
+        if s.name == "POST /chat":
+            continue
+        assert "tenant" not in s.attributes, f"{s.name} carries a tenant copy"
 
 
 def test_request_id_is_the_trace_id_in_hex() -> None:

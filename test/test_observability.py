@@ -37,14 +37,20 @@ from opentelemetry.sdk.trace import TracerProvider  # noqa: E402
 from src.observability import (  # noqa: E402
     LOG_FORMAT,
     NO_REQUEST,
+    TENANT_HEADER,
     RequestIdFilter,
     RequestIdMiddleware,
     current_request_id,
+    current_tenant,
     new_request_id,
+    parse_tenant,
     request_id_from_active_span,
     reset_request_id,
+    reset_tenant,
     set_request_id,
+    set_tenant,
 )
+from src.config import Config  # noqa: E402
 
 trace.set_tracer_provider(TracerProvider())
 _tracer = trace.get_tracer(__name__)
@@ -136,6 +142,141 @@ def test_filter_renders_under_log_format() -> None:
     lines = stream.getvalue().splitlines()
     assert f"[{NO_REQUEST}]" in lines[0], lines[0]
     assert "[req-xyz]" in lines[1], lines[1]
+    assert f"[{Config.DEFAULT_TENANT}]" in lines[0], lines[0]
+
+
+def test_filter_renders_tenant_under_log_format() -> None:
+    """Same as above, isolating the tenant field: a record with no tenant set
+    must render the default, and a bound tenant must render verbatim."""
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    handler.addFilter(RequestIdFilter())
+
+    log = logging.getLogger("test_observability.tenant_filter")
+    log.propagate = False
+    log.setLevel(logging.INFO)
+    log.addHandler(handler)
+
+    log.info("outside a request")
+    token = set_tenant("acme")
+    try:
+        log.info("inside a request")
+    finally:
+        reset_tenant(token)
+
+    lines = stream.getvalue().splitlines()
+    assert f"[{Config.DEFAULT_TENANT}]" in lines[0], lines[0]
+    assert "[acme]" in lines[1], lines[1]
+
+
+def test_tenant_default_outside_request() -> None:
+    assert current_tenant() == Config.DEFAULT_TENANT
+
+
+def test_tenant_survives_await() -> None:
+    async def run() -> str:
+        token = set_tenant("acme")
+        try:
+            await asyncio.sleep(0)
+            return current_tenant()
+        finally:
+            reset_tenant(token)
+
+    assert asyncio.run(run()) == "acme"
+
+
+def test_tenant_concurrent_tasks_do_not_bleed() -> None:
+    """Same shape as test_concurrent_tasks_do_not_bleed above, for tenant."""
+
+    async def one(tenant: str, out: dict) -> None:
+        token = set_tenant(tenant)
+        try:
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            out[tenant] = current_tenant()
+        finally:
+            reset_tenant(token)
+
+    async def run() -> dict:
+        out: dict = {}
+        await asyncio.gather(one("tenant-a", out), one("tenant-b", out))
+        return out
+
+    seen = asyncio.run(run())
+    assert seen == {"tenant-a": "tenant-a", "tenant-b": "tenant-b"}, seen
+    assert current_tenant() == Config.DEFAULT_TENANT, "task-local tenant must not leak to the caller"
+
+
+def test_parse_tenant_none_and_valid() -> None:
+    assert parse_tenant(None) == Config.DEFAULT_TENANT
+    assert parse_tenant(b"acme-corp") == "acme-corp"
+    assert parse_tenant("acme-corp") == "acme-corp"
+
+
+def test_parse_tenant_lowercases() -> None:
+    assert parse_tenant(b"Acme") == "acme"
+
+
+def test_parse_tenant_hostile_inputs_fall_back_and_do_not_leak() -> None:
+    """Each hostile value falls back to the default AND cannot forge a second
+    log line -- a raw newline/CR reaching the formatter is what a log
+    injection looks like, and %r must render it as an escape, not reproduce
+    it. Separately, the per-request log line (LOG_FORMAT's `%(tenant)s`)
+    only ever carries the safe, already-resolved tenant -- never the raw
+    header -- which the middleware tests above cover end to end."""
+    # "uppercase" is deliberately not here: the shape check runs AFTER
+    # lowercasing (plan §3), so a pure-case difference is normalization, not
+    # an invented identity -- test_parse_tenant_lowercases covers that it is
+    # accepted, not rejected. Everything below fails the shape check even
+    # after lowercasing.
+    hostile = {
+        "newline": b"evil\nWARNING forged line",
+        "carriage_return": b"evil\rWARNING forged line",
+        # TRAILING newline/CR, not interior -- the case that actually got
+        # through. Python's `$` matches end-of-string OR just before a trailing
+        # newline, so `^[a-z0-9][a-z0-9-]{0,31}$` ACCEPTED b"acme\n" and
+        # returned it verbatim into LOG_FORMAT's [%(tenant)s]: one forged log
+        # line per request. The interior cases above never caught it, because
+        # \n is not in the character class and only the trailing position is
+        # special. Fixed by anchoring with \Z.
+        "trailing_newline": b"acme\n",
+        "trailing_crlf": b"acme\r\n",
+        "trailing_cr": b"acme\r",
+        "over_length": b"a" * 33,
+        "leading_hyphen": b"-tenant",
+        "empty": b"",
+        "non_ascii": "t\xe9nant".encode("latin-1"),
+        "semicolons": b"tenant;DROP TABLE",
+    }
+
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    log = logging.getLogger("src.observability")
+    log.propagate = False
+    log.setLevel(logging.WARNING)
+    log.addHandler(handler)
+    try:
+        for name, raw in hostile.items():
+            stream.truncate(0)
+            stream.seek(0)
+            result = parse_tenant(raw)
+            assert result == Config.DEFAULT_TENANT, (name, result)
+            logged = stream.getvalue()
+            # Exactly one line out of one log call -- a raw newline/CR in the
+            # rejected value would otherwise split into a second, forged line
+            # that a log scraper reads as an independent record.
+            assert logged.count("\n") == 1, (name, logged)
+    finally:
+        log.removeHandler(handler)
+
+
+def test_valid_shapes_are_not_rejected() -> None:
+    """Sanity check on the other side of the boundary -- shape validation must
+    not reject ordinary values."""
+    for ok in (b"default", b"a", b"a" * 32, b"tenant-42"):
+        assert parse_tenant(ok) == ok.decode("latin-1")
 
 
 def _drive(app, headers=None):
@@ -228,6 +369,61 @@ def test_middleware_derives_id_from_surrounding_span() -> None:
     assert observed[0] == expected == echoed, (observed, expected, echoed)
 
 
+def test_middleware_binds_default_tenant_with_no_header() -> None:
+    observed: list[str] = []
+
+    async def stub_app(scope, receive, send):
+        observed.append(current_tenant())
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    app = RequestIdMiddleware(stub_app)
+    _drive(app)
+    assert observed == [Config.DEFAULT_TENANT]
+    assert current_tenant() == Config.DEFAULT_TENANT, "must not outlive the request"
+
+
+def test_middleware_tenant_header_wins() -> None:
+    observed: list[str] = []
+
+    async def stub_app(scope, receive, send):
+        observed.append(current_tenant())
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    app = RequestIdMiddleware(stub_app)
+    _drive(app, headers=[(TENANT_HEADER, b"Acme-Corp")])
+    assert observed == ["acme-corp"], "lowercased, header wins over the default"
+
+
+def test_middleware_hostile_tenant_header_falls_back() -> None:
+    observed: list[str] = []
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    handler.addFilter(RequestIdFilter())
+    log = logging.getLogger("test_observability.mw_hostile")
+    log.propagate = False
+    log.setLevel(logging.INFO)
+    log.addHandler(handler)
+
+    async def stub_app(scope, receive, send):
+        observed.append(current_tenant())
+        log.info("request-scoped log line")
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    app = RequestIdMiddleware(stub_app)
+    hostile = b"forged\nWARNING evil"
+    _drive(app, headers=[(TENANT_HEADER, hostile)])
+    assert observed == [Config.DEFAULT_TENANT]
+    # The per-request log line renders the resolved default, never the raw
+    # header -- the whole point of falling back rather than sanitizing.
+    logged = stream.getvalue()
+    assert hostile.decode("latin-1") not in logged, logged
+    assert f"[{Config.DEFAULT_TENANT}]" in logged, logged
+
+
 def test_middleware_resets_on_exception() -> None:
     async def boom(scope, receive, send):
         raise RuntimeError("handler failed")
@@ -240,6 +436,7 @@ def test_middleware_resets_on_exception() -> None:
     else:
         raise AssertionError("the middleware must not swallow handler errors")
     assert current_request_id() == NO_REQUEST
+    assert current_tenant() == Config.DEFAULT_TENANT
 
 
 def main() -> None:
