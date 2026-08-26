@@ -11,8 +11,20 @@ admits a class the router did not previously take:
 
     targeted    "What happens to Raskolnikov's conscience in part 4 chapter 4?"
                 is scoped to a chapter but asks about one thread inside it.
-                STRUCTURAL serves 2 excerpts and the chapter summary, which may
-                simply not contain the answer.
+                Whether STRUCTURAL serves it well is the open question.
+
+MEASURED 2026-08-26, and it corrects the framing above. STRUCTURAL is not
+summary-only: retrieve_structural_excerpts() takes the QUERY and does a dense
+nearest-neighbour search hard-filtered to the chapter, so the block is the
+chapter summary PLUS 2 query-relevant excerpts of raw chapter text. Running
+--context on the four targeted probes, STRUCTURAL's excerpts overlap DEFAULT's
+reranked picks by 27-99%. The real difference on a chapter-scoped question is
+narrower than "summary vs retrieval": summary + dense-top-2 against
+hybrid + reranked-top-3, over the same chapter's chunks.
+
+So the information is there, and the remaining question is generation quality --
+which belongs at P2 on the hosted model that will actually serve, not on
+`local-q4km` (D1/D2: it is leaving the request path). Recorded as R40.
 
 This is NOT the same question as defect 2, and conflating them is why this is a
 separate script rather than more eval rows. Phrasing invariance is a *property*:
@@ -30,12 +42,34 @@ script for R15's threshold rather than pre-labelling the rows.
 Cosmetic today -- both routes answer, one 45% faster. From P2 on, `route`
 selects which model is paid for, so this line has a price.
 
+**--context**: the half of this question that does NOT need a generator.
+
+Whether a targeted question is well served by STRUCTURAL turns first on a
+question no judge can answer better than a diff: **is the information even in
+the context STRUCTURAL builds?** STRUCTURAL serves summaries.json for the
+chapter plus 2 excerpts; DEFAULT serves hybrid retrieval + rerank over that
+chapter's chunks. Comparing the two context blocks needs no generation.
+
+The asymmetry is what makes it worth running before the judge:
+
+  * summary demonstrably lacks the information -> STRUCTURAL is wrong for
+    targeted questions no matter which model generates, and that verdict
+    survives the move to hosted serving (D1/D2).
+  * summary contains it -> the remaining question is generation quality, which
+    belongs at P2 on the model that will actually serve, not on `local-q4km`
+    (A3: running it means starting the hardware v2 exists to escape).
+
+Same move as R22 / probe_gate_scores.py: probe the mechanism, not the output.
+
 Usage:
 
-    python scripts/probe_route_intent.py            # table
+    python scripts/probe_route_intent.py            # routing table only
     python scripts/probe_route_intent.py --json out.json
+    python scripts/probe_route_intent.py --context  # + both context blocks
 
-Offline: router only, no Qdrant, no GPU, no API calls.
+Default mode is offline: router only, no Qdrant, no GPU, no API calls.
+--context additionally loads the embedders, the reranker and local-mode Qdrant.
+Still no generation, no judge, no API calls, $0.00.
 """
 
 import argparse
@@ -86,21 +120,127 @@ PROBES = [
 ]
 
 
-def run() -> list[dict]:
+def _build_both_contexts(query: str, scope: dict, state) -> dict:
+    """Build the context block each route WOULD produce for one query.
+
+    Mirrors src/api/app.py's two branches rather than importing them: the
+    handler interleaves this with spans, the semaphore and the cache, none of
+    which belong in a probe. The retrieval calls themselves are the same.
+    """
+    from src.rag.context import build_context
+    from src.rag.retrieve import (
+        build_hard_filter, rerank, retrieve, retrieve_structural_excerpts,
+    )
+
+    expanded, _ = state["entities"].resolve(query, active_book=scope["book"])
+
+    structural_points = retrieve_structural_excerpts(
+        state["client"], state["embedder"], expanded,
+        scope["book"], scope["part"], scope["chapter"],
+    )
+    structural_block, structural_sources = build_context(
+        "STRUCTURAL", structural_points, state["summaries"], scope,
+    )
+
+    # DEFAULT restricted to the same chapter -- the comparison is about what
+    # each route puts in the prompt for THIS chapter, so letting the hybrid leg
+    # roam the whole corpus would be measuring a different question.
+    hard_filter = build_hard_filter({
+        "book": scope["book"], "part": scope["part"], "chapter": scope["chapter"],
+    })
+    default_points = retrieve(
+        state["client"], state["embedder"], state["bm25"], expanded, hard_filter,
+    )
+    default_points = rerank(query, default_points, state["ranker"])
+    default_block, default_sources = build_context(
+        "DEFAULT", default_points, state["summaries"], None,
+    )
+
+    return {
+        "structural_chars": len(structural_block),
+        "structural_sources": len(structural_sources),
+        "structural_block": structural_block,
+        "default_chars": len(default_block),
+        "default_sources": len(default_sources),
+        "default_block": default_block,
+    }
+
+
+def load_retrieval_state() -> dict:
+    """Everything --context needs. Expensive; only built when asked for."""
+    from fastembed import SparseTextEmbedding, TextEmbedding
+    from qdrant_client import QdrantClient
+
+    from src.rag.entities import EntityMap
+    from src.rag.retrieve import build_ranker
+
+    logger.info("loading dense embedder: %s", Config.EMBED_MODEL)
+    embedder = TextEmbedding(model_name=Config.EMBED_MODEL)
+    logger.info("loading sparse embedder: Qdrant/bm25")
+    bm25 = SparseTextEmbedding(model_name="Qdrant/bm25")
+    logger.info("loading reranker: %s", Config.RERANK_MODEL)
+    ranker = build_ranker()
+    logger.info("loading entity map")
+    entities = EntityMap()
+    return {
+        "embedder": embedder, "bm25": bm25, "ranker": ranker, "entities": entities,
+        "client": QdrantClient(path=Config.VECTOR_DB_DIR),
+        "summaries": json.load(open(os.path.join(Config.RAG_DIR, "summaries.json"))),
+    }
+
+
+def report_contexts(results: list[dict]) -> None:
+    """Print both blocks for every targeted probe, for reading side by side.
+
+    No verdict is computed. Whether a chapter summary "covers" a question about
+    one character's interiority is a judgement about text, and a char-count
+    heuristic dressed up as a coverage score would be exactly the kind of
+    fabricated measurement charter II forbids. The probe puts the two blocks in
+    front of a person; the person decides.
+    """
+    targeted = [r for r in results if r["shape"] == "targeted" and "context" in r]
+    logger.info("")
+    logger.info("=" * 100)
+    logger.info("CONTEXT COMPARISON -- %d targeted probes", len(targeted))
+    logger.info("=" * 100)
+    for r in targeted:
+        c = r["context"]
+        logger.info("")
+        logger.info("QUERY: %s", r["query"])
+        logger.info(
+            "  STRUCTURAL builds %d chars / %d sources | DEFAULT builds %d chars / %d sources",
+            c["structural_chars"], c["structural_sources"],
+            c["default_chars"], c["default_sources"],
+        )
+        logger.info("  --- STRUCTURAL context (chapter summary + excerpts) ---")
+        logger.info("%s", c["structural_block"])
+        logger.info("  --- DEFAULT context (hybrid retrieval + rerank, same chapter) ---")
+        logger.info("%s", c["default_block"])
+        logger.info("-" * 100)
+
+
+def run(with_context: bool = False) -> list[dict]:
     structure = json.load(open(os.path.join(Config.RAG_DIR, "structure.json")))
     summaries = json.load(open(os.path.join(Config.RAG_DIR, "summaries.json")))
+
+    state = load_retrieval_state() if with_context else None
 
     results = []
     for shape, query, hint in PROBES:
         actual_route, scope = route(query, None, structure, summaries)
-        results.append({
+        row = {
             "shape": shape,
             "query": query,
             "route": actual_route,
             "scope_resolved": scope is not None,
             "hypothesis": hint,
             "agrees": actual_route == hint,
-        })
+        }
+        # Only the targeted rows are worth the retrieval cost: the wholesale
+        # rows are what STRUCTURAL is FOR, and the controls never reach it.
+        if with_context and shape == "targeted" and scope is not None:
+            row["context"] = _build_both_contexts(query, scope, state)
+        results.append(row)
     return results
 
 
@@ -147,10 +287,17 @@ def report(results: list[dict]) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--json", help="write per-row results to this path")
+    ap.add_argument(
+        "--context", action="store_true",
+        help="also build and print the context block each route would produce "
+             "for the targeted probes (loads embedders, reranker and Qdrant)",
+    )
     args = ap.parse_args()
 
-    results = run()
+    results = run(with_context=args.context)
     report(results)
+    if args.context:
+        report_contexts(results)
     if args.json:
         with open(args.json, "w") as fh:
             json.dump(results, fh, indent=2, ensure_ascii=False)
