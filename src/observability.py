@@ -22,6 +22,7 @@ span-tree, and hybrid alike.
 
 import contextvars
 import logging
+import re
 import uuid
 from typing import TYPE_CHECKING
 
@@ -43,7 +44,15 @@ _request_id: contextvars.ContextVar[str] = contextvars.ContextVar(
     "request_id", default=NO_REQUEST
 )
 
-LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s [%(request_id)s]: %(message)s"
+# Default is None, not Config.DEFAULT_TENANT, so that creating this ContextVar
+# does not import src.config at module scope -- src.pricing's TYPE_CHECKING
+# note above explains why that import must stay lazy. `current_tenant()`
+# resolves None to Config.DEFAULT_TENANT on read instead.
+_tenant: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "tenant", default=None
+)
+
+LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s [%(request_id)s] [%(tenant)s]: %(message)s"
 
 
 def new_request_id() -> str:
@@ -74,16 +83,88 @@ def reset_request_id(token: contextvars.Token) -> None:
     _request_id.reset(token)
 
 
+# ---------------------------------------------------------------------------
+# Tenant (v2 P1 step 4; A12 -- one synthetic tenant until P5 makes identity
+# real). Same ContextVar/filter/middleware shape as request_id above -- this
+# is that mechanism again with a different value and a validation step,
+# deliberately not a second mechanism.
+# ---------------------------------------------------------------------------
+
+# UNAUTHENTICATED until P5: anyone who can reach the endpoint can claim any
+# tenant by sending this header. Acceptable now (single operator, synthetic
+# traffic, loopback) -- see parse_tenant() for the validation that keeps it
+# from becoming a log-injection or metrics-cardinality problem in the
+# meantime.
+TENANT_HEADER = b"x-tenant-id"
+
+# Allowlist-shaped, not a registry of known tenant ids -- there is no tenant
+# registry until P5. Lowercase alnum + hyphen, 1-32 chars.
+#
+# \Z, NOT $. In Python `$` matches at end-of-string *or immediately before a
+# trailing newline*, so `^...$` accepts "acme\n" -- and this value is
+# interpolated into LOG_FORMAT's [%(tenant)s], which makes a trailing newline a
+# log-injection primitive: one forged line per request. An interior newline was
+# already rejected (\n is not in the class); it is specifically the trailing one
+# that slipped through. \Z anchors at end-of-string and nothing else.
+_TENANT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}\Z")
+
+
+def current_tenant() -> str:
+    tenant = _tenant.get()
+    if tenant is not None:
+        return tenant
+    from src.config import Config
+
+    return Config.DEFAULT_TENANT
+
+
+def set_tenant(tenant: str) -> contextvars.Token:
+    return _tenant.set(tenant)
+
+
+def reset_tenant(token: contextvars.Token) -> None:
+    _tenant.reset(token)
+
+
+def parse_tenant(raw: bytes | str | None) -> str:
+    """Validate an inbound X-Tenant-ID header value, falling back to the
+    default tenant on anything that doesn't fit the allowed shape.
+
+    UNAUTHENTICATED until P5 (charter §IV) -- this reaches log lines, span
+    attributes, and (step 7) Prometheus label values. A caller who sends a
+    newline forges a log line; a caller who sends unbounded distinct values
+    explodes a metric's label cardinality. So: reject, don't sanitize --
+    sanitizing would invent a tenant id nobody sent -- and log the rejection
+    at WARNING via %r, which renders control characters as escapes rather
+    than reproducing them.
+    """
+    from src.config import Config
+
+    if raw is None:
+        return Config.DEFAULT_TENANT
+    value = raw.decode("latin-1") if isinstance(raw, bytes) else raw
+    candidate = value.lower()
+    if _TENANT_RE.match(candidate):
+        return candidate
+    logging.getLogger(__name__).warning(
+        "tenant: rejected header value %r -- falling back to default tenant %r",
+        value, Config.DEFAULT_TENANT,
+    )
+    return Config.DEFAULT_TENANT
+
+
 class RequestIdFilter(logging.Filter):
-    """Attach the current request id to every record passing through a handler.
+    """Attach the current request id and tenant to every record passing
+    through a handler.
 
     Installed on the *handler*, not on one logger: records from third-party
     libraries reach the same handler and would otherwise KeyError against
-    LOG_FORMAT's `%(request_id)s`.
+    LOG_FORMAT's `%(request_id)s` / `%(tenant)s`.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = current_request_id()
+        record.tenant = current_tenant()
         return True
 
 
@@ -147,6 +228,14 @@ class RequestIdMiddleware:
     hop -- the id is set and reset in the same task that runs the entire call,
     streamed body included -- and it is drivable in a test with a hand-built
     scope dict and no server.
+
+    Also binds the tenant (P1 step 4) in the same try/finally, reusing this
+    middleware rather than adding a second one: a second ASGI hop would cost
+    a task boundary on a path measured to the millisecond, the same reasoning
+    that keeps this one plain ASGI in the first place. Unlike X-Request-ID,
+    X-Tenant-ID IS read on the way in -- P4's load harness needs it to
+    generate multi-tenant load without waiting for P5 -- so it goes through
+    parse_tenant()'s validation rather than being ignored.
     """
 
     HEADER = b"x-request-id"
@@ -160,7 +249,8 @@ class RequestIdMiddleware:
             return
 
         request_id = request_id_from_active_span() or new_request_id()
-        token = set_request_id(request_id)
+        request_id_token = set_request_id(request_id)
+        tenant_token = set_tenant(parse_tenant(_header_value(scope, TENANT_HEADER)))
 
         async def send_with_header(message):
             if message["type"] == "http.response.start":
@@ -172,7 +262,17 @@ class RequestIdMiddleware:
         try:
             await self.app(scope, receive, send_with_header)
         finally:
-            reset_request_id(token)
+            reset_request_id(request_id_token)
+            reset_tenant(tenant_token)
+
+
+def _header_value(scope, name: bytes) -> bytes | None:
+    """First value for an ASGI header name, or None. Scope headers are raw
+    latin-1 bytes per the ASGI spec (never decoded until a caller asks)."""
+    for key, value in scope.get("headers", []):
+        if key == name:
+            return value
+    return None
 
 
 # ---------------------------------------------------------------------------

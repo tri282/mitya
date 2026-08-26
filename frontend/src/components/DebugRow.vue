@@ -82,6 +82,8 @@ function onKeydown(e: KeyboardEvent): void {
         <dd>{{ meta.cache_hit }}</dd>
         <dt>request_id</dt>
         <dd>{{ meta.request_id }}</dd>
+        <dt>tenant</dt>
+        <dd>{{ meta.tenant }}</dd>
         <dt>cost_usd</dt>
         <dd>{{ costLabel }}</dd>
       </dl>

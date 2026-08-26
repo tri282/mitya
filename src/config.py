@@ -247,6 +247,12 @@ class Config:
     # names the frozen v1 baseline by (status/mitya-v2/STATUS.md). It is a
     # billing identity, not a file path -- llama-server is addressed by URL.
     SERVING_MODEL = os.getenv("SERVING_MODEL", "local-q4km")
+    # One synthetic tenant until P5 makes identity real (v2 P1 step 4, A12).
+    # The X-Tenant-ID header that overrides this is UNAUTHENTICATED -- anyone
+    # who can reach the endpoint can claim any tenant -- so it is shape-
+    # validated, never used to build a registry. See src/observability.py's
+    # parse_tenant().
+    DEFAULT_TENANT = os.getenv("DEFAULT_TENANT", "default")
     LLAMA_SERVER_URL = os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080")
     CTX_SIZE   = int(os.getenv("CTX_SIZE", "3072"))
     MAX_TOKENS = int(os.getenv("MAX_TOKENS", "400"))

@@ -52,6 +52,7 @@ describe("useChat", () => {
           kind: "meta",
           data: {
             request_id: "0123456789abcdef0123456789abcdef",
+            tenant: "default",
             route_name: "HYBRID",
             chunk_ids: [1],
             ttft_ms: 100,
@@ -120,6 +121,7 @@ describe("useChat", () => {
           kind: "meta",
           data: {
             request_id: "fedcba9876543210fedcba9876543210",
+            tenant: "default",
             route_name: "CACHE",
             chunk_ids: [],
             ttft_ms: null,
