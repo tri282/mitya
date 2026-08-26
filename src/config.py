@@ -171,6 +171,54 @@ class Config:
             return cls.UNKNOWN_MODEL_LIMITS
         return limits
 
+    # --- Cost attribution (v2 P1 step 3, charter G5) --------------------
+    # Rates in USD per MILLION tokens, the unit every provider publishes.
+    #
+    # `metered` is the load-bearing field, and it is NOT "is this row filled
+    # in yet". It answers: does anyone bill us for these tokens?
+    #   * metered=False -- nothing bills us. Local inference on hardware we
+    #     own is the case. Reporting that as "$0.00 of cost" would be false;
+    #     reporting it as unmetered is exactly true. Electricity and amortized
+    #     hardware are deliberately outside v2's question.
+    #   * metered=True  -- the provider bills this and the figure is real.
+    # The rule this exists to make mechanical (charter II): any aggregate
+    # containing an unmetered span is reported PROVISIONAL, never as a cost.
+    #
+    # At P1 there is exactly one row. P2's gateway adds provider rows here and
+    # changes nothing else -- that "the seam does not move" is the only thing
+    # P1's cost work has to prove (G5).
+    MODEL_RATES = {
+        # id             prompt $/Mtok  completion $/Mtok  metered
+        "local-q4km":   {"prompt": 0.0, "completion": 0.0, "metered": False},
+
+        # --- NOT YET WIRED --------------------------------------------------
+        # Shape only, so a P2 row is an obvious copy-paste. Left commented
+        # rather than filled with today's public prices: an unverified price
+        # in a table gets read as a measurement sooner or later, and a wrong
+        # one is worse than a missing one (rate_for() refuses to guess).
+        # "models/gemini-3.5-flash-lite": {"prompt": 0.10, "completion": 0.40, "metered": True},
+    }
+
+    @classmethod
+    def rate_for(cls, model: str) -> dict | None:
+        """Billing rate for a model id, or None when the id has no row.
+
+        Deliberately the OPPOSITE instinct to limits_for(). That one guesses
+        the STRICTER quota tier, because guessing high burns real quota. Cost
+        must never guess LOW: a silent zero is how a bill goes unnoticed. An
+        unknown id is unpriced, and an unpriced span makes its whole aggregate
+        unpublishable -- but it does not raise, because a missing price row
+        must not turn a chat into a 500.
+        """
+        rate = cls.MODEL_RATES.get(model)
+        if rate is None:
+            logging.getLogger(__name__).warning(
+                "no rate row for model %r -- cost is UNPRICED, not zero. Any aggregate "
+                "containing this request cannot be published. Add it to Config.MODEL_RATES.",
+                model,
+            )
+        return rate
+
     # --- RAG: LLM judge (P7 answer-quality eval, scripts/eval_quality.py) ---
     # Reuses TeacherClient (src/rag/teacher.py), but NOT the teacher's quota:
     # before 2026-08-21 the judge could be pointed at a different model while
@@ -195,6 +243,10 @@ class Config:
         }
 
     # --- RAG: serving ---
+    # The id the serving path prices against and the evidence log already
+    # names the frozen v1 baseline by (status/mitya-v2/STATUS.md). It is a
+    # billing identity, not a file path -- llama-server is addressed by URL.
+    SERVING_MODEL = os.getenv("SERVING_MODEL", "local-q4km")
     LLAMA_SERVER_URL = os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080")
     CTX_SIZE   = int(os.getenv("CTX_SIZE", "3072"))
     MAX_TOKENS = int(os.getenv("MAX_TOKENS", "400"))

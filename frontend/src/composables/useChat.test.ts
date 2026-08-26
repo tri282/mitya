@@ -51,6 +51,7 @@ describe("useChat", () => {
         {
           kind: "meta",
           data: {
+            request_id: "0123456789abcdef0123456789abcdef",
             route_name: "HYBRID",
             chunk_ids: [1],
             ttft_ms: 100,
@@ -58,6 +59,8 @@ describe("useChat", () => {
             filter_relaxed: false,
             no_context: true,
             cache_hit: false,
+            cost_usd: 0,
+            cost_metered: false,
           },
         },
       ]),
@@ -116,6 +119,7 @@ describe("useChat", () => {
         {
           kind: "meta",
           data: {
+            request_id: "fedcba9876543210fedcba9876543210",
             route_name: "CACHE",
             chunk_ids: [],
             ttft_ms: null,
@@ -123,6 +127,8 @@ describe("useChat", () => {
             filter_relaxed: false,
             no_context: false,
             cache_hit: true,
+            cost_usd: 0,
+            cost_metered: false,
           },
         },
         { kind: "done", data: {} },

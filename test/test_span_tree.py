@@ -37,7 +37,9 @@ from src.observability import (  # noqa: E402
     STAGE_RETRIEVE,
     STAGE_ROUTE,
     request_id_from_active_span,
+    set_cost,
 )
+from src.pricing import Cost  # noqa: E402
 
 _exporter = InMemorySpanExporter()
 _provider = TracerProvider()
@@ -66,26 +68,36 @@ def _emit(route_name: str) -> list:
     with tracer.start_as_current_span("POST /chat"):
         with tracer.start_as_current_span(STAGE_CACHE) as s:
             s.set_attribute("cache.hit", False)
+            set_cost(s)
         with tracer.start_as_current_span(STAGE_ROUTE) as s:
             s.set_attribute("route.name", route_name)
             s.set_attribute("route.scope_resolved", structural)
+            set_cost(s)
         with tracer.start_as_current_span(STAGE_ENTITIES) as s:
             s.set_attribute("entities.resolved_count", 3)
+            set_cost(s)
         with tracer.start_as_current_span(STAGE_RETRIEVE) as s:
             s.set_attribute("retrieve.route", route_name)
             s.set_attribute("retrieve.points", 2 if structural else 25)
             s.set_attribute("retrieve.filter_relaxed", False)
+            set_cost(s)
         if not structural:
             with tracer.start_as_current_span(STAGE_RERANK) as s:
                 s.set_attribute("rerank.points_in", 25)
                 s.set_attribute("rerank.points_out", 3)
+                set_cost(s)
         with tracer.start_as_current_span(STAGE_CONTEXT) as s:
             s.set_attribute("context.sources", 3)
             s.set_attribute("context.no_context", False)
+            set_cost(s)
         with tracer.start_as_current_span(STAGE_GENERATE_FIRST) as s:
             s.set_attribute("generate.empty", False)
+            set_cost(s, Cost(usd=0.0, metered=False), deferred_to=STAGE_GENERATE_STREAM)
         stream = tracer.start_span(STAGE_GENERATE_STREAM)
         stream.set_attribute("generate.tokens", 120)
+        stream.set_attribute("generate.prompt_tokens", 1500)
+        stream.set_attribute("generate.completion_tokens", 120)
+        set_cost(stream, Cost(usd=0.0, metered=False))
         stream.end()
     return list(_exporter.get_finished_spans())
 
@@ -139,11 +151,43 @@ def test_attributes_later_steps_read_are_present() -> None:
         STAGE_RERANK: ["rerank.points_in", "rerank.points_out"],
         STAGE_CONTEXT: ["context.sources", "context.no_context"],
         STAGE_GENERATE_FIRST: ["generate.empty"],
-        STAGE_GENERATE_STREAM: ["generate.tokens"],
+        STAGE_GENERATE_STREAM: [
+            "generate.tokens",
+            "generate.prompt_tokens",
+            "generate.completion_tokens",
+        ],
     }
     for name, attrs in expected.items():
         for attr in attrs:
             assert attr in spans[name].attributes, f"{name} lost attribute {attr}"
+
+
+def test_every_stage_carries_the_cost_dimension() -> None:
+    """Step 3's whole deliverable: cost is attributable at EVERY stage, not
+    only where it happens to be nonzero today.
+
+    An absent cost.usd reads as *unmeasured*; an explicit 0.0 reads as *free*.
+    A rollup two phases from now has to tell those apart, and the six local
+    stages are the ones where the distinction is easy to lose -- someone
+    "tidies up" a redundant-looking zero and a future hosted reranker's charge
+    silently vanishes from the total.
+    """
+    for route_name in ("DEFAULT", "STRUCTURAL"):
+        spans = [s for s in _emit(route_name) if s.name != "POST /chat"]
+        for span in spans:
+            assert "cost.usd" in span.attributes, f"{span.name} has no cost.usd"
+            assert "cost.metered" in span.attributes, f"{span.name} has no cost.metered"
+            assert "cost.priced" in span.attributes, f"{span.name} has no cost.priced"
+
+
+def test_prefill_defers_its_cost_rather_than_claiming_to_be_free() -> None:
+    """generate.first_token IS prefill and does bill, but llama-server reports
+    usage only after the stream ends -- long after this span closes on the
+    first token. Its 0.0 must therefore be marked as attributed elsewhere, or
+    a reader in Jaeger concludes prefill is free."""
+    first = _by_name(_emit("DEFAULT"))[STAGE_GENERATE_FIRST]
+    assert first.attributes["cost.usd"] == 0.0
+    assert first.attributes["cost.deferred_to"] == STAGE_GENERATE_STREAM
 
 
 def test_request_id_is_the_trace_id_in_hex() -> None:

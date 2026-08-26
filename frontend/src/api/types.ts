@@ -34,6 +34,10 @@ export interface SourcesEvent {
 
 // NEW — see design §IV.
 export interface MetaEvent {
+  // P1 step 1's join key. Paste it into Jaeger and the whole stage tree
+  // resolves -- it IS the OTel trace id in hex, not a parallel identifier.
+  // Server has emitted this since step 1; this interface had drifted.
+  request_id: string
   route_name: string
   chunk_ids: (string | number)[] // Qdrant ids (int or uuid)
   ttft_ms: number | null
@@ -41,6 +45,12 @@ export interface MetaEvent {
   filter_relaxed: boolean
   no_context: boolean
   cache_hit: boolean
+  // P1 step 3. `null` means UNPRICED -- the serving path could not obtain
+  // token counts -- and is NOT the same as 0. `cost_metered: false` means
+  // nobody bills for these tokens (local inference), so the figure is honest
+  // but is not a price: display it as provisional, never as a cost.
+  cost_usd: number | null
+  cost_metered: boolean
 }
 
 export interface ErrorEvent {

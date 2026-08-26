@@ -50,11 +50,13 @@ from src.observability import (
     STAGE_RERANK,
     STAGE_RETRIEVE,
     STAGE_ROUTE,
+    set_cost,
     RequestIdMiddleware,
     configure_logging,
     configure_tracing,
     current_request_id,
 )
+from src.pricing import FREE, Cost, cost_usd, is_metered, total_usd
 from src.rag.context import build_context
 from src.rag.entities import EntityMap
 from src.rag.generate import (
@@ -204,6 +206,7 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
     with tracer.start_as_current_span(STAGE_CACHE) as span:
         cached = state.cache.get(body.query, filters)
         span.set_attribute("cache.hit", cached is not None)
+        set_cost(span)
     if cached is not None:
         logger.info(
             "chat: query=%r filters=%s session_id=%s cache_hit=true", body.query, filters, body.session_id,
@@ -222,6 +225,12 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                     "filter_relaxed": False,
                     "no_context": not cached["sources"],
                     "cache_hit": True,
+                    # A cache hit generates nothing, so it bills nothing. Not
+                    # a placeholder: this is what makes A5's saving claim
+                    # measurable as cost avoided the moment P2 meters
+                    # anything, with no further instrumentation.
+                    "cost_usd": FREE.usd,
+                    "cost_metered": FREE.metered,
                 })
                 yield _sse("done", {})
             finally:
@@ -235,6 +244,7 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
             route_name, scope = route(body.query, filters, state.structure, state.summaries)
             span.set_attribute("route.name", route_name)
             span.set_attribute("route.scope_resolved", scope is not None)
+            set_cost(span)
 
         active_book = filters.get("book") if filters else None
         with tracer.start_as_current_span(STAGE_ENTITIES) as span:
@@ -242,6 +252,7 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                 body.query, active_book=active_book
             )
             span.set_attribute("entities.resolved_count", len(resolved_entities))
+            set_cost(span)
 
         filter_relaxed = False
         with tracer.start_as_current_span(STAGE_RETRIEVE) as span:
@@ -270,18 +281,21 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                     )
             span.set_attribute("retrieve.points", len(points))
             span.set_attribute("retrieve.filter_relaxed", filter_relaxed)
+            set_cost(span)
 
         if not (route_name == "STRUCTURAL" and scope is not None):
             with tracer.start_as_current_span(STAGE_RERANK) as span:
                 span.set_attribute("rerank.points_in", len(points))
                 points = rerank(body.query, points, state.ranker)
                 span.set_attribute("rerank.points_out", len(points))
+                set_cost(span)
 
         with tracer.start_as_current_span(STAGE_CONTEXT) as span:
             passages_block, sources = build_context(route_name, points, state.summaries, scope)
             no_context = not sources
             span.set_attribute("context.sources", len(sources))
             span.set_attribute("context.no_context", no_context)
+            set_cost(span)
         if no_context:
             logger.info("chat: no_context=true query=%r", body.query)
     except ValueError as exc:
@@ -295,7 +309,11 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
         raise
 
     messages = build_messages(PERSONA_HEAD, passages_block, body.query)
-    gen = stream_answer(messages)
+    # Filled in place as the stream runs, summed across every EMPTY_RETRIES
+    # attempt. Stays empty if llama-server reports no usage, which is what
+    # makes the request UNPRICED rather than estimated (P1 step 3).
+    usage: dict = {}
+    gen = stream_answer(messages, usage)
 
     # Prime the stream before opening the HTTP response body: a connect/read
     # failure here still has a response to attach 503/504 to (design §IV.2).
@@ -320,12 +338,40 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                 # so the cost stays visible without being mislabelled.
                 first_token = None
                 gen_first_span.set_attribute("generate.empty", True)
+            gen_first_span.set_attribute("generate.model", Config.SERVING_MODEL)
+            # Prefill DOES bill, but its token count is not knowable yet:
+            # llama-server reports usage in a final chunk that arrives after
+            # the whole stream, long after this span closes on the first
+            # token. The charge is attributed to the sibling instead, and the
+            # marker says so -- a bare 0.0 here would read as "prefill is
+            # free", which is false. Every retry's prompt is included in that
+            # sibling's count (R33), so the storm stays visible and priced.
+            set_cost(
+                gen_first_span,
+                Cost(usd=0.0, metered=is_metered(Config.SERVING_MODEL)),
+                deferred_to=STAGE_GENERATE_STREAM,
+            )
     except LlamaServerUnavailable as exc:
         state.sem.release()
         raise HTTPException(status_code=503, detail="llama-server unreachable") from exc
     except LlamaServerTimeout as exc:
         state.sem.release()
         raise HTTPException(status_code=504, detail="llama-server timed out") from exc
+
+    def _generation_cost() -> Cost:
+        """Price the generation stage from whatever usage has accumulated.
+
+        Both halves are priced here, not split across the two generation
+        spans: llama-server's usage chunk arrives after the stream ends, by
+        which time generate.first_token has long closed. Prompt tokens are the
+        sum over every EMPTY_RETRIES attempt, so a four-attempt storm that
+        produced no answer still prices its four prompts (R33).
+        """
+        return cost_usd(
+            Config.SERVING_MODEL,
+            usage.get("prompt_tokens"),
+            usage.get("completion_tokens"),
+        )
 
     async def event_stream():
         answer_parts: list[str] = []
@@ -358,6 +404,13 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
 
             total_ms = int((time.monotonic() - t_start) * 1000)
             ttft_ms = int((t_first_token - t_start) * 1000) if t_first_token is not None else None
+            # The request cost IS the sum of its stage costs -- there is
+            # deliberately no second, independently-computed total that could
+            # disagree with the tree. Six stages are free by construction and
+            # generate.first_token defers to this span, so the sum is this
+            # span's cost; total_usd() is called anyway because it owns the
+            # unpriced- and metered-propagation rules.
+            cost = total_usd([_generation_cost()])
             yield _sse("meta", {
                 "request_id": current_request_id(),
                 "route_name": route_name,
@@ -367,17 +420,33 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                 "filter_relaxed": filter_relaxed,
                 "no_context": no_context,
                 "cache_hit": False,
+                "cost_usd": cost.usd,
+                "cost_metered": cost.metered,
             })
             logger.info(
                 "chat: query=%r route=%s filters=%s entities=%s chunk_ids=%s "
-                "cache_hit=false ttft_ms=%s total_ms=%s filter_relaxed=%s no_context=%s session_id=%s",
+                "cache_hit=false ttft_ms=%s total_ms=%s filter_relaxed=%s no_context=%s "
+                "prompt_tokens=%s completion_tokens=%s cost_usd=%s cost_metered=%s session_id=%s",
                 body.query, route_name, filters, resolved_entities,
-                [p.id for p in points], ttft_ms, total_ms, filter_relaxed, no_context, body.session_id,
+                [p.id for p in points], ttft_ms, total_ms, filter_relaxed, no_context,
+                usage.get("prompt_tokens"), usage.get("completion_tokens"),
+                cost.usd, cost.metered, body.session_id,
             )
         finally:
             # Ended here, not by a context manager: the span opens in this
             # generator and must close whether the stream completed, errored
             # mid-flight, or the client disconnected.
+            #
+            # Cost is stamped in the `finally` for the same reason. A
+            # mid-stream failure returns early and a client disconnect never
+            # reaches the meta event, but both paid for every token that
+            # arrived -- an abandoned stream is exactly where an unstamped
+            # span would silently under-report the bill.
+            stream_span.set_attribute("generate.model", Config.SERVING_MODEL)
+            for field in ("prompt_tokens", "completion_tokens"):
+                if usage.get(field) is not None:
+                    stream_span.set_attribute(f"generate.{field}", usage[field])
+            set_cost(stream_span, _generation_cost())
             stream_span.end()
             state.sem.release()
 
