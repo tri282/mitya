@@ -107,10 +107,21 @@ def build_messages(
     ]
 
 
-async def _stream_once(client: httpx.AsyncClient, url: str, payload: dict) -> AsyncIterator[str]:
+async def _stream_once(
+    client: httpx.AsyncClient,
+    url: str,
+    payload: dict,
+    usage: dict | None = None,
+) -> AsyncIterator[str]:
     """One llama-server streaming request; yields token text as it arrives.
     Connection/timeout faults are translated to LlamaServerUnavailable/Timeout
-    by the caller."""
+    by the caller.
+
+    `usage`, when given, is ACCUMULATED into (never overwritten) from the final
+    usage chunk. Accumulation is the point: an EMPTY_RETRIES storm pays for its
+    prompt on every attempt (R33), and overwriting would report one prompt for
+    four that were billed. See stream_answer().
+    """
     async with client.stream("POST", url, json=payload) as response:
         response.raise_for_status()
         async for line in response.aiter_lines():
@@ -124,14 +135,38 @@ async def _stream_once(client: httpx.AsyncClient, url: str, payload: dict) -> As
             except json.JSONDecodeError:
                 logger.warning("stream_answer: unparseable SSE chunk: %r", data)
                 continue
+            # The usage chunk arrives last and carries no choices. Read it
+            # before the token path, which would otherwise see an empty
+            # `choices` and skip the record entirely.
+            reported = chunk.get("usage")
+            if usage is not None and reported:
+                for field in ("prompt_tokens", "completion_tokens"):
+                    value = reported.get(field)
+                    if value is not None:
+                        usage[field] = (usage.get(field) or 0) + value
             choices = chunk.get("choices") or [{}]
             token = choices[0].get("delta", {}).get("content")
             if token:
                 yield token
 
 
-async def stream_answer(messages: list[dict]) -> AsyncIterator[str]:
+async def stream_answer(
+    messages: list[dict], usage: dict | None = None
+) -> AsyncIterator[str]:
     """Stream answer token text from llama-server's OpenAI-compatible endpoint.
+
+    `usage` is an optional caller-owned dict, filled in place with
+    `prompt_tokens` / `completion_tokens` summed across every attempt (P1 step
+    3). A dict rather than a return value because the signature is
+    `AsyncIterator[str]` and must stay that way -- the token stream is the
+    contract, and wrapping it in a tuple or a result object to carry a billing
+    detail would push that detail into every caller that does not want it.
+
+    It stays EMPTY when llama-server reports no usage. That is a real
+    possibility -- `stream_options` is an OpenAI extension and this build may
+    ignore it -- and the caller's job is then to mark the request UNPRICED
+    (src/pricing.py), never to estimate. A fabricated token count that looks
+    like a measurement is the one outcome charter II forbids outright.
 
     Connect timeout 5s / read timeout 120s (design III.5, V). Raises
     LlamaServerUnavailable on connection failure and LlamaServerTimeout on a
@@ -152,6 +187,13 @@ async def stream_answer(messages: list[dict]) -> AsyncIterator[str]:
         "temperature": Config.GEN_TEMPERATURE,
         "top_p": Config.GEN_TOP_P,
         "stream": True,
+        # OpenAI extension: emit a final chunk carrying token counts. Costs
+        # nothing to ask for -- the endpoint ignores fields it does not know --
+        # and it is the only prompt-token source that does not add a blocking
+        # round-trip inside the TTFT window. /tokenize would have; a
+        # chars-over-four estimate would have been a fake number wearing a real
+        # one's clothes.
+        "stream_options": {"include_usage": True},
     }
     timeout = httpx.Timeout(connect=5.0, read=120.0, write=5.0, pool=5.0)
     url = f"{Config.LLAMA_SERVER_URL}/v1/chat/completions"
@@ -160,7 +202,7 @@ async def stream_answer(messages: list[dict]) -> AsyncIterator[str]:
         async with httpx.AsyncClient(timeout=timeout) as client:
             for attempt in range(Config.EMPTY_RETRIES + 1):
                 yielded = False
-                async for token in _stream_once(client, url, payload):
+                async for token in _stream_once(client, url, payload, usage):
                     yielded = True
                     yield token
                 if yielded:

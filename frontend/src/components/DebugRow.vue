@@ -10,7 +10,7 @@
 // graceful-degradation path for a hypothetical older backend that never
 // emits `meta` at all.
 
-import { ref } from "vue"
+import { computed, ref } from "vue"
 import type { MetaEvent } from "../api/types"
 
 const props = defineProps<{
@@ -18,6 +18,20 @@ const props = defineProps<{
 }>()
 
 const expanded = ref(false)
+
+// Three distinct states, never collapsed into a number (P1 step 3):
+//   null            -> unpriced, the serving path reported no token usage
+//   metered = false -> nobody bills these tokens; honest, but not a price
+//   metered = true  -> a real cost
+// Rendering an unmetered 0 as "$0.00" would assert the system is free, which
+// is a claim about billing that nothing here has measured.
+const costLabel = computed(() => {
+  const meta = props.meta
+  if (!meta) return "—"
+  if (meta.cost_usd === null) return "unpriced"
+  if (!meta.cost_metered) return `${meta.cost_usd.toFixed(6)} (unmetered)`
+  return `$${meta.cost_usd.toFixed(6)}`
+})
 
 function toggle(): void {
   if (!props.meta) return
@@ -66,6 +80,10 @@ function onKeydown(e: KeyboardEvent): void {
         <dd>{{ meta.no_context }}</dd>
         <dt>cache_hit</dt>
         <dd>{{ meta.cache_hit }}</dd>
+        <dt>request_id</dt>
+        <dd>{{ meta.request_id }}</dd>
+        <dt>cost_usd</dt>
+        <dd>{{ costLabel }}</dd>
       </dl>
     </template>
   </div>

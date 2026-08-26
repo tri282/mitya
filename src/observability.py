@@ -23,10 +23,16 @@ span-tree, and hybrid alike.
 import contextvars
 import logging
 import uuid
+from typing import TYPE_CHECKING
 
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
+
+if TYPE_CHECKING:
+    # Import-time only. src.pricing imports src.config, which this module must
+    # not pull in at import: configure_logging() runs before config is read.
+    from src.pricing import Cost
 
 # "-" rather than None or "": offline callers (scripts, eval harness) log
 # through the same format string and must render as an obvious non-request
@@ -199,6 +205,41 @@ STAGE_CONTEXT = "context.build"
 # children (R33).
 STAGE_GENERATE_FIRST = "generate.first_token"
 STAGE_GENERATE_STREAM = "generate.stream"
+
+
+def set_cost(span, cost: "Cost | None" = None, deferred_to: str | None = None) -> None:
+    """Stamp the cost dimension on a stage span. Defaults to free.
+
+    Named here beside the STAGE_* constants for the same reason they are named
+    here: the operator dashboards, the eval harness and the span tree must not
+    invent three vocabularies for one dimension.
+
+    EVERY stage span gets this, including the six that run on our own hardware
+    and cost nothing. An absent `cost.usd` reads as *unmeasured*; an explicit
+    0.0 reads as *free*, which is the true claim and the one an aggregation two
+    phases from now needs to be able to tell apart. It is one call per stage.
+
+    Not speculative for the local stages either: `rerank` is currently 84% of
+    the retrieval path (R34), and a hosted reranker is a metered API and a live
+    P2/P7 option. That stage is the likeliest of the six to acquire a price.
+
+    `deferred_to` names a sibling span that carries this stage's charge. It
+    exists for one real case: `generate.first_token` IS prefill and does bill,
+    but llama-server reports token usage in a final chunk that arrives long
+    after that span has closed on the first token. Its 0.0 therefore means
+    "charged on the named sibling", not "free" -- and without the marker a
+    reader in Jaeger would draw exactly the wrong conclusion, which is the
+    absent-vs-zero confusion this helper exists to prevent.
+    """
+    from src.pricing import FREE
+
+    cost = cost if cost is not None else FREE
+    span.set_attribute("cost.priced", cost.priced)
+    span.set_attribute("cost.metered", cost.metered)
+    if cost.usd is not None:
+        span.set_attribute("cost.usd", cost.usd)
+    if deferred_to is not None:
+        span.set_attribute("cost.deferred_to", deferred_to)
 
 
 def request_id_from_active_span() -> str | None:
