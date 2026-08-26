@@ -1,0 +1,149 @@
+[
+  {
+    "_draft_key": "structural-001",
+    "_source": "summaries.json:'Crime and Punishment|2|5'",
+    "query": "What happens in Crime and Punishment part 2 chapter 5?",
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 2,
+        "chapter": 5
+      }
+    ],
+    "note": "STRUCTURAL-routing candidate, reference position=trailing (v2 P1 step 3b: the family was one template varying only the book, so it could not see defect 2) -- verify router.route() resolves this phrasing to STRUCTURAL with this exact scope before accepting",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "Crime and Punishment",
+      "part": 2,
+      "chapter": 5
+    },
+    "phrasing_position": "trailing",
+    "family": "structural"
+  },
+  {
+    "_draft_key": "structural-002",
+    "_source": "summaries.json:'The Idiot|2|6'",
+    "query": "In The Idiot part 2 chapter 6, what happens?",
+    "targets": [
+      {
+        "book": "The Idiot",
+        "part": 2,
+        "chapter": 6
+      }
+    ],
+    "note": "STRUCTURAL-routing candidate, reference position=leading (v2 P1 step 3b: the family was one template varying only the book, so it could not see defect 2) -- verify router.route() resolves this phrasing to STRUCTURAL with this exact scope before accepting",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "The Idiot",
+      "part": 2,
+      "chapter": 6
+    },
+    "phrasing_position": "leading",
+    "family": "structural"
+  },
+  {
+    "_draft_key": "structural-003",
+    "_source": "summaries.json:'The Possessed|3|8'",
+    "query": "The Possessed part 3 chapter 8 - what happens?",
+    "targets": [
+      {
+        "book": "The Possessed",
+        "part": 3,
+        "chapter": 8
+      }
+    ],
+    "note": "STRUCTURAL-routing candidate, reference position=parenthetical (v2 P1 step 3b: the family was one template varying only the book, so it could not see defect 2) -- verify router.route() resolves this phrasing to STRUCTURAL with this exact scope before accepting",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "The Possessed",
+      "part": 3,
+      "chapter": 8
+    },
+    "phrasing_position": "parenthetical",
+    "family": "structural"
+  },
+  {
+    "_draft_key": "structural-004",
+    "_source": "summaries.json:'Crime and Punishment|6|2'",
+    "query": "Summarize Crime and Punishment part 6 chapter 2.",
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 6,
+        "chapter": 2
+      }
+    ],
+    "note": "STRUCTURAL-routing candidate, reference position=summarize-trailing (v2 P1 step 3b: the family was one template varying only the book, so it could not see defect 2) -- verify router.route() resolves this phrasing to STRUCTURAL with this exact scope before accepting",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "Crime and Punishment",
+      "part": 6,
+      "chapter": 2
+    },
+    "phrasing_position": "summarize-trailing",
+    "family": "structural"
+  },
+  {
+    "_draft_key": "structural-005",
+    "_source": "summaries.json:'The Idiot|1|16'",
+    "query": "In The Idiot part 1 chapter 16, summarize the chapter.",
+    "targets": [
+      {
+        "book": "The Idiot",
+        "part": 1,
+        "chapter": 16
+      }
+    ],
+    "note": "STRUCTURAL-routing candidate, reference position=summarize-leading (v2 P1 step 3b: the family was one template varying only the book, so it could not see defect 2) -- verify router.route() resolves this phrasing to STRUCTURAL with this exact scope before accepting",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "The Idiot",
+      "part": 1,
+      "chapter": 16
+    },
+    "phrasing_position": "summarize-leading",
+    "family": "structural"
+  },
+  {
+    "_draft_key": "structural-006",
+    "_source": "summaries.json:'The Possessed|2|9'",
+    "query": "Give an overview of The Possessed part 2 chapter 9.",
+    "targets": [
+      {
+        "book": "The Possessed",
+        "part": 2,
+        "chapter": 9
+      }
+    ],
+    "note": "STRUCTURAL-routing candidate, reference position=overview-trailing (v2 P1 step 3b: the family was one template varying only the book, so it could not see defect 2) -- verify router.route() resolves this phrasing to STRUCTURAL with this exact scope before accepting",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "The Possessed",
+      "part": 2,
+      "chapter": 9
+    },
+    "phrasing_position": "overview-trailing",
+    "family": "structural"
+  },
+  {
+    "_draft_key": "structural-007",
+    "_source": "summaries.json:'Crime and Punishment|2|2'",
+    "query": "In Crime and Punishment part 2 chapter 2, recap the events.",
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 2,
+        "chapter": 2
+      }
+    ],
+    "note": "STRUCTURAL-routing candidate, reference position=recap-leading (v2 P1 step 3b: the family was one template varying only the book, so it could not see defect 2) -- verify router.route() resolves this phrasing to STRUCTURAL with this exact scope before accepting",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "Crime and Punishment",
+      "part": 2,
+      "chapter": 2
+    },
+    "phrasing_position": "recap-leading",
+    "family": "structural"
+  }
+]

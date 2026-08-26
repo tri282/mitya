@@ -20,7 +20,28 @@ from src.rag.ingest import roman_to_int
 
 logger = logging.getLogger(__name__)
 
-SUMMARY_INTENT = ("summarize", "what happens in", "overview of", "recap")
+# Trailing prepositions are the hazard here, and it is not obvious. These are
+# matched as bare lowercased substrings, so a phrase ending in a preposition
+# that binds to its OBJECT only matches when the object follows -- which welds
+# intent detection to word order.
+#
+# "what happens in" was exactly that (v2 P1 step 3b, defect 2): the reference
+# had to trail the verb phrase for the substring to exist, so
+#   "What happens in part 4 chapter 4 of C&P?"  -> STRUCTURAL
+#   "In part 4 chapter 4 of C&P, what happens?" -> DEFAULT
+# on the same question with the same resolvable scope. Scope extraction was
+# never at fault -- it resolved both -- but route() early-returns below before
+# extraction ever runs. Dropped to "what happens".
+#
+# "overview of" is deliberately kept as-is: "of" binds to the noun `overview`
+# and trails its head in every phrasing ("an overview OF the chapter" reads
+# naturally with the reference anywhere), so it carries no positional
+# dependence. "summarize" and "recap" are single tokens.
+#
+# Adding an entry: if it ends in a preposition governing the reference, it will
+# reintroduce this defect. test_router.py's phrasing-invariance check is what
+# catches that.
+SUMMARY_INTENT = ("summarize", "what happens", "overview of", "recap")
 
 # Light "book title + part/chapter N" regex. Deliberately does not try to
 # parse book titles itself -- title matching goes through

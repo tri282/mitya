@@ -140,6 +140,78 @@ CASES = [
 ]
 
 
+# --- phrasing invariance (v2 P1 step 3b, defect 2) -----------------------
+#
+# A property, not a table. The CASES above are examples, and examples are what
+# let this defect live: the `structural` eval family is three rows of ONE
+# template varying the book, so it could not see a phrasing sensitivity at all.
+# Generating the positions here keeps working for phrasings nobody authored.
+#
+# The property: a rephrasing that preserves BOTH the intent and the reference
+# must not change the route. Not a quality judgement and not a sampled metric --
+# it either holds for every position or the router is phrasing-dependent, which
+# from P2 on means a rephrasing silently changes which model is paid for.
+
+# One question about one chapter, written the way four different users would
+# actually type it. Hand-written rather than generated: the connector between an
+# intent phrase and its reference ("what happens IN x", "overview OF x") is
+# grammar, not string concatenation, and a generated template produces
+# ungrammatical text that agrees on DEFAULT for the wrong reason -- a test that
+# fails without discriminating is worse than no test.
+#
+# Every phrasing below resolves the SAME (book, part, chapter) and asks for the
+# SAME thing. Any disagreement in route is the defect.
+INVARIANCE_SCOPE = {"book": "Crime and Punishment", "part": 1, "chapter": 7}
+
+PHRASING_SETS = {
+    "what happens": [
+        ("trailing", "What happens in Crime and Punishment part 1 chapter 7?"),
+        ("leading", "In Crime and Punishment part 1 chapter 7, what happens?"),
+        ("parenthetical", "Crime and Punishment part 1 chapter 7 - what happens?"),
+    ],
+    "summarize": [
+        ("trailing", "Summarize Crime and Punishment part 1 chapter 7."),
+        ("leading", "In Crime and Punishment part 1 chapter 7, summarize the chapter."),
+        ("parenthetical", "Crime and Punishment part 1 chapter 7 - summarize it."),
+    ],
+    "overview of": [
+        ("trailing", "Give an overview of Crime and Punishment part 1 chapter 7."),
+        ("leading", "In Crime and Punishment part 1 chapter 7, give an overview of the chapter."),
+        ("parenthetical", "Crime and Punishment part 1 chapter 7 - overview of the chapter?"),
+    ],
+    "recap": [
+        ("trailing", "Recap Crime and Punishment part 1 chapter 7."),
+        ("leading", "In Crime and Punishment part 1 chapter 7, recap the events."),
+        ("parenthetical", "Crime and Punishment part 1 chapter 7 - recap it."),
+    ],
+}
+
+
+def check_phrasing_invariance() -> int:
+    """Assert one route and one scope across every phrasing. Returns failures.
+
+    Asserting STRUCTURAL specifically, not merely 'all three agree': a router
+    that regressed to DEFAULT everywhere would satisfy agreement while being
+    entirely broken.
+    """
+    failures = 0
+    for intent, phrasings in PHRASING_SETS.items():
+        results = [
+            (position, query) + route(query, None, STRUCTURE, SUMMARIES)
+            for position, query in phrasings
+        ]
+        ok = all(r == "STRUCTURAL" and sc == INVARIANCE_SCOPE for _, _, r, sc in results)
+        logger.info("[%s] phrasing invariance: %r", "PASS" if ok else "FAIL", intent)
+        if not ok:
+            failures += 1
+            for position, query, actual_route, actual_scope in results:
+                logger.error(
+                    "  %-14s -> %-10s scope=%-5s %r",
+                    position, actual_route, actual_scope is not None, query,
+                )
+    return failures
+
+
 def main() -> None:
     failures = 0
     for description, query, filters, expected_route, expected_scope in CASES:
@@ -154,8 +226,13 @@ def main() -> None:
                 query, filters, actual_route, actual_scope, expected_route, expected_scope,
             )
 
+    logger.info("-" * 60)
+    invariance_failures = check_phrasing_invariance()
+    failures += invariance_failures
+
     logger.info("=" * 60)
-    logger.info("%d/%d cases passed", len(CASES) - failures, len(CASES))
+    total = len(CASES) + len(PHRASING_SETS)
+    logger.info("%d/%d checks passed", total - failures, total)
     if failures:
         sys.exit(1)
 
