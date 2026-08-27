@@ -42,6 +42,12 @@ export interface MetaEvent {
   // caller-supplied X-Tenant-ID header, or the server's default when absent
   // or rejected for shape (see src/observability.py's parse_tenant()).
   tenant: string
+  // P1 step 9 (D9). The exact serving config / corpus version that produced
+  // this answer -- 12 hex chars each, content-addressed
+  // (src/config_artifact.py). Every answer traces to the config that made
+  // it, not just the route it took.
+  config_version: string
+  corpus_version: string
   route_name: string
   chunk_ids: (string | number)[] // Qdrant ids (int or uuid)
   ttft_ms: number | null

@@ -41,7 +41,10 @@ logger = logging.getLogger(__name__)
 # Adding an entry: if it ends in a preposition governing the reference, it will
 # reintroduce this defect. test_router.py's phrasing-invariance check is what
 # catches that.
-SUMMARY_INTENT = ("summarize", "what happens", "overview of", "recap")
+#
+# The tuple itself lives on the versioned config artifact now (config by
+# another name, and a P7 search axis) -- read through Config.SUMMARY_INTENT,
+# which resolves via the facade in src/config.py.
 
 # Light "book title + part/chapter N" regex. Deliberately does not try to
 # parse book titles itself -- title matching goes through
@@ -76,7 +79,7 @@ def route(query: str, filters: dict | None, structure: dict, summaries: dict) ->
 
 def _has_summary_intent(query: str) -> bool:
     lower = query.lower()
-    return any(keyword in lower for keyword in SUMMARY_INTENT)
+    return any(keyword in lower for keyword in Config.SUMMARY_INTENT)
 
 
 def _scope_from_filters(filters: dict | None, structure: dict, summaries: dict) -> dict | None:

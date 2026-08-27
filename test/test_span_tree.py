@@ -63,7 +63,10 @@ DEFAULT_ROUTE_STAGES = [
 ]
 
 
-def _emit(route_name: str, tenant: str | None = "acme") -> list:
+def _emit(
+    route_name: str, tenant: str | None = "acme",
+    config_version: str = "451327aab528", corpus_version: str = "abc123abc123",
+) -> list:
     """Replay src/api/app.py's span structure for one request."""
     _exporter.clear()
     structural = route_name == "STRUCTURAL"
@@ -72,6 +75,10 @@ def _emit(route_name: str, tenant: str | None = "acme") -> list:
             # P1 step 4: root span only, not on any of the seven stage
             # children -- see src/api/app.py's chat() handler.
             root.set_attribute("tenant", tenant)
+        # P1 step 9: config_version/corpus_version, beside tenant -- every
+        # answer traces to the exact config and corpus that produced it.
+        root.set_attribute("config_version", config_version)
+        root.set_attribute("corpus_version", corpus_version)
         with tracer.start_as_current_span(STAGE_ROUTE) as s:
             s.set_attribute("route.name", route_name)
             s.set_attribute("route.scope_resolved", structural)
@@ -212,6 +219,20 @@ def test_tenant_is_on_the_root_span_only() -> None:
         if s.name == "POST /chat":
             continue
         assert "tenant" not in s.attributes, f"{s.name} carries a tenant copy"
+
+
+def test_config_and_corpus_version_are_on_the_root_span_only() -> None:
+    """P1 step 9: config_version/corpus_version are root-span attributes,
+    mirroring tenant/route -- not repeated on the seven stage children."""
+    spans = _emit("DEFAULT", config_version="451327aab528", corpus_version="abc123abc123")
+    root = _by_name(spans)["POST /chat"]
+    assert root.attributes["config_version"] == "451327aab528"
+    assert root.attributes["corpus_version"] == "abc123abc123"
+    for s in spans:
+        if s.name == "POST /chat":
+            continue
+        assert "config_version" not in s.attributes, f"{s.name} carries a config_version copy"
+        assert "corpus_version" not in s.attributes, f"{s.name} carries a corpus_version copy"
 
 
 def test_route_runs_before_cache_lookup() -> None:

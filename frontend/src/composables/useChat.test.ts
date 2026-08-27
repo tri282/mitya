@@ -53,6 +53,8 @@ describe("useChat", () => {
           data: {
             request_id: "0123456789abcdef0123456789abcdef",
             tenant: "default",
+            config_version: "451327aab528",
+            corpus_version: "abc123abc123",
             route_name: "HYBRID",
             chunk_ids: [1],
             ttft_ms: 100,
@@ -122,7 +124,9 @@ describe("useChat", () => {
           data: {
             request_id: "fedcba9876543210fedcba9876543210",
             tenant: "default",
-            route_name: "CACHE",
+            config_version: "451327aab528",
+            corpus_version: "abc123abc123",
+            route_name: "DEFAULT",
             chunk_ids: [],
             ttft_ms: null,
             total_ms: 5,
