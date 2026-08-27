@@ -84,6 +84,10 @@ function onKeydown(e: KeyboardEvent): void {
         <dd>{{ meta.request_id }}</dd>
         <dt>tenant</dt>
         <dd>{{ meta.tenant }}</dd>
+        <dt>config_version</dt>
+        <dd>{{ meta.config_version }}</dd>
+        <dt>corpus_version</dt>
+        <dd>{{ meta.corpus_version }}</dd>
         <dt>cost_usd</dt>
         <dd>{{ costLabel }}</dd>
       </dl>

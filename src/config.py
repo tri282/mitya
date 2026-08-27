@@ -4,11 +4,45 @@ import logging
 import os
 from dotenv import load_dotenv
 
+from src.config_artifact import active_serving_config
 from src.rag.names import normalize as _normalize_title
 
 load_dotenv()
 
-class Config:
+
+class _ConfigMeta(type):
+    """Facade onto the versioned serving config (v2 P1 step 5/7, D9).
+
+    The ~18 versioned knobs (EMBED_MODEL, TOP_K_FUSED, ... see
+    src/config_artifact.py's ServingConfig) are no longer class attributes on
+    `Config` -- normal attribute lookup misses, and this metaclass's
+    `__getattr__` (which only runs on a miss) resolves the name through the
+    active artifact instead. `Config.TOP_K_FUSED` therefore still works, and
+    all ~200 existing call sites across 36 modules are unmodified.
+
+    Honest costs, paid deliberately: type checkers cannot see through
+    `__getattr__`, so these ~18 knobs lose static checking (a typo in a knob
+    name fails at runtime, not at lint time); and this is action-at-a-distance
+    -- reading `Config.X` no longer shows at the read site whether `X` is an
+    ordinary class attribute or resolves through a versioned artifact loaded
+    from disk. Both are accepted in exchange for not touching 36 modules.
+    The upgrade path, if a caller ever needs two configs live in one process
+    (P2 A/B routing) rather than one process-wide active version, is an
+    explicit `cfg` parameter threaded through -- by then `ServingConfig` is
+    already a value object, so it is a mechanical change, not a redesign.
+    """
+
+    def __getattr__(cls, name):  # only runs when normal lookup FAILS
+        cfg = active_serving_config()
+        try:
+            return getattr(cfg, name.lower())
+        except AttributeError:
+            raise AttributeError(
+                f"{name} is not a Config field or a serving knob"
+            ) from None
+
+
+class Config(metaclass=_ConfigMeta):
     GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
     # Additional provider keys (charter D1 wants >= 2 families for v2 serving).
     # Read from the environment only -- never logged, never defaulted, and no
@@ -40,48 +74,19 @@ class Config:
     SUMMARIES_PATH = os.path.join(RAG_DIR, "summaries.json")
 
     # --- RAG: retrieval ---
-    # RERANK_MODEL verified at P4 impl against installed FlashRank 0.2.10
-    # (.venv/.../flashrank/Config.py model_file_map) -- the placeholder id was
-    # already correct, no change needed.
-    EMBED_MODEL   = os.getenv("EMBED_MODEL", "nomic-ai/nomic-embed-text-v1.5")  # confirmed in fastembed 0.8.0 registry (P2)
-    RERANK_MODEL  = os.getenv("RERANK_MODEL", "ms-marco-MiniLM-L-12-v2")
+    # EMBED_MODEL, RERANK_MODEL, RERANK_ENABLED, PREFETCH_LIMIT, TOP_K_FUSED,
+    # TOP_K_RERANK, TOP_K_STRUCTURAL_EXCERPTS moved to the versioned serving
+    # config (v2 P1 step 5/7, D9) -- they change what a correct answer is, so
+    # they are now ServingConfig fields in src/config_artifact.py, resolved
+    # here through the _ConfigMeta facade above.
     QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "dostoevsky")
-    PREFETCH_LIMIT = int(os.getenv("PREFETCH_LIMIT", "50"))
-    TOP_K_FUSED    = int(os.getenv("TOP_K_FUSED", "25"))
-    TOP_K_RERANK   = int(os.getenv("TOP_K_RERANK", "3"))
-    # design III.3 STRUCTURAL path: chapter summary + top-2 dense excerpts.
-    # Added at P4 impl alongside retrieve.retrieve_structural_excerpts() so the
-    # "2" isn't a hardcoded magic number -- follows the existing TOP_K_* pattern.
-    TOP_K_STRUCTURAL_EXCERPTS = int(os.getenv("TOP_K_STRUCTURAL_EXCERPTS", "2"))
-    RERANK_ENABLED = os.getenv("RERANK_ENABLED", "true").lower() == "true"
     CHUNK_TOKENS   = int(os.getenv("CHUNK_TOKENS", "500"))
     CHUNK_OVERLAP  = int(os.getenv("CHUNK_OVERLAP", "100"))
 
-    # --- RAG: book title aliases (P4, authored 2026-07-19 -- not a prior
-    # design decision, see plans/mitya-rag/05-impl/phase-4.md) ---
-    # Users say "Demons"/"The Devils"; entities.json, Qdrant payloads, and
-    # structure.json all carry the Garnett-edition title "The Possessed".
-    # A wrong title becomes a hard filter matching zero points -- a silent
-    # empty result, worse than a miss -- so unmapped titles must be rejected
-    # loudly (see resolve_book_title), never passed through. Flag for review:
-    # this list is not guaranteed exhaustive of every title readers might use.
-    BOOK_TITLE_ALIASES: dict[str, str] = {
-        "crime and punishment": "Crime and Punishment",
-        "the brothers karamazov": "The Brothers Karamazov",
-        "brothers karamazov": "The Brothers Karamazov",
-        "the karamazov brothers": "The Brothers Karamazov",
-        "the idiot": "The Idiot",
-        "idiot": "The Idiot",
-        "the possessed": "The Possessed",
-        "possessed": "The Possessed",
-        "demons": "The Possessed",
-        "the demons": "The Possessed",
-        "the devils": "The Possessed",
-        "devils": "The Possessed",
-        "notes from the underground": "Notes from the Underground",
-        "notes from underground": "Notes from the Underground",
-        "notes from the underground man": "Notes from the Underground",
-    }
+    # BOOK_TITLE_ALIASES moved to the versioned serving config for the same
+    # reason (see src/config_artifact.py's _DEFAULT_BOOK_TITLE_ALIASES for the
+    # full comment on why it is answer-affecting) -- resolved through the
+    # facade above.
 
     # --- RAG: teacher LLM (offline artifact builds, phase 3) ---
     # Free-tier quotas differ wildly per model and the AI Studio dashboard lists
@@ -99,64 +104,12 @@ class Config:
     TEACHER_MAX_OUTPUT_TOKENS = int(os.getenv("TEACHER_MAX_OUTPUT_TOKENS", "2048"))
 
     # --- Gemini free-tier quota table -------------------------------------
-    # Per-model free-tier limits (rpm, tpm, rpd). They are NOT derivable from
-    # the model id and they differ by an order of magnitude between tiers, so
-    # they live in one table instead of being copied into per-consumer env
-    # vars. Source: the AI Studio dashboard rows, supplied 2026-08-21.
-    #
-    # The tiers are the whole story for planning a measurement run:
-    #   * flash        -- stronger, rpd 20. Twenty calls a DAY. Fine for a
-    #                     judgement call on a handful of rows, useless for a
-    #                     batch. A 144-call run takes 8 days at this tier.
-    #   * flash-lite   -- weaker, rpd 500. The only tier that can carry an
-    #                     eval batch, and what every v1 number was measured on.
-    #
-    # `verified` records whether THIS repo has seen the id resolve on a live
-    # call (test/bakeoff/RESULTS.md), not whether the dashboard lists it -- the
-    # bake-off's whole finding was that the dashboard lists models that 404
-    # ("2.5 Flash: no longer available to new users"). Unverified ids are
-    # usable but unproven; confirm with a one-row smoke run before a batch.
-    MODEL_LIMITS = {
-        # id                              provider   rpm     tpm      rpd    tpd    verified
-        "models/gemini-3.7-flash":       {"provider": "google", "rpm": 5,  "tpm": 250_000, "rpd": 20,   "tpd": None,     "verified": False},
-        "models/gemini-3.6-flash":       {"provider": "google", "rpm": 5,  "tpm": 250_000, "rpd": 20,   "tpd": None,     "verified": False},
-        "models/gemini-3.5-flash":       {"provider": "google", "rpm": 5,  "tpm": 250_000, "rpd": 20,   "tpd": None,     "verified": True},
-        "models/gemini-3-flash-preview": {"provider": "google", "rpm": 5,  "tpm": 250_000, "rpd": 20,   "tpd": None,     "verified": True},
-        "models/gemini-3.5-flash-lite":  {"provider": "google", "rpm": 15, "tpm": 250_000, "rpd": 500,  "tpd": None,     "verified": True},
-        "models/gemini-3.1-flash-lite":  {"provider": "google", "rpm": 15, "tpm": 250_000, "rpd": 500,  "tpd": None,     "verified": True},
-
-        # --- NOT YET WIRED --------------------------------------------------
-        # Registry only. `TeacherClient` speaks the google-genai SDK and
-        # nothing else, so selecting one of these today raises at client
-        # construction, not at call time. They are here because the charter
-        # requires >= 2 provider families for v2 serving (D1) and because
-        # quota rows are the thing that decides whether a measurement run is
-        # even possible -- worth recording while the numbers are in hand.
-        #
-        # Both are materially weaker than the Gemini free tier for BATCH work,
-        # and not for the reason that looks obvious:
-        #   * OpenRouter's free pool caps at 50 rpd -- below 9a's 87-call run.
-        #   * Groq's rpd is generous (1000) but tpm is 8000, roughly 3% of
-        #     Gemini's. A judge call carrying a passages_block is thousands of
-        #     tokens, so tpm binds long before rpm or rpd does. The limiter
-        #     already reserves TPM budget per call (`estimate_tokens`), so this
-        #     shows up as throttling, not errors.
-        "openrouter/free":               {"provider": "openrouter", "rpm": 20, "tpm": None,   "rpd": 50,   "tpd": None,     "verified": False},
-        "openai/gpt-oss-120b":           {"provider": "groq",       "rpm": 30, "tpm": 8_000,  "rpd": 1000, "tpd": 200_000,  "verified": False},
-        "qwen/qwen3.6-27b":              {"provider": "groq",       "rpm": 30, "tpm": 8_000,  "rpd": 1000, "tpd": 200_000,  "verified": False},
-    }
-
-    # `tpd` is recorded but NOT enforced -- RateLimiter windows on rpm/tpm/rpd
-    # only. Building a day-long token window for a provider with no client is
-    # speculative; do it when a Groq run is actually scheduled.
-    # `tpm: None` means the provider publishes no per-minute token cap.
-    NO_TPM_LIMIT = 10 ** 9  # sentinel for RateLimiter, which needs a real int
-
-    # Unknown id -> the STRICTER tier, never the looser one. Guessing high
-    # burns real quota and turns a batch into a 429 storm partway through;
-    # guessing low only makes it slow. A warning is logged so the id gets
-    # added to the table rather than silently running at a guess forever.
-    UNKNOWN_MODEL_LIMITS = {"provider": None, "rpm": 5, "tpm": 250_000, "rpd": 20, "tpd": None, "verified": False}
+    # MODEL_LIMITS, UNKNOWN_MODEL_LIMITS, NO_TPM_LIMIT moved to the versioned
+    # serving config (v2 P1 step 5/7, D9): a quota or price change should be a
+    # visible config version, not an invisible edit. See
+    # src/config_artifact.py's _DEFAULT_MODEL_LIMITS for the full table and
+    # its comments (tier meaning, `verified`, "NOT YET WIRED" rows). Resolved
+    # here through the _ConfigMeta facade above.
 
     @classmethod
     def limits_for(cls, model: str) -> dict:
@@ -172,32 +125,10 @@ class Config:
         return limits
 
     # --- Cost attribution (v2 P1 step 3, charter G5) --------------------
-    # Rates in USD per MILLION tokens, the unit every provider publishes.
-    #
-    # `metered` is the load-bearing field, and it is NOT "is this row filled
-    # in yet". It answers: does anyone bill us for these tokens?
-    #   * metered=False -- nothing bills us. Local inference on hardware we
-    #     own is the case. Reporting that as "$0.00 of cost" would be false;
-    #     reporting it as unmetered is exactly true. Electricity and amortized
-    #     hardware are deliberately outside v2's question.
-    #   * metered=True  -- the provider bills this and the figure is real.
-    # The rule this exists to make mechanical (charter II): any aggregate
-    # containing an unmetered span is reported PROVISIONAL, never as a cost.
-    #
-    # At P1 there is exactly one row. P2's gateway adds provider rows here and
-    # changes nothing else -- that "the seam does not move" is the only thing
-    # P1's cost work has to prove (G5).
-    MODEL_RATES = {
-        # id             prompt $/Mtok  completion $/Mtok  metered
-        "local-q4km":   {"prompt": 0.0, "completion": 0.0, "metered": False},
-
-        # --- NOT YET WIRED --------------------------------------------------
-        # Shape only, so a P2 row is an obvious copy-paste. Left commented
-        # rather than filled with today's public prices: an unverified price
-        # in a table gets read as a measurement sooner or later, and a wrong
-        # one is worse than a missing one (rate_for() refuses to guess).
-        # "models/gemini-3.5-flash-lite": {"prompt": 0.10, "completion": 0.40, "metered": True},
-    }
+    # MODEL_RATES moved to the versioned serving config for the same reason
+    # as MODEL_LIMITS: a price change should be a visible config version. See
+    # src/config_artifact.py's _DEFAULT_MODEL_RATES for the table and the
+    # `metered` field's full comment. Resolved through the facade above.
 
     @classmethod
     def rate_for(cls, model: str) -> dict | None:
@@ -254,15 +185,11 @@ class Config:
     # parse_tenant().
     DEFAULT_TENANT = os.getenv("DEFAULT_TENANT", "default")
     LLAMA_SERVER_URL = os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080")
-    CTX_SIZE   = int(os.getenv("CTX_SIZE", "3072"))
-    MAX_TOKENS = int(os.getenv("MAX_TOKENS", "400"))
-    # Sampling. A modest temperature (vs llama-server's ~0.8 default) cuts the
-    # rate at which the weak q4 7B samples EOS as its first token and returns
-    # an empty completion; the zero-token retry in generate.stream_answer is
-    # the belt to this suspenders. EMPTY_RETRIES re-draws (new random seed) up
-    # to N times when an attempt yields no tokens.
-    GEN_TEMPERATURE = float(os.getenv("GEN_TEMPERATURE", "0.6"))
-    GEN_TOP_P = float(os.getenv("GEN_TOP_P", "0.9"))
+    # CTX_SIZE, MAX_TOKENS, GEN_TEMPERATURE, GEN_TOP_P moved to the versioned
+    # serving config -- they change what a correct answer is. Resolved through
+    # the facade above. EMPTY_RETRIES stays: it is a retry policy (deployment),
+    # not a generation parameter that changes what a correct answer says.
+    #
     # 4, not 1. Measured on the 1060 (P0 step 9a / R28), one theme, k=3:
     # 19.4% empty with no guard, 16.7% at EMPTY_RETRIES=1, 8.3% at 4. The
     # residual is not transient -- it concentrates in specific queries that
@@ -285,17 +212,15 @@ class Config:
     OTEL_CONSOLE_EXPORT = os.getenv("OTEL_CONSOLE_EXPORT", "false").lower() == "true"
 
 
-    # --- RAG: prompt composition A/B (P7, ruling R19) ---
-    # A (design default): context in the system prompt, framed as the
-    # author's own recollections. B: context in the user turn instead. Both
-    # are implemented in src/rag/generate.py; this flag only selects which
-    # build_messages() branch P7's A/B runner (and, later, the API) uses.
-    # Not read by src/api/app.py yet -- P6 hardcodes composition A by calling
-    # generate.build_messages() with no mode argument (its default), see
-    # plans/mitya-rag/05-impl/phase-7.md for why that stays true until the
-    # A/B run picks a winner.
-    PROMPT_COMPOSITION = os.getenv("PROMPT_COMPOSITION", "A")
+    # PROMPT_COMPOSITION (P7 A/B axis, ruling R19) moved to the versioned
+    # serving config -- it selects which generate.build_messages() branch
+    # runs, which changes what a correct answer is. Resolved through the
+    # facade above.
 
+    # Lazy-built cache keyed off BOOK_TITLE_ALIASES (now a facade-resolved
+    # field). Left as an ordinary class attribute: it starts as None, so
+    # normal attribute lookup succeeds here and _ConfigMeta.__getattr__ never
+    # fires for this name.
     _NORMALIZED_BOOK_ALIASES: dict[str, str] | None = None  # lazy-built cache, see resolve_book_title
 
     @classmethod

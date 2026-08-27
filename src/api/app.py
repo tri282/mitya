@@ -41,6 +41,12 @@ from pydantic import BaseModel
 from qdrant_client import QdrantClient
 
 from src.config import Config
+from src.config_artifact import (
+    active_config_version,
+    active_corpus_manifest,
+    active_corpus_version,
+    assert_embed_model_matches,
+)
 from src.observability import (
     STAGE_CACHE,
     STAGE_CONTEXT,
@@ -105,6 +111,13 @@ async def lifespan(app: FastAPI):
     missing artifacts (Config.validate_rag) or an empty Qdrant collection both
     raise before the server starts accepting requests."""
     Config.validate_rag()
+    # v2 P1 step 8 (D9): the corpus manifest and the serving config's
+    # EMBED_MODEL must agree, or refuse to start. Without this, swapping
+    # EMBED_MODEL and restarting without re-ingesting compares query vectors
+    # against an index built by a different model -- degrades silently, no
+    # error, no log line (step 1's reproduced finding).
+    manifest = active_corpus_manifest()
+    assert_embed_model_matches(Config.EMBED_MODEL, manifest)
     # Second call, deliberate: uvicorn installs its own handlers (propagate=False)
     # after importing this module, so the import-time call at :67 cannot reach
     # them. Lifespan runs late enough. Idempotent -- see configure_logging().
@@ -207,6 +220,13 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
     # filters a trace by a root attribute.
     root_span = trace.get_current_span()
     root_span.set_attribute("tenant", current_tenant())
+    # P1 step 9: config_version/corpus_version on the root span, beside
+    # tenant -- every answer traces to the exact config and corpus that
+    # produced it (D9's stated end-state).
+    config_version = active_config_version()
+    corpus_version = active_corpus_version()
+    root_span.set_attribute("config_version", config_version)
+    root_span.set_attribute("corpus_version", corpus_version)
 
     await state.sem.acquire()
 
@@ -226,7 +246,7 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
     root_span.set_attribute("route", route_name)
 
     with tracer.start_as_current_span(STAGE_CACHE) as span:
-        cached = state.cache.get(body.query, filters, route_name)
+        cached = state.cache.get(body.query, filters, route_name, config_version, corpus_version)
         span.set_attribute("cache.hit", cached is not None)
         set_cost(span)
     if cached is not None:
@@ -241,6 +261,8 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                 yield _sse("meta", {
                     "request_id": current_request_id(),
                     "tenant": current_tenant(),
+                    "config_version": config_version,
+                    "corpus_version": corpus_version,
                     # The real route, not a "CACHE" sentinel (P1 5c) --
                     # route and cache_hit are orthogonal dimensions, and
                     # cache_hit already says the second one. This is what
@@ -422,7 +444,7 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
             yield _sse("sources", {"sources": sources, "footer": footer})
 
             if answer:
-                state.cache.set(body.query, filters, route_name, answer, sources, footer)
+                state.cache.set(body.query, filters, route_name, config_version, corpus_version, answer, sources, footer)
 
             total_ms = int((time.monotonic() - t_start) * 1000)
             ttft_ms = int((t_first_token - t_start) * 1000) if t_first_token is not None else None
@@ -436,6 +458,8 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
             yield _sse("meta", {
                 "request_id": current_request_id(),
                 "tenant": current_tenant(),
+                "config_version": config_version,
+                "corpus_version": corpus_version,
                 "route_name": route_name,
                 "chunk_ids": [p.id for p in points],
                 "ttft_ms": ttft_ms,
