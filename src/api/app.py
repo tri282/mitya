@@ -34,7 +34,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastembed import SparseTextEmbedding, TextEmbedding
 from opentelemetry import trace
 from pydantic import BaseModel
@@ -46,6 +46,18 @@ from src.config_artifact import (
     active_corpus_manifest,
     active_corpus_version,
     assert_embed_model_matches,
+)
+from src.metrics import (
+    StageTimer,
+    configure_metrics,
+    record_answer_cost,
+    record_cache_lookup,
+    record_empty_completion,
+    record_request_duration,
+    record_stage_duration,
+    record_ttft,
+    record_unmetered_answer,
+    record_unpriced_answer,
 )
 from src.observability import (
     STAGE_CACHE,
@@ -159,12 +171,51 @@ app = FastAPI(lifespan=lifespan)
 # instead of falling back to random (R32).
 tracer = configure_tracing(app)
 app.add_middleware(RequestIdMiddleware)
+# Second, independent reader on the same span/attribute data (P1 step 7,
+# R32) -- see src/metrics.py's module docstring for why this is not a second
+# measurement path.
+configure_metrics()
 
 
 def _sse(event: str, payload: dict) -> str:
     """Format one SSE frame. All payloads are JSON so the client has a single
     parse path regardless of event type."""
     return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+
+
+_metrics_bind_checked = False
+
+
+@app.get("/metrics")
+async def metrics_endpoint(request: Request) -> Response:
+    """Prometheus scrape target (P1 step 7). Same uvicorn process as /chat, so
+    it inherits uvicorn's bind address -- docs/RUNBOOK-P6.md:87 documents
+    `--host 127.0.0.1`. Unauthenticated operational read: warn loudly, once,
+    if that is not what actually happened.
+
+    There is no startup-time way to see this: uvicorn's `--host` is a CLI flag
+    to the ASGI server process, not something the app it hosts can read, and
+    lifespan() runs before any connection exists. `request.scope["server"]` is
+    the first point where the real bound address is observable from inside
+    the app -- it is what the ASGI server actually accepted the connection on,
+    not a client-supplied header. Checked once (module-level flag) so a
+    15s-interval scrape does not spam the log.
+    """
+    global _metrics_bind_checked
+    if not _metrics_bind_checked:
+        server = request.scope.get("server")
+        host = server[0] if server else None
+        if host not in ("127.0.0.1", "::1", "localhost"):
+            logger.warning(
+                "metrics: uvicorn is bound to %r, not loopback -- /metrics is an "
+                "unauthenticated operational read reachable from wherever that address "
+                "is reachable. See docs/RUNBOOK-P6.md:87 (--host 127.0.0.1).",
+                host,
+            )
+        _metrics_bind_checked = True
+    from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
+
+    return Response(content=generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/health")
@@ -235,24 +286,46 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
     # Route runs first so the cache key (P1 step 4/5c) can include it; a route
     # slice is meaningless without this order, since at lookup time the route
     # would otherwise still be unknown.
+    # Timed by hand rather than with StageTimer: `route` is the one stage whose
+    # own label value does not exist until the block has finished running.
+    _t_route = time.monotonic()
     with tracer.start_as_current_span(STAGE_ROUTE) as span:
         route_name, scope = route(body.query, filters, state.structure, state.summaries)
         span.set_attribute("route.name", route_name)
         span.set_attribute("route.scope_resolved", scope is not None)
         set_cost(span)
+    record_stage_duration(time.monotonic() - _t_route, route_name, STAGE_ROUTE)
+
+    def _abort() -> None:
+        """Release the semaphore and record the request as an error.
+
+        Every pre-generation exit goes through here rather than calling
+        `state.sem.release()` directly, because the request-duration histogram
+        is what drives BOTH RED panels -- the rate and the error ratio. A path
+        that releases without recording is invisible to both: measured live at
+        P1 step 7, a 503 from an unreachable llama-server recorded all six
+        stage durations and no request at all, so the error ratio read 0.000
+        during a total outage. One helper, so there is one place that can be
+        got wrong instead of four.
+        """
+        record_request_duration(time.monotonic() - t_start, route_name, "error")
+        state.sem.release()
     # Root attribute is the slice key for a latency/cost percentile (P1 step
     # 4) -- the stage span above keeps its own route.name/scope_resolved
     # detail, this is the per-request dimension.
     root_span.set_attribute("route", route_name)
 
-    with tracer.start_as_current_span(STAGE_CACHE) as span:
+    with tracer.start_as_current_span(STAGE_CACHE) as span, StageTimer(route_name, STAGE_CACHE):
         cached = state.cache.get(body.query, filters, route_name, config_version, corpus_version)
         span.set_attribute("cache.hit", cached is not None)
         set_cost(span)
+    record_cache_lookup(route_name, "hit" if cached is not None else "miss")
     if cached is not None:
         logger.info(
             "chat: query=%r filters=%s session_id=%s cache_hit=true", body.query, filters, body.session_id,
         )
+
+        cached_outcome = ["error"]
 
         async def cached_stream():
             try:
@@ -282,7 +355,16 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                     "cost_metered": FREE.metered,
                 })
                 yield _sse("done", {})
+                cached_outcome[0] = "ok"
             finally:
+                # In the `finally`, and with the outcome tracked in a cell, for
+                # the same reason cost is stamped there on the generate path: a
+                # client that disconnects mid-stream never reaches the line
+                # above, but it did consume a request, and a duration histogram
+                # that silently drops those measures only the happy path.
+                record_request_duration(
+                    time.monotonic() - t_start, route_name, cached_outcome[0],
+                )
                 state.sem.release()
 
         return StreamingResponse(cached_stream(), media_type="text/event-stream")
@@ -291,7 +373,7 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
     # resolved above, ahead of the cache check) ---
     try:
         active_book = filters.get("book") if filters else None
-        with tracer.start_as_current_span(STAGE_ENTITIES) as span:
+        with tracer.start_as_current_span(STAGE_ENTITIES) as span, StageTimer(route_name, STAGE_ENTITIES):
             expanded_query, resolved_entities = state.entities.resolve(
                 body.query, active_book=active_book
             )
@@ -299,7 +381,7 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
             set_cost(span)
 
         filter_relaxed = False
-        with tracer.start_as_current_span(STAGE_RETRIEVE) as span:
+        with tracer.start_as_current_span(STAGE_RETRIEVE) as span, StageTimer(route_name, STAGE_RETRIEVE):
             span.set_attribute("retrieve.route", route_name)
             if route_name == "STRUCTURAL" and scope is not None:
                 # Hard chapter filter: no BM25 leg and no rerank, which is why
@@ -328,13 +410,13 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
             set_cost(span)
 
         if not (route_name == "STRUCTURAL" and scope is not None):
-            with tracer.start_as_current_span(STAGE_RERANK) as span:
+            with tracer.start_as_current_span(STAGE_RERANK) as span, StageTimer(route_name, STAGE_RERANK):
                 span.set_attribute("rerank.points_in", len(points))
                 points = rerank(body.query, points, state.ranker)
                 span.set_attribute("rerank.points_out", len(points))
                 set_cost(span)
 
-        with tracer.start_as_current_span(STAGE_CONTEXT) as span:
+        with tracer.start_as_current_span(STAGE_CONTEXT) as span, StageTimer(route_name, STAGE_CONTEXT):
             passages_block, sources = build_context(route_name, points, state.summaries, scope)
             no_context = not sources
             span.set_attribute("context.sources", len(sources))
@@ -346,10 +428,10 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
         # Unmapped book title / non-integral part-chapter filter -- reject
         # loudly (matches Config.resolve_book_title()'s own contract) rather
         # than let it surface as a 500.
-        state.sem.release()
+        _abort()
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception:
-        state.sem.release()
+        _abort()
         raise
 
     messages = build_messages(PERSONA_HEAD, passages_block, body.query)
@@ -363,6 +445,7 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
     # failure here still has a response to attach 503/504 to (design §IV.2).
     t_first_token: float | None = None
     gen_first_span = tracer.start_span(STAGE_GENERATE_FIRST)
+    _t_gen_first = time.monotonic()
     try:
         with trace.use_span(gen_first_span, end_on_exit=True, record_exception=False):
             try:
@@ -382,6 +465,7 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                 # so the cost stays visible without being mislabelled.
                 first_token = None
                 gen_first_span.set_attribute("generate.empty", True)
+                record_empty_completion(route_name)
             gen_first_span.set_attribute("generate.model", Config.SERVING_MODEL)
             # Prefill DOES bill, but its token count is not knowable yet:
             # llama-server reports usage in a final chunk that arrives after
@@ -395,11 +479,12 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                 Cost(usd=0.0, metered=is_metered(Config.SERVING_MODEL)),
                 deferred_to=STAGE_GENERATE_STREAM,
             )
+        record_stage_duration(time.monotonic() - _t_gen_first, route_name, STAGE_GENERATE_FIRST)
     except LlamaServerUnavailable as exc:
-        state.sem.release()
+        _abort()
         raise HTTPException(status_code=503, detail="llama-server unreachable") from exc
     except LlamaServerTimeout as exc:
-        state.sem.release()
+        _abort()
         raise HTTPException(status_code=504, detail="llama-server timed out") from exc
 
     def _generation_cost() -> Cost:
@@ -417,9 +502,12 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
             usage.get("completion_tokens"),
         )
 
+    stream_outcome = ["error"]
+
     async def event_stream():
         answer_parts: list[str] = []
         stream_span = tracer.start_span(STAGE_GENERATE_STREAM)
+        _t_stream = time.monotonic()
         try:
             if first_token:
                 answer_parts.append(first_token)
@@ -455,6 +543,25 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
             # span's cost; total_usd() is called anyway because it owns the
             # unpriced- and metered-propagation rules.
             cost = total_usd([_generation_cost()])
+
+            # Metrics for the answer, recorded once, here (plan step 7 step 3).
+            if ttft_ms is not None:
+                record_ttft(ttft_ms / 1000, route_name)
+            # G5's three-way split, kept three-way on purpose. An unmetered
+            # answer must NOT enter the cost histogram as 0.0 -- a zero there
+            # is indistinguishable from a real metered-but-free call, which is
+            # exactly the false claim G5 forbids. An unpriced answer is a third
+            # thing again: somebody billed us and we could not say how much.
+            # All three make an aggregate provisional; only one of them is a
+            # cost.
+            if not cost.metered:
+                record_unmetered_answer(Config.SERVING_MODEL)
+            elif cost.usd is None:
+                record_unpriced_answer(Config.SERVING_MODEL)
+            else:
+                record_answer_cost(cost.usd, Config.SERVING_MODEL)
+            stream_outcome[0] = "empty" if not answer else "ok"
+
             yield _sse("meta", {
                 "request_id": current_request_id(),
                 "tenant": current_tenant(),
@@ -494,6 +601,8 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                 if usage.get(field) is not None:
                     stream_span.set_attribute(f"generate.{field}", usage[field])
             set_cost(stream_span, _generation_cost())
+            record_stage_duration(time.monotonic() - _t_stream, route_name, STAGE_GENERATE_STREAM)
+            record_request_duration(time.monotonic() - t_start, route_name, stream_outcome[0])
             stream_span.end()
             state.sem.release()
 

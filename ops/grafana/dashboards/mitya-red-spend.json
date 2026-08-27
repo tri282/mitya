@@ -1,0 +1,356 @@
+{
+  "uid": "mitya-red-spend",
+  "title": "Mitya — RED + spend",
+  "tags": [
+    "mitya",
+    "p1"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Rate / Errors / Duration — every latency panel sliced by route (R30)",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Request rate by route and outcome",
+      "description": "R (rate). Split by outcome so an error spike is visible as a shape change, not only in the errors panel.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mitya-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (route, outcome) (rate(mitya_request_duration_seconds_count[5m]))",
+          "legendFormat": "{{route}} / {{outcome}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Error ratio by route",
+      "description": "E (errors). A ratio, not a count -- a count rises with traffic and says nothing on its own. The `or ... * 0` is load-bearing and was found by running this live: with zero errors the {outcome=~\"error|empty\"} series does not EXIST, so the division returns no result and the panel reads \"No data\" instead of 0%. clamp_min guards the denominator; nothing but the `or` guards a missing numerator.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mitya-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum by (route) (rate(mitya_request_duration_seconds_count{outcome=~\"error|empty\"}[5m])) or sum by (route) (rate(mitya_request_duration_seconds_count[5m])) * 0) / clamp_min(sum by (route) (rate(mitya_request_duration_seconds_count[5m])), 1e-9)",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "TTFT p95 by route",
+      "description": "D (duration). SLICED BY ROUTE, and that is not cosmetic: R30 measured DEFAULT 7.790s against STRUCTURAL 4.260s, so a single unsliced p95 is a statement about the traffic mix rather than about the system.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mitya-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (route, le) (rate(mitya_ttft_seconds_bucket[5m])))",
+          "legendFormat": "{{route}} p95"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Total request p99 by route",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mitya-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by (route, le) (rate(mitya_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{route}} p99"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Stage p95 by stage and route",
+      "description": "Where the time actually goes. Rerank was measured at 84% of the retrieval path (~2.24s) and is the largest standing item in the phase.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mitya-prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (stage, route, le) (rate(mitya_stage_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{stage}} — {{route}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Spend — read the provisional counters beside every total (G5)",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Metered spend (window)",
+      "description": "PROVISIONAL unless the two counters to the right are both zero. Charter G5: any aggregate containing an unmetered or unpriced answer is reported provisional, never as a cost. This figure is the sum of the answers we could actually price — it is NOT the cost of serving the window.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mitya-prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 27
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 4
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(mitya_answer_cost_usd_sum[$__range]))",
+          "legendFormat": "metered $"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Unmetered answers (window)",
+      "description": "Nothing bills us for these — local inference on hardware we own. Non-zero makes the total to the left provisional. Reporting these as $0.00 would be false; reporting them as unmetered is exactly true.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mitya-prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 27
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(mitya_unmetered_answers_total[$__range]))",
+          "legendFormat": "unmetered"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Unpriced answers (window)",
+      "description": "Somebody billed us and we cannot say how much — a model with no rate row. Distinct from unmetered, and worse: it is a gap in the table, not a fact about the hardware. Non-zero means add the row to MODEL_RATES.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mitya-prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 27
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(mitya_unpriced_answers_total[$__range]))",
+          "legendFormat": "unpriced"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Cache hit ratio by route",
+      "description": "A5's saving claim is measured here. A hit generates nothing, so it bills nothing -- this is cost avoided, and it becomes a dollar figure the moment P2 meters anything. Same `or ... * 0` as the error panel: with zero hits the numerator series is absent entirely and the panel would read \"No data\" rather than 0%.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mitya-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 33
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum by (route) (rate(mitya_cache_lookups_total{outcome=\"hit\"}[5m])) or sum by (route) (rate(mitya_cache_lookups_total[5m])) * 0) / clamp_min(sum by (route) (rate(mitya_cache_lookups_total[5m])), 1e-9)",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Empty completions and quota rejections",
+      "description": "Empty = every EMPTY_RETRIES attempt came back with no token (measured residual ~2.0% at EMPTY_RETRIES=4). Quota has no live call site on /chat at P1 — it is the offline teacher/judge path today, and the panel is here for P2's gateway.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mitya-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 33
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (route) (rate(mitya_empty_completions_total[5m]))",
+          "legendFormat": "empty — {{route}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (provider) (rate(mitya_quota_rejections_total[5m]))",
+          "legendFormat": "quota — {{provider}}"
+        }
+      ]
+    }
+  ]
+}

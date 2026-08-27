@@ -49,3 +49,100 @@ services:
       # bounds the footprint; raise it only against a measured need.
       MEMORY_MAX_TRACES: "50000"
     restart: unless-stopped
+
+  # --- Operator plane (P1 step 7) -------------------------------------------
+  # Both services inherit the two rules learned from R35/R36, written up in
+  # notes/docker-networking-and-firewalld.md:
+  #
+  #   1. A port mapping with no host prefix binds 0.0.0.0. "9090:9090" is a LAN
+  #      publish; there are no `ports:` lines below for that reason.
+  #   2. network_mode: host publishes EVERY default-bound listener the image
+  #      opens, not only the ones considered. Each listener is therefore pinned
+  #      to loopback by explicit flag or env var, and the binding is verified
+  #      with `ss -ltn` against the running container -- never assumed from
+  #      another image's list.
+  #
+  # Host networking (rather than a 127.0.0.1-prefixed published port, which
+  # would otherwise be preferable) because host-to-container connections are
+  # refused on this machine -- the same reason recorded on the jaeger service.
+  # The bind address is the control that holds in either mode: a socket bound
+  # to 127.0.0.1 is not on the LAN interface at all, regardless of firewall.
+
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    container_name: mitya-prometheus
+    network_mode: host
+    command:
+      # The only listener this image opens. Loopback-pinned; verify with ss.
+      - "--web.listen-address=127.0.0.1:9090"
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      # 15 days is far more history than P1 asks for and bounds the footprint.
+      - "--storage.tsdb.retention.time=15d"
+      # DELIBERATELY ABSENT, and both must stay absent:
+      #   --web.enable-admin-api  -- exposes /api/v1/admin/tsdb/delete_series
+      #   --web.enable-lifecycle  -- exposes /-/reload and /-/quit
+      # Prometheus has no authentication of any kind. /api/v1/query already
+      # reads every series it has scraped; there is no reason to add write.
+    volumes:
+      # `:ro,Z` -- the relabel is not optional on this host. SELinux is
+      # Enforcing (Fedora): container processes run as `container_t`, which may
+      # read `container_file_t` and not the `user_home_t` that every file in
+      # this repo carries. So Prometheus opens a world-readable file, passes the
+      # Unix permission check, and is denied on the LABEL -- which surfaces as
+      # "permission denied" on a file you can `cat`, and reads as a wrong path
+      # rather than a label mismatch. Nothing to do with ports or networking.
+      #
+      # `Z` (private) not `z` (shared): `Z` stamps the mounting container's own
+      # MCS categories, so only that container can read the path; `z` strips
+      # categories and lets EVERY container on the host read it. Each mount here
+      # serves exactly one container, so nothing is lost. Matches the existing
+      # convention in ~/projects/better-library.
+      #
+      # Note it relabels the host path in place and persistently -- `ops/` is
+      # `container_file_t` on disk after the first run, not only inside the
+      # container.
+      - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro,Z
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.2.0
+    container_name: mitya-grafana
+    network_mode: host
+    environment:
+      # The binding that matters under host networking -- not a `ports:` line.
+      GF_SERVER_HTTP_ADDR: "127.0.0.1"
+      GF_SERVER_HTTP_PORT: "3000"
+      # No default, no fallback. `:?` makes Compose REFUSE TO START when the
+      # variable is unset, which is the same fail-closed posture as the config
+      # pointer -- Grafana ships admin/admin and, unlike Jaeger, has a write
+      # surface (it can add datasources, and its proxy issues requests on
+      # behalf of whoever is logged in).
+      GF_SECURITY_ADMIN_USER: "admin"
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env -- Grafana will not start on its default credentials}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_BASIC_ENABLED: "true"
+      # This is a solo local deployment on a machine whose LAN interfaces sit
+      # in firewalld's drop zone. It has no business making outbound calls.
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      # `:ro,Z` for the same SELinux reason as prometheus above.
+      #
+      # This mount REPLACES the image's whole /etc/grafana/provisioning tree,
+      # so the `alerting/` and `plugins/` subdirectories exist (empty, with a
+      # .gitkeep) purely because Grafana logs a read error for each one it
+      # cannot find. Nothing provisions alerts or plugins here.
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro,Z
+      - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro,Z
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+  grafana-data:

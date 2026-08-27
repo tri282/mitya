@@ -1,0 +1,16 @@
+# File provider: dashboards live in git, not in Grafana's database.
+apiVersion: 1
+
+providers:
+  - name: mitya
+    orgId: 1
+    folder: Mitya
+    type: file
+    # Editing in the UI is allowed for exploration, but the file is the source
+    # of truth -- Grafana re-reads it on the interval below and overwrites.
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
