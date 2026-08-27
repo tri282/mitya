@@ -61,7 +61,7 @@ function onKeydown(e: KeyboardEvent): void {
     </p>
     <template v-else>
       <p class="debug-row__summary">
-        {{ meta.route_name }} · {{ meta.chunk_ids.length }} chunks · {{ meta.total_ms }} ms
+        {{ meta.route_name }}{{ meta.cache_hit ? ' (cached)' : '' }} · {{ meta.chunk_ids.length }} chunks · {{ meta.total_ms }} ms
       </p>
       <!-- Monospace only inside this expanded panel, never in the reading
            column (design §III.9) -- styling is Phase 8, this is structural. -->
