@@ -49,9 +49,11 @@ tracer = trace.get_tracer(__name__)
 
 # The order the handler runs them in. Kept here as data so a reordering has to
 # be a deliberate edit to this list, not a silent consequence of moving code.
+# P1 5c: STAGE_ROUTE now runs before STAGE_CACHE -- the cache key includes the
+# route, so it has to be known before the lookup, not after.
 DEFAULT_ROUTE_STAGES = [
-    STAGE_CACHE,
     STAGE_ROUTE,
+    STAGE_CACHE,
     STAGE_ENTITIES,
     STAGE_RETRIEVE,
     STAGE_RERANK,
@@ -70,12 +72,16 @@ def _emit(route_name: str, tenant: str | None = "acme") -> list:
             # P1 step 4: root span only, not on any of the seven stage
             # children -- see src/api/app.py's chat() handler.
             root.set_attribute("tenant", tenant)
-        with tracer.start_as_current_span(STAGE_CACHE) as s:
-            s.set_attribute("cache.hit", False)
-            set_cost(s)
         with tracer.start_as_current_span(STAGE_ROUTE) as s:
             s.set_attribute("route.name", route_name)
             s.set_attribute("route.scope_resolved", structural)
+            set_cost(s)
+        # P1 step 4 remainder: root span only, mirroring tenant above -- the
+        # slice key for a latency/cost percentile. Runs before STAGE_CACHE
+        # (P1 5c) since the cache key needs the route.
+        root.set_attribute("route", route_name)
+        with tracer.start_as_current_span(STAGE_CACHE) as s:
+            s.set_attribute("cache.hit", False)
             set_cost(s)
         with tracer.start_as_current_span(STAGE_ENTITIES) as s:
             s.set_attribute("entities.resolved_count", 3)
@@ -206,6 +212,31 @@ def test_tenant_is_on_the_root_span_only() -> None:
         if s.name == "POST /chat":
             continue
         assert "tenant" not in s.attributes, f"{s.name} carries a tenant copy"
+
+
+def test_route_runs_before_cache_lookup() -> None:
+    """P1 5c: the reorder is the substance of the change, not just a set
+    membership fact -- the cache key needs route_name, so STAGE_ROUTE must
+    finish before STAGE_CACHE starts. DEFAULT_ROUTE_STAGES pins the intended
+    order; this checks the exporter actually saw it (finish order == emission
+    order, since these are non-overlapping `with` blocks)."""
+    names = [s.name for s in _emit("DEFAULT") if s.name != "POST /chat"]
+    assert names == DEFAULT_ROUTE_STAGES, names
+    assert names.index(STAGE_ROUTE) < names.index(STAGE_CACHE)
+
+
+def test_route_is_on_the_root_span_only() -> None:
+    """P1 step 4 remainder: `route` is a root-span attribute, not repeated on
+    the seven stage children -- mirrors test_tenant_is_on_the_root_span_only.
+    STAGE_ROUTE keeps its own route.name/route.scope_resolved detail; the
+    root attribute is the slice key a latency/cost percentile groups by."""
+    spans = _emit("STRUCTURAL")
+    root = _by_name(spans)["POST /chat"]
+    assert root.attributes["route"] == "STRUCTURAL"
+    for s in spans:
+        if s.name == "POST /chat":
+            continue
+        assert "route" not in s.attributes, f"{s.name} carries a route copy"
 
 
 def test_request_id_is_the_trace_id_in_hex() -> None:

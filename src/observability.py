@@ -396,6 +396,7 @@ def configure_tracing(app=None) -> trace.Tracer:
     if app is not None:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+        from opentelemetry.util import http as otel_http
 
         # The HTTP root span. Health checks are excluded: they are the loudest
         # traffic on the box and the least interesting, and at 100% sampling
@@ -414,6 +415,23 @@ def configure_tracing(app=None) -> trace.Tracer:
             excluded_urls="health",
             exclude_spans=["send", "receive"],
         )
+        # OTel's own query-param redaction list is AWS-shaped and ships as
+        # ['AWSAccessKeyId', 'Signature', 'sig', 'X-Goog-Signature'] -- no
+        # generic `key`/`api_key`. Dormant today, because google-genai sends
+        # its key as the `x-goog-api-key` HEADER and headers are not captured
+        # as span attributes unless captured_headers is configured (it is
+        # not). It stops being dormant the moment a key-in-URL provider is
+        # wired: OpenRouter and Groq are already quota rows in
+        # Config.MODEL_LIMITS and D1 wants >= 2 provider families at P2, and
+        # http.url would then carry the secret on every client span with no
+        # warning from the library. redact_query_parameters() reads this list
+        # from the module global at call time, so extending it here covers
+        # every instrumentation, and it is additive -- the AWS entries stay.
+        otel_http.PARAMS_TO_REDACT.extend(
+            p for p in ("key", "api_key", "apikey", "access_token", "token")
+            if p not in otel_http.PARAMS_TO_REDACT
+        )
+
         # Every llama-server / provider call becomes a child span. This is what
         # makes an EMPTY_RETRIES storm legible: four attempts appear as four
         # children under one generate span instead of one opaque 20s block (R33).

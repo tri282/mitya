@@ -205,13 +205,28 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
     # which are children of this one and inherit its trace. A per-stage copy
     # would be seven writes of one constant per request, and Jaeger already
     # filters a trace by a root attribute.
-    trace.get_current_span().set_attribute("tenant", current_tenant())
+    root_span = trace.get_current_span()
+    root_span.set_attribute("tenant", current_tenant())
 
     await state.sem.acquire()
 
-    # --- cache check (inside the semaphore, per design §III.4/§III.6) ---
+    # --- route (pure function, zero latency -- src/rag/router.py:10) then
+    # cache check (inside the semaphore, per design §III.4/§III.6) ---
+    # Route runs first so the cache key (P1 step 4/5c) can include it; a route
+    # slice is meaningless without this order, since at lookup time the route
+    # would otherwise still be unknown.
+    with tracer.start_as_current_span(STAGE_ROUTE) as span:
+        route_name, scope = route(body.query, filters, state.structure, state.summaries)
+        span.set_attribute("route.name", route_name)
+        span.set_attribute("route.scope_resolved", scope is not None)
+        set_cost(span)
+    # Root attribute is the slice key for a latency/cost percentile (P1 step
+    # 4) -- the stage span above keeps its own route.name/scope_resolved
+    # detail, this is the per-request dimension.
+    root_span.set_attribute("route", route_name)
+
     with tracer.start_as_current_span(STAGE_CACHE) as span:
-        cached = state.cache.get(body.query, filters)
+        cached = state.cache.get(body.query, filters, route_name)
         span.set_attribute("cache.hit", cached is not None)
         set_cost(span)
     if cached is not None:
@@ -226,7 +241,11 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                 yield _sse("meta", {
                     "request_id": current_request_id(),
                     "tenant": current_tenant(),
-                    "route_name": "CACHE",
+                    # The real route, not a "CACHE" sentinel (P1 5c) --
+                    # route and cache_hit are orthogonal dimensions, and
+                    # cache_hit already says the second one. This is what
+                    # makes cache hits poolable with misses per route.
+                    "route_name": route_name,
                     "chunk_ids": [],
                     "ttft_ms": None,
                     "total_ms": int((time.monotonic() - t_start) * 1000),
@@ -246,14 +265,9 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
 
         return StreamingResponse(cached_stream(), media_type="text/event-stream")
 
-    # --- route -> resolve/expand -> retrieve -> rerank -> build_context ---
+    # --- resolve/expand -> retrieve -> rerank -> build_context (route already
+    # resolved above, ahead of the cache check) ---
     try:
-        with tracer.start_as_current_span(STAGE_ROUTE) as span:
-            route_name, scope = route(body.query, filters, state.structure, state.summaries)
-            span.set_attribute("route.name", route_name)
-            span.set_attribute("route.scope_resolved", scope is not None)
-            set_cost(span)
-
         active_book = filters.get("book") if filters else None
         with tracer.start_as_current_span(STAGE_ENTITIES) as span:
             expanded_query, resolved_entities = state.entities.resolve(
@@ -408,7 +422,7 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
             yield _sse("sources", {"sources": sources, "footer": footer})
 
             if answer:
-                state.cache.set(body.query, filters, answer, sources, footer)
+                state.cache.set(body.query, filters, route_name, answer, sources, footer)
 
             total_ms = int((time.monotonic() - t_start) * 1000)
             ttft_ms = int((t_first_token - t_start) * 1000) if t_first_token is not None else None
