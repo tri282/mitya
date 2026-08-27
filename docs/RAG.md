@@ -294,6 +294,53 @@ Extend the existing `Config` class (typed values), plus `Config.validate_rag()` 
 
 **Why** extending the plain `Config` over pydantic-settings: matches the existing idiom, a dozen fields don't earn a new dependency; validation at startup covers the real failure (missing artifacts).
 
+> **REVERSED at v2 CP1 step 5 (2026-08-27) — kept, not deleted, because the reason it expired is the useful part.** The dependency argument is *void*, not merely outweighed: pydantic 2.13.4 ships as a FastAPI dependency and is already an idiom here (`src/api/app.py`'s request models), so the "new dependency" the ruling weighed never existed. The ~18 knobs that decide what a correct answer *is* now live in `src/config_artifact.py` as a frozen pydantic model, content-addressed by `sha256(canonical_json)[:12]`; `Config` keeps the deployment half and serves the rest through a metaclass facade, so no call site changed. `pydantic-settings` is still **not** added — it solves env-loading, which is the half being kept as-is. What forced the change was not elegance but P7: its search space *is* a set of config versions, so config has to be a value you can instantiate N of rather than a process-lifetime singleton built from env at import. See `docs/RAG.md` §IV.7 below and `plans/mitya-v2/research/p1-findings.md` R43.
+
+### 7. Telemetry, config identity, and the operator plane (v2 CP1)
+
+Added at v2 CP1, and described here because §IV is where the operational
+contract lives. Three planes over one instrumentation, not three
+instrumentations:
+
+* **Traces** — an OpenTelemetry span tree per request: a FastAPI root span plus
+  eight stage children (`route`, `cache.check`, `entities.resolve`, `retrieve`,
+  `rerank`, `context.build`, `generate.first_token`, `generate.stream`). The
+  root carries the slice keys — `tenant`, `route`, `config_version`,
+  `corpus_version` — and the stage spans carry their own detail plus a cost
+  stamp. Export is opt-in: with no `OTEL_EXPORTER_OTLP_ENDPOINT` the SDK builds
+  spans and drops them, so a dev run needs no docker. `OTEL_ENABLED=false` is
+  the stronger switch — no provider, no instrumentation at all.
+* **Metrics** — the same instrumentation read by a second `MeterProvider` with a
+  Prometheus reader, served at `/metrics`. RED plus spend. **`tenant` is
+  deliberately not a metric label**: the header is unauthenticated until CP5 and
+  validated only for shape, so it bounds the *form* of a value and not the *set*
+  of them — one series per distinct value, unboundedly. It becomes a label when
+  identity is authenticated.
+* **Logs** — unchanged, and still the place `tenant` and `request_id` appear per
+  line.
+
+The join key across all three is `request_id`, which **is the trace id in hex**
+(`test/test_span_tree.py`), so an id from a log line pastes directly into
+Jaeger's trace lookup. Measured at CP1 step 10: median 4 ms to the full tree.
+
+**Config identity.** `config/serving/<hash>.json` holds one version per file;
+`config/serving/CURRENT` is a one-line pointer naming the current one, which is
+what "current production config" means on a machine with no deploy pipeline.
+Reverting is a pointer write, not an edit. `MITYA_CONFIG_VERSION` overrides it
+for one process. Every path is fail-closed: a missing pointer, an absent
+version, an invalid artifact, or a file whose contents no longer hash to its
+name all refuse to start. `config/corpus/manifest.json` records what the index
+was built from, and the serving config's `EMBED_MODEL` must equal the
+manifest's or the API refuses to serve — closing a silent-degradation path
+where a model swap without a re-ingest compared query vectors against an index
+built by a different model.
+
+**Operator plane.** Prometheus scrapes `/metrics`; Grafana renders a RED+spend
+dashboard provisioned from files. Both run under Compose, both bound to
+loopback only, Grafana refusing to start without an admin password. Every
+latency panel is sliced by route, because the two routes differ by ~75% on TTFT
+and an unsliced percentile measures the traffic mix rather than the system.
+
 ### 6. Dependency deltas (`requirements.txt`)
 
 * Add: `fastembed`, `httpx`. Remove: `litellm`, `sentence-transformers`. Pin: `qdrant-client>=1.10`.
@@ -336,6 +383,54 @@ Measured on the real card (GTX 1060 6GB), P7 `scripts/measure_latency.py` + the 
 * **Cache hit: ~0.008s** (est. <50ms) — well under budget.
 
 The retrieval and TTFT numbers exceed the pre-build estimates; they are accepted for a solo local deploy (hardware fit > latency). No cold cache-miss end-to-end is recorded here: the only clean generation numbers are P6's (above); `measure_latency.py`'s cache-miss line is unreliable when the query is already cached.
+
+### v2 CP1 evidence record (measured 2026-08-27, n=24 over two arms)
+
+The v1 figures above are **unsliced**, and CP1's first finding is that an
+unsliced percentile is a statement about the traffic mix rather than about the
+system. Sliced by route, on the same card, cold llama-server, cache disabled:
+
+| | DEFAULT | STRUCTURAL |
+|---|---|---|
+| TTFT mean | 7.738s | 4.430s |
+| TTFT p50 / p95 | 7.500 / 7.950 | 4.500 / 4.950 |
+| request p50 / p95 | 15.0 / 23.0 | 15.0 / 24.0 |
+| `rerank` p95 | 2.933s | *(not on this path)* |
+| `retrieve` p95 | 0.488s | 0.450s |
+| `generate.first_token` p95 | 7.375s | 4.900s |
+| `generate.stream` p95 | 14.333s | 19.000s |
+
+`route`, `cache.check`, `entities.resolve` and `context.build` all sit at the
+0.0005s bucket floor — below the histogram's resolution, which is where they
+belong. The 75% TTFT gap between routes is the whole argument for publishing
+`route` as a dimension.
+
+**Instrumentation overhead: below the detectable floor.** Not zero — *below the
+floor*, which is a different claim and the only one the data supports. Two cold
+arms, instrumented vs `OTEL_ENABLED=false`, same query set:
+
+* TTFT (DEFAULT, n=8/8): delta **-66 ms**, 95% CI [-188, +57] ms, MDE ~175 ms
+  (2.25% of TTFT). The point estimate is *negative*, which instrumentation
+  cannot cause; it is noise.
+* Total wall-clock (n=12/12): MDE ~4.2s (22% of mean) — useless as a comparison,
+  because total latency carries answer-length variance that dwarfs anything
+  being measured. TTFT is the right instrument for this question.
+
+**Debug-workflow join: median 4 ms** from a bare `request_id` to the full
+9-11 span tree, because `request_id` *is* the trace id.
+
+**Storage growth (RAM, not disk — R32's Jaeger is in-memory, so this measures a
+process's RSS and is bounded by `MEMORY_MAX_TRACES=50000`).** ~110 KiB of Jaeger
+RSS per traced request over n=8, i.e. **~107 MiB per 1k requests**. Treat as an
+upper bound: Go's allocator does not return freed memory promptly, so RSS delta
+overstates the per-trace cost, and n=8 is small.
+
+**Prompt-cache warning, and it invalidates naive re-runs.** llama-server caches
+prompt prefixes across requests. Re-running the same query set without
+restarting it dropped STRUCTURAL TTFT from 4325 ms to **327 ms** and the mean
+total from 17.4s to 12.3s. Any A/B of latency must restart llama-server between
+arms, or arm two wins by construction. Every figure in this section is
+cold-start.
 
 ---
 

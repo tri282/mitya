@@ -362,8 +362,26 @@ def configure_tracing(app=None) -> trace.Tracer:
     drops them. That keeps a dev run free of docker while leaving the
     instrumentation identical to production -- the thing that differs is where
     spans go, not whether the code creates them.
+
+    `OTEL_ENABLED=false` is a stronger, different switch: it installs NO provider
+    and applies NO instrumentation, so the ASGI and httpx wrappers are never
+    added and the pipeline runs genuinely uninstrumented. That is what P1 step
+    10's overhead arm measures against -- "spans built and dropped" would measure
+    the cost of DROPPING spans, not the cost of instrumenting.
+
+    (Until P1 step 10 this flag was defined in `Config` and read by nothing.
+    A config field that silently does nothing is worse than an absent one: it
+    reads as a control that has already been exercised.)
     """
     from src.config import Config
+
+    if not Config.OTEL_ENABLED:
+        logging.getLogger(__name__).warning(
+            "tracing: OTEL_ENABLED=false -- no provider installed and no "
+            "instrumentation applied. Spans are no-ops and the operator plane "
+            "sees nothing. This is the uninstrumented arm, not a dev default."
+        )
+        return trace.get_tracer(__name__)
 
     provider = TracerProvider(
         resource=Resource.create({"service.name": Config.OTEL_SERVICE_NAME}),
@@ -412,7 +430,13 @@ def configure_tracing(app=None) -> trace.Tracer:
         FastAPIInstrumentor.instrument_app(
             app,
             tracer_provider=provider,
-            excluded_urls="health",
+            # "health,metrics": both are operator traffic, both are the loudest
+            # and least interesting on the box, and at 100% sampling they
+            # dominate the trace store. /metrics was measured at P1 step 10
+            # producing one trace per 15s Prometheus scrape -- 240/hour of pure
+            # noise against R32's in-memory 50k ring buffer, evicting the real
+            # traces the buffer exists to hold.
+            excluded_urls="health,metrics",
             exclude_spans=["send", "receive"],
         )
         # OTel's own query-param redaction list is AWS-shaped and ships as

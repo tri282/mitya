@@ -97,13 +97,22 @@ def _provider_key(model: str) -> str:
 
 # Total /chat request: TTFT plus the rest of the token stream, so longer than
 # TTFT alone.
-REQUEST_DURATION_BUCKETS = (0.5, 1, 2, 3, 5, 7, 10, 15, 20, 30, 45, 60)
+REQUEST_DURATION_BUCKETS = (0.5, 1, 2, 3, 5, 7, 10, 15, 20, 25, 30, 40, 60)
 # Seconds, not milliseconds -- ttft_ms/1000 at the call site.
 TTFT_BUCKETS = (0.25, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 10, 15)
 # Spans sub-millisecond (`route`) through ~2.24s (`rerank`, R34: 84% of the
 # retrieval path) share one histogram (route+stage is the slice key), so the
 # bucket set has to cover both ends.
-STAGE_DURATION_BUCKETS = (0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5)
+# One histogram covers all eight stages, and they span five orders of magnitude:
+# `route` is sub-millisecond, `generate.stream` is ~10s. The boundaries must
+# therefore cover BOTH ends -- P1 step 10 measured this set topping out at 5s and
+# found both generate stages reporting exactly 5.0000s at p50/p95/p99, which is
+# the top bucket edge, not a latency. The two most expensive stages in the
+# pipeline were the two it could not measure.
+STAGE_DURATION_BUCKETS = (
+    0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5,
+    7.5, 10, 15, 20, 30,
+)
 # USD, fractions of a cent at this model's rates.
 COST_BUCKETS = (0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5)
 
@@ -112,6 +121,26 @@ COST_BUCKETS = (0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1,
 # below and the /metrics endpoint (src/api/app.py) can reach them without
 # threading a meter object through every call site.
 _instruments: dict = {}
+
+
+class _NullInstrument:
+    """What every record_*() helper resolves to when OTEL_ENABLED=false.
+
+    A no-op rather than a raise: the uninstrumented arm serves real requests
+    through the same handler, so the call sites are live and must do nothing
+    instead of failing. The residual cost is one dict lookup and one empty call
+    per record -- which is itself part of the honest overhead figure, since a
+    real "instrumentation removed" build would not have the call site at all.
+    """
+
+    def record(self, *args, **kwargs) -> None:
+        pass
+
+    def add(self, *args, **kwargs) -> None:
+        pass
+
+
+_NULL = _NullInstrument()
 
 
 def configure_metrics():
@@ -126,6 +155,21 @@ def configure_metrics():
     default) rather than a private one, so the standard process_*/python_*
     collectors are scraped too -- useful, and free.
     """
+    from src.config import Config as _Config
+
+    if not _Config.OTEL_ENABLED:
+        # Same switch as configure_tracing(): the uninstrumented arm records
+        # nothing and registers no collectors, so /metrics serves only the
+        # prometheus_client process defaults. `_instruments` stays empty and
+        # every record_*() helper falls through to `_NULL` -- the arm still
+        # SERVES requests (that is the whole point of measuring it), so the
+        # helpers must be no-ops rather than raising KeyError.
+        logging.getLogger(__name__).warning(
+            "metrics: OTEL_ENABLED=false -- no meter installed, no instruments "
+            "registered. Uninstrumented arm."
+        )
+        return None
+
     from opentelemetry.exporter.prometheus import PrometheusMetricReader
     from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.metrics.view import ExplicitBucketHistogramAggregation, View
@@ -207,21 +251,21 @@ def configure_metrics():
 
 
 def record_request_duration(seconds: float, route: str, outcome: str) -> None:
-    _instruments["request_duration"].record(seconds, {"route": route, "outcome": outcome})
+    _instruments.get("request_duration", _NULL).record(seconds, {"route": route, "outcome": outcome})
 
 
 def record_ttft(seconds: float, route: str) -> None:
-    _instruments["ttft"].record(seconds, {"route": route})
+    _instruments.get("ttft", _NULL).record(seconds, {"route": route})
 
 
 def record_stage_duration(seconds: float, route: str, stage: str) -> None:
-    _instruments["stage_duration"].record(seconds, {"route": route, "stage": stage})
+    _instruments.get("stage_duration", _NULL).record(seconds, {"route": route, "stage": stage})
 
 
 def record_answer_cost(usd: float, model: str) -> None:
     """Only for a PRICED and METERED cost -- see module docstring / G5. Caller
     (src/api/app.py) must not call this for an unmetered or unpriced Cost."""
-    _instruments["answer_cost"].record(usd, {"provider": _provider_key(model), "model": _model_key(model)})
+    _instruments.get("answer_cost", _NULL).record(usd, {"provider": _provider_key(model), "model": _model_key(model)})
 
 
 def record_unmetered_answer(model: str) -> None:
@@ -229,7 +273,7 @@ def record_unmetered_answer(model: str) -> None:
     Increments this counter INSTEAD OF `record_answer_cost` -- never both, and
     never a 0.0 in the cost histogram standing in for this (G5: a zero there
     is indistinguishable from a real free-metered call)."""
-    _instruments["unmetered_answers"].add(1, {"model": _model_key(model)})
+    _instruments.get("unmetered_answers", _NULL).add(1, {"model": _model_key(model)})
 
 
 def record_unpriced_answer(model: str) -> None:
@@ -238,7 +282,7 @@ def record_unpriced_answer(model: str) -> None:
     genuinely distinct: unmetered means nothing bills us (true, publishable as
     "unmetered"), unpriced means something does and the figure is missing. Both
     make an aggregate PROVISIONAL (G5); only one of them is a cost of 0."""
-    _instruments["unpriced_answers"].add(1, {"provider": _provider_key(model), "model": _model_key(model)})
+    _instruments.get("unpriced_answers", _NULL).add(1, {"provider": _provider_key(model), "model": _model_key(model)})
 
 
 def record_quota_rejection(model: str) -> None:
@@ -247,15 +291,15 @@ def record_quota_rejection(model: str) -> None:
     (src/rag/teacher.py), which never serves this process's /metrics. Defined
     now so P2's gateway quota check has an instrument to call into without a
     second metrics-module change."""
-    _instruments["quota_rejections"].add(1, {"provider": _provider_key(model), "model": _model_key(model)})
+    _instruments.get("quota_rejections", _NULL).add(1, {"provider": _provider_key(model), "model": _model_key(model)})
 
 
 def record_cache_lookup(route: str, outcome: str) -> None:
-    _instruments["cache_lookups"].add(1, {"route": route, "outcome": outcome})
+    _instruments.get("cache_lookups", _NULL).add(1, {"route": route, "outcome": outcome})
 
 
 def record_empty_completion(route: str) -> None:
-    _instruments["empty_completions"].add(1, {"route": route})
+    _instruments.get("empty_completions", _NULL).add(1, {"route": route})
 
 
 class StageTimer:
