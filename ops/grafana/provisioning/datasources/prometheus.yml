@@ -1,0 +1,18 @@
+# Provisioned datasource. Files, not clicks: a datasource that exists only in
+# Grafana's sqlite is lost on a container rebuild and is invisible to review.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    # The dashboard JSON references this uid. Pinned rather than generated so
+    # the dashboard is portable and diffable.
+    uid: mitya-prometheus
+    type: prometheus
+    access: proxy
+    url: http://127.0.0.1:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      # Must match prometheus.yml's global scrape_interval, or the rate()
+      # windows Grafana suggests are wrong by construction.
+      timeInterval: 15s

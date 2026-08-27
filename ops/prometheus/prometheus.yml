@@ -1,0 +1,26 @@
+# Prometheus scrape config for the P1 operator plane (charter D8: Compose only).
+#
+# The app is NOT containerized -- it needs the host GPU -- and Prometheus runs
+# with network_mode: host on this machine (see docker-compose.yml for why the
+# bridge path is unusable here). So "localhost" below is the host's loopback,
+# and the app's /metrics is reached directly with no mapping layer.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    deployment: mitya-local
+
+scrape_configs:
+  # The app. uvicorn is documented to bind 127.0.0.1 (docs/RUNBOOK-P6.md:87)
+  # and /metrics is an unauthenticated operational read, so that bind address
+  # is load-bearing, not a preference.
+  - job_name: mitya
+    static_configs:
+      - targets: ["127.0.0.1:8000"]
+
+  # Prometheus' own metrics. Useful for exactly one P1 question -- whether the
+  # operator plane's own footprint is worth reporting at step 10 -- and free.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:9090"]
