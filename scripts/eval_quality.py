@@ -76,13 +76,15 @@ from fastembed import SparseTextEmbedding, TextEmbedding
 from qdrant_client import QdrantClient
 
 from src.config import Config
+from src.gateway.guard import BudgetExceeded, Degraded, RequestTooLarge
+from src.gateway.ladder import ContentRefused
+from src.gateway.retry import TransportError
+from src.limits import QuotaExhausted
 from src.config_artifact import active_corpus_version, active_serving_config
 from src.rag.context import build_context
 from src.rag.entities import EntityMap
 from src.rag.generate import (
     active_persona_head,
-    LlamaServerTimeout,
-    LlamaServerUnavailable,
     build_messages,
     stream_answer,
 )
@@ -332,10 +334,26 @@ async def _collect_answer(messages: list[dict]) -> tuple[str, str | None]:
     try:
         async for token in stream_answer(messages):
             parts.append(token)
-    except LlamaServerUnavailable as exc:
-        return "", f"llama-server unreachable: {exc}"
-    except LlamaServerTimeout as exc:
-        return "", f"llama-server timed out: {exc}"
+    # Gateway vocabulary (v2 P2 Batch C step 6). This used to catch
+    # LlamaServerUnavailable/LlamaServerTimeout, which the gateway path no
+    # longer raises -- so this function's whole reason for existing ("record a
+    # failed row instead of crashing the whole run over one query") silently
+    # stopped working, and 11a's first attempt died at cell 19 of 150 on one
+    # transient Google overload. Per-row isolation only isolates the
+    # exceptions it names.
+    except TransportError as exc:
+        return "", f"provider transport error: {exc}"
+    except ContentRefused as exc:
+        return "", f"provider refused to generate: {exc}"
+    except QuotaExhausted as exc:
+        # Not isolatable the way the others are: quota does not recover within
+        # a run, so every subsequent row would fail identically. Re-raised so
+        # the run stops with completed work already flushed to disk, rather
+        # than burning through 130 rows writing the same error into each.
+        logger.error("quota exhausted -- stopping the run; completed rows are on disk")
+        raise
+    except (BudgetExceeded, Degraded, RequestTooLarge) as exc:
+        return "", f"gateway refused the request: {type(exc).__name__}: {exc}"
 
     # An empty stream is a generation FAILURE, not an answer worth zero. Before
     # this check (P0 step 9a) it returned ("", None), so the row looked healthy,

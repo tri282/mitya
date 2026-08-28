@@ -22,14 +22,17 @@ it is a generation/serving-layer concern, not part of prompt-context
 assembly (src/rag/context.py owns dedup + ordering of the sources list).
 """
 
+import asyncio
 import logging
+import random
 from collections.abc import AsyncIterator
 
 from src.config import Config
-from src.gateway.contract import Provider, Usage
+from src.gateway.contract import GenerationStream, Provider, Usage
 from src.gateway.google import GoogleProvider
 from src.gateway.groq import GroqProvider
 from src.gateway.guard import SpendRateBreaker, guarded_generate
+from src.gateway.retry import TransportError
 from src.gateway.local import LOCAL_MODEL_ID, LocalProvider
 from src.limits import ScopedRateLimiter, estimate_tokens
 from src.observability import current_tenant
@@ -42,6 +45,12 @@ from src.rag.ingest import BOOK_META
 # P6 works out the interactions API's step_list format (R57), so this is a
 # guard-rail against a caller that has not been written yet, not a live limit.
 MAX_HISTORY_MESSAGES = 8
+
+# Bounded transport attempts, matching `src.gateway.retry.retry_transport`'s
+# own default. Kept as a module constant rather than a versioned config knob:
+# it is a deployment/resilience policy, not something that changes what a
+# correct answer is.
+TRANSPORT_ATTEMPTS = 3
 
 logger = logging.getLogger(__name__)
 
@@ -220,7 +229,48 @@ async def stream_answer(
     """
     model = Config.SERVING_MODEL
     provider = _provider_for(model)
-    stream = await guarded_generate(
+    # Retry only while NOTHING has been emitted. Once a token is out, a retry
+    # would duplicate text mid-answer, so the window closes at the first token
+    # -- the same constraint the old EMPTY_RETRIES loop worked under, and the
+    # reason TTFT is unaffected for a normal stream.
+    #
+    # This exists because 11a's first attempt died at cell 19 of 150 on a
+    # transient Google overload delivered IN-BAND: an `error` event with
+    # code `api_error` and the message "gemini-3.5-flash-lite is currently
+    # experiencing high demand". `retry_transport()` alone does not catch that
+    # -- it wraps `provider.generate()`, which had already returned
+    # successfully; the failure arrived while draining the stream. So the retry
+    # has to span generate() AND the first token, which is what this loop does.
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            stream = await _open_stream(provider, messages, model)
+            first = await anext(aiter(stream.chunks), None)
+            break
+        except TransportError as exc:
+            if attempt >= TRANSPORT_ATTEMPTS:
+                raise
+            delay = min(4.0, 0.25 * 2 ** (attempt - 1)) * (0.5 + random.random())
+            logger.warning(
+                "generation: transport retry %d/%d in %.2fs -- %s",
+                attempt, TRANSPORT_ATTEMPTS, delay, exc,
+            )
+            await asyncio.sleep(delay)
+
+    if first is not None:
+        yield first
+        async for token in stream.chunks:
+            yield token
+
+    if usage is not None:
+        _fill_usage_dict(usage, stream.usage)
+
+
+async def _open_stream(provider: Provider, messages: list[dict], model: str) -> GenerationStream:
+    """One guarded attempt. Separate so the retry loop above reads as a retry
+    rather than as a wall of keyword arguments."""
+    return await guarded_generate(
         provider,
         messages,
         tier="default",
@@ -237,12 +287,6 @@ async def stream_answer(
         max_input_tokens=Config.CTX_SIZE,
         max_history_messages=MAX_HISTORY_MESSAGES,
     )
-
-    async for token in stream.chunks:
-        yield token
-
-    if usage is not None:
-        _fill_usage_dict(usage, stream.usage)
 
 
 def _fill_usage_dict(usage: dict, reported: Usage) -> None:
