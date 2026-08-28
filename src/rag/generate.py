@@ -22,26 +22,44 @@ it is a generation/serving-layer concern, not part of prompt-context
 assembly (src/rag/context.py owns dedup + ordering of the sources list).
 """
 
-import json
 import logging
 from collections.abc import AsyncIterator
 
-import httpx
-
 from src.config import Config
+from src.gateway.contract import Provider, Usage
+from src.gateway.google import GoogleProvider
+from src.gateway.groq import GroqProvider
+from src.gateway.guard import SpendRateBreaker, guarded_generate
+from src.gateway.local import LOCAL_MODEL_ID, LocalProvider
+from src.limits import ScopedRateLimiter, estimate_tokens
+from src.observability import current_tenant
+from src.pricing import cost_usd
 from src.rag.ingest import BOOK_META
+
+# Ceiling on conversation turns, passed to the guard's request-size check.
+# mitya is single-turn today (`build_messages()` returns one system and one
+# user message) and the Google adapter refuses assistant turns outright until
+# P6 works out the interactions API's step_list format (R57), so this is a
+# guard-rail against a caller that has not been written yet, not a live limit.
+MAX_HISTORY_MESSAGES = 8
 
 logger = logging.getLogger(__name__)
 
-# Verbatim fine-tune persona-head system prompt -- must match
-# src/training.py SYSTEM_PROMPT word-for-word (design III.4). Inlined rather
-# than imported: src/training.py pulls in unsloth/torch/trl/peft/transformers
-# at module scope, which must never load into the lightweight serving path.
-PERSONA_HEAD = (
-    "You are Fyodor Dostoevsky. Answer the user's question in the first person, "
-    "incorporating your deep literary, existential, and philosophical tone. "
-    "Give no editorial comments and references to external sources."
-)
+# PERSONA_HEAD moved to the versioned serving config (v2 P2 Batch C step 7;
+# C5 decided in favour of moving OWNERSHIP, not merely pinning the text).
+# Read `Config.PERSONA_HEAD`, which resolves through the artifact facade -- see
+# `_DEFAULT_PERSONA_HEAD` in src/config_artifact.py for the text and R54 for
+# what was wrong before: nothing pinned it across time, so editing the persona
+# did not churn `config_version` and a measurement could silently span two
+# different prompts.
+#
+# Exposed as a FUNCTION, not a constant. A constant would snapshot the value at
+# import time and defeat the versioning that was the whole point of moving it.
+# Named `active_persona_head` rather than `persona_head` so it cannot be
+# confused with `build_messages()`'s parameter of that name just below.
+def active_persona_head() -> str:
+    """The active persona system prompt, from the versioned serving config."""
+    return Config.PERSONA_HEAD
 
 
 class LlamaServerUnavailable(Exception):
@@ -107,118 +125,139 @@ def build_messages(
     ]
 
 
-async def _stream_once(
-    client: httpx.AsyncClient,
-    url: str,
-    payload: dict,
-    usage: dict | None = None,
-) -> AsyncIterator[str]:
-    """One llama-server streaming request; yields token text as it arrives.
-    Connection/timeout faults are translated to LlamaServerUnavailable/Timeout
-    by the caller.
+# --- Batch C step 6: the gateway cutover -------------------------------
+#
+# `stream_answer()` used to open its own httpx client and POST to
+# `Config.LLAMA_SERVER_URL`. It is now a GATEWAY CLIENT: it selects a provider
+# from the versioned `Config.SERVING_MODEL`, runs it through
+# `guarded_generate()` so spend enforcement sits before the provider call, and
+# coerces the provider's `Usage` back into the plain dict its callers already
+# read.
+#
+# The signature is unchanged on purpose. `src/api/app.py` gets no knowledge of
+# providers: it calls `stream_answer(messages, usage)`, iterates strings, and
+# reads a dict -- all provider coercion lives here, in sub-functions, and
+# `/chat` stays generic. That is the operator's constraint, and it is why this
+# is a rewrite of one function rather than surgery across the request path.
 
-    `usage`, when given, is ACCUMULATED into (never overwritten) from the final
-    usage chunk. Accumulation is the point: an EMPTY_RETRIES storm pays for its
-    prompt on every attempt (R33), and overwriting would report one prompt for
-    four that were billed. See stream_answer().
+
+def _provider_for(model: str) -> Provider:
+    """Pick the adapter for `model`. The ONLY place a model id becomes a
+    vendor, so adding a provider does not touch the request path."""
+    limits = Config.limits_for(model)
+    provider_name = limits.get("provider")
+    if model == LOCAL_MODEL_ID or provider_name is None:
+        # A3: local is not the default and nothing in the request path starts
+        # llama-server. Reaching here means someone set SERVING_MODEL back to
+        # it deliberately -- log it, because a silently-local arm would make
+        # every hosted cost row read as $0.00.
+        logger.warning(
+            "generation is pointed at %r -- the LOCAL arm. A3 makes local-q4km a "
+            "frozen chart line, not a live arm; hosted cost/latency rows measured "
+            "in this state are not comparable with the hosted arms.", model,
+        )
+        return LocalProvider(model=model)
+    if provider_name == "google":
+        return GoogleProvider(model=model)
+    if provider_name == "groq":
+        return GroqProvider(model=model)
+    raise ValueError(
+        f"no adapter for provider {provider_name!r} (model {model!r}). Add one "
+        f"under src/gateway/ and a branch here."
+    )
+
+
+def _estimated_cost_usd(messages: list[dict], model: str) -> float:
+    """Pre-flight spend estimate for the guard -- a CEILING, not a prediction.
+
+    The guard has to decide before calling, and actual cost is only knowable
+    after, so this prices the worst case: the estimated prompt plus a FULL
+    `Config.MAX_TOKENS` completion. Over-rejecting is the correct direction for
+    a spend guard.
+
+    `MAX_TOKENS` really is an upper bound on both arms, and R56 is why: thinking
+    counts against `max_output_tokens` on Google and against `max_tokens` on
+    Groq, so a reasoning model cannot exceed it by thinking. An unpriced model
+    estimates 0.0 -- `cost_usd()` already logs that the request is UNPRICED, and
+    a guard must not invent a number to block on.
     """
-    async with client.stream("POST", url, json=payload) as response:
-        response.raise_for_status()
-        async for line in response.aiter_lines():
-            if not line.startswith("data: "):
-                continue
-            data = line[len("data: "):].strip()
-            if data == "[DONE]":
-                break
-            try:
-                chunk = json.loads(data)
-            except json.JSONDecodeError:
-                logger.warning("stream_answer: unparseable SSE chunk: %r", data)
-                continue
-            # The usage chunk arrives last and carries no choices. Read it
-            # before the token path, which would otherwise see an empty
-            # `choices` and skip the record entirely.
-            reported = chunk.get("usage")
-            if usage is not None and reported:
-                for field in ("prompt_tokens", "completion_tokens"):
-                    value = reported.get(field)
-                    if value is not None:
-                        usage[field] = (usage.get(field) or 0) + value
-            choices = chunk.get("choices") or [{}]
-            token = choices[0].get("delta", {}).get("content")
-            if token:
-                yield token
+    prompt_tokens = sum(estimate_tokens(m.get("content", "") or "") for m in messages)
+    cost = cost_usd(model, prompt_tokens, Config.MAX_TOKENS)
+    return cost.usd or 0.0
+
+
+# One limiter object for the process, keyed by QUOTA SCOPE rather than by model
+# -- Groq publishes org-wide limits, so its models share one window while
+# Google's do not (see `src.limits.quota_scope`). R26's per-process split is
+# untouched: N uvicorn workers still hold N sets of windows.
+_limiter = ScopedRateLimiter()
+_breaker = SpendRateBreaker(Config.SPEND_RATE_MAX_USD_PER_MINUTE)
 
 
 async def stream_answer(
     messages: list[dict], usage: dict | None = None
 ) -> AsyncIterator[str]:
-    """Stream answer token text from llama-server's OpenAI-compatible endpoint.
+    """Stream answer text from whatever provider `Config.SERVING_MODEL` names.
 
-    `usage` is an optional caller-owned dict, filled in place with
-    `prompt_tokens` / `completion_tokens` summed across every attempt (P1 step
-    3). A dict rather than a return value because the signature is
-    `AsyncIterator[str]` and must stay that way -- the token stream is the
-    contract, and wrapping it in a tuple or a result object to carry a billing
-    detail would push that detail into every caller that does not want it.
-
-    It stays EMPTY when llama-server reports no usage. That is a real
-    possibility -- `stream_options` is an OpenAI extension and this build may
-    ignore it -- and the caller's job is then to mark the request UNPRICED
-    (src/pricing.py), never to estimate. A fabricated token count that looks
+    `usage` is the same caller-owned dict as before, filled in place, and it
+    stays EMPTY when the provider reports no counts -- which is what makes the
+    request UNPRICED rather than estimated. A fabricated token count that looks
     like a measurement is the one outcome charter II forbids outright.
 
-    Connect timeout 5s / read timeout 120s (design III.5, V). Raises
-    LlamaServerUnavailable on connection failure and LlamaServerTimeout on a
-    stalled connect/read -- both raised before or during iteration so P6 can
-    catch them and surface 503/504 instead of a hung stream.
+    Two fields are new and additive, so existing readers are unaffected:
+    `model` (the arm that actually served, which is no longer necessarily
+    `Config.SERVING_MODEL` once routing lands) and `reasoning_tokens` (R55/R56 --
+    already inside `completion_tokens`, carried separately so a cross-arm
+    USD/answer comparison can subtract it).
 
-    Empty-completion guard: the weak q4 7B occasionally samples EOS as its
-    first token and returns zero tokens (see P7 answer-quality eval -- empty
-    answers were per-run, never per-query). When an attempt yields *nothing*,
-    re-draw (new random seed, since none is pinned) up to Config.EMPTY_RETRIES
-    times. The retry only fires before any token is emitted, so a normal
-    (non-empty) stream is unaffected -- tokens are yielded live, no buffering,
-    TTFT unchanged.
+    **The empty-completion retry is gone from this path.** `EMPTY_RETRIES`
+    existed because the weak local q4 sampled EOS as a first token (R28/R29);
+    whether hosted arms need anything like it is C4/step 8(b), decided on 11a's
+    measured zero-token counts. R56 is the reason not to guess: on a thinking
+    model an empty answer can mean the token budget was consumed by reasoning,
+    and retrying that re-pays the full thinking cost and truncates identically.
+    Batch B's `record_if_empty_completion()` counter is what will answer it.
     """
-    payload = {
-        "messages": messages,
-        "max_tokens": Config.MAX_TOKENS,
-        "temperature": Config.GEN_TEMPERATURE,
-        "top_p": Config.GEN_TOP_P,
-        "stream": True,
-        # OpenAI extension: emit a final chunk carrying token counts. Costs
-        # nothing to ask for -- the endpoint ignores fields it does not know --
-        # and it is the only prompt-token source that does not add a blocking
-        # round-trip inside the TTFT window. /tokenize would have; a
-        # chars-over-four estimate would have been a fake number wearing a real
-        # one's clothes.
-        "stream_options": {"include_usage": True},
-    }
-    timeout = httpx.Timeout(connect=5.0, read=120.0, write=5.0, pool=5.0)
-    url = f"{Config.LLAMA_SERVER_URL}/v1/chat/completions"
+    model = Config.SERVING_MODEL
+    provider = _provider_for(model)
+    stream = await guarded_generate(
+        provider,
+        messages,
+        tier="default",
+        tenant=current_tenant(),
+        # No USD budget. R48: at the free tier there is no USD ceiling to
+        # breach -- Google's rolling spend cap is literally $0 -- so the
+        # binding constraint is QUOTA, enforced by the limiter above. Passing
+        # an invented USD ceiling would make the guard look like it was
+        # enforcing something it is not.
+        budget=None,
+        limiter=_limiter.limiter_for(model),
+        breaker=_breaker,
+        estimated_cost_usd=_estimated_cost_usd(messages, model),
+        max_input_tokens=Config.CTX_SIZE,
+        max_history_messages=MAX_HISTORY_MESSAGES,
+    )
 
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            for attempt in range(Config.EMPTY_RETRIES + 1):
-                yielded = False
-                async for token in _stream_once(client, url, payload, usage):
-                    yielded = True
-                    yield token
-                if yielded:
-                    return
-                if attempt < Config.EMPTY_RETRIES:
-                    logger.warning(
-                        "stream_answer: empty completion, retrying (attempt %d/%d)",
-                        attempt + 1, Config.EMPTY_RETRIES,
-                    )
-            logger.warning("stream_answer: still empty after %d retries", Config.EMPTY_RETRIES)
-    except httpx.ConnectError as e:
-        logger.error("stream_answer: llama-server unreachable at %s: %s", url, e)
-        raise LlamaServerUnavailable(str(e)) from e
-    except httpx.TimeoutException as e:
-        logger.error("stream_answer: llama-server timed out (%s): %s", url, e)
-        raise LlamaServerTimeout(str(e)) from e
+    async for token in stream.chunks:
+        yield token
+
+    if usage is not None:
+        _fill_usage_dict(usage, stream.usage)
+
+
+def _fill_usage_dict(usage: dict, reported: Usage) -> None:
+    """Coerce the gateway's `Usage` into the plain dict callers already read.
+
+    Only non-None values are written: an absent count must stay absent so the
+    request prices UNPRICED, rather than becoming a 0 that reads as free.
+    """
+    for field in ("prompt_tokens", "completion_tokens", "model"):
+        value = getattr(reported, field, None)
+        if value is not None:
+            usage[field] = value
+    reasoning = getattr(reported, "reasoning_tokens", None)
+    if reasoning is not None:
+        usage["reasoning_tokens"] = reasoning
 
 
 def build_sources_footer(sources: list[dict]) -> str:

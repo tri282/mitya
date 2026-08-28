@@ -102,6 +102,17 @@ class GroqProvider:
         self._temperature = temperature if temperature is not None else Config.GEN_TEMPERATURE
         self._top_p = top_p if top_p is not None else Config.GEN_TOP_P
 
+    # Endpoint and auth are methods, not constants inlined below, for exactly
+    # one reason: llama-server speaks the same OpenAI-compatible dialect, so
+    # `src/gateway/local.py` overrides these two and reuses the parser instead
+    # of the repo carrying a third copy of it. That is a statement about the
+    # WIRE FORMAT being shared, not a claim that llama-server is Groq.
+    def _endpoint(self) -> str:
+        return CHAT_COMPLETIONS_URL
+
+    def _headers(self) -> dict:
+        return {"Authorization": f"Bearer {Config.GROQ_API_KEY}"}
+
     async def generate(
         self,
         messages: list[dict],
@@ -110,7 +121,8 @@ class GroqProvider:
         budget: float | None,
     ) -> GenerationStream:
         logger.debug(
-            "GroqProvider.generate: model=%s tier=%s tenant=%s", self.model, tier, tenant
+            "%s.generate: model=%s tier=%s tenant=%s",
+            type(self).__name__, self.model, tier, tenant,
         )
         usage = GroqUsage(model=self.model)
         payload = {
@@ -127,11 +139,11 @@ class GroqProvider:
         }
 
         async def _chunks() -> AsyncIterator[str]:
-            headers = {"Authorization": f"Bearer {Config.GROQ_API_KEY}"}
+            headers = self._headers()
             try:
                 async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
                     async with client.stream(
-                        "POST", CHAT_COMPLETIONS_URL, json=payload, headers=headers
+                        "POST", self._endpoint(), json=payload, headers=headers
                     ) as response:
                         response.raise_for_status()
                         async for line in response.aiter_lines():

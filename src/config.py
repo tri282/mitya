@@ -203,6 +203,22 @@ class Config(metaclass=_ConfigMeta):
     # fail across independent runs and settings, and it is NOT prompt size
     # (the failing prompts are smaller than the passing ones).
     EMPTY_RETRIES = int(os.getenv("EMPTY_RETRIES", "4"))
+
+    # Spend-rate circuit breaker cap (v2 P2 Batch C step 6, wiring Batch B's
+    # SpendRateBreaker). DEPLOYMENT, not versioned: it is an operational
+    # safety limit and changing it does not change what a correct answer is,
+    # so it stays on Config rather than in the hash -- same split EMPTY_RETRIES
+    # sits on.
+    #
+    # $0.10/min is a BACKSTOP, deliberately loose. At the cheap arm's list rate
+    # (~$0.00157/answer, R60) that is ~63 answers/minute, well above
+    # gemini-3.5-flash-lite's own rpm of 15 -- so under normal operation the
+    # QUOTA limiter binds first and this never fires. It exists for the case the
+    # limiter cannot see: an expensive or newly-added model whose per-answer
+    # cost is an order of magnitude higher, where 15 rpm is still within quota
+    # but the spend rate is not. Trip it and the ladder degrades rather than
+    # spending (charter IV).
+    SPEND_RATE_MAX_USD_PER_MINUTE = float(os.getenv("SPEND_RATE_MAX_USD_PER_MINUTE", "0.10"))
     CACHE_ENABLED = os.getenv("CACHE_ENABLED", "true").lower() == "true"
     CACHE_DIR = os.path.join(DATA_DIR, "cache")
 

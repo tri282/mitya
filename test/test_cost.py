@@ -38,11 +38,28 @@ Config.MODEL_RATES[FAKE_METERED] = {"prompt": 1.0, "completion": 4.0, "metered":
 def test_local_serving_model_is_priced_but_not_metered() -> None:
     """The distinction the whole step turns on. Local inference costs $0.00 in
     fees and that figure is exact -- but nobody meters it, so it is not a
-    price, and charter II's provisional rule keys on that flag."""
-    cost = cost_usd(Config.SERVING_MODEL, prompt_tokens=1500, completion_tokens=120)
+    price, and charter II's provisional rule keys on that flag.
+
+    Names `local-q4km` explicitly rather than reading `Config.SERVING_MODEL`.
+    It used to be the default, and this test silently meant "the default" until
+    Batch C step 6 moved that to gemini-3.5-flash-lite (A3: local is a frozen
+    chart line, not a live arm). What is being asserted is a property of the
+    LOCAL row, so the local row is what it should name."""
+    cost = cost_usd("local-q4km", prompt_tokens=1500, completion_tokens=120)
     assert cost.usd == 0.0
     assert cost.priced is True
     assert cost.metered is False
+
+
+def test_default_serving_model_is_a_free_tier_estimate_not_spend() -> None:
+    """The new default after Batch C step 6. It has a real list rate, so USD is
+    nonzero -- but `metered=False` (R48): these calls run against free-tier
+    quota, so the figure is a *list-rate estimate at the free tier* and must
+    never be reported as spend. A metered=True here would be the bug."""
+    cost = cost_usd(Config.SERVING_MODEL, prompt_tokens=1500, completion_tokens=120)
+    assert cost.priced is True
+    assert cost.usd is not None and cost.usd > 0.0
+    assert cost.metered is False, "free-tier arms must not report as metered spend"
 
 
 def test_unknown_model_is_unpriced_and_never_zero() -> None:
