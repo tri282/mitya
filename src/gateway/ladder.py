@@ -26,7 +26,31 @@ class Rung(str, Enum):
     CHEAPER = "cheaper_model"
     CACHED = "cached_answer"
     RETRIEVAL_ONLY = "retrieval_only"
+    # A third outcome for a generation attempt, added at Batch C step 3
+    # (R53): Google can return HTTP 200 carrying a REFUSAL (safety,
+    # recitation, prohibited_content, spii, blocklist, content_blocked --
+    # reached through a field in the body, not a status code). That is
+    # neither a successful PRIMARY answer nor a transport failure that
+    # retrying or falling down the ladder would fix, so it gets its own
+    # value rather than being folded into UNAVAILABLE (which would make a
+    # policy block look like an outage) or PRIMARY (which would make it
+    # look like an answer). `next_rung()` below never RETURNS this rung --
+    # it is not a fact about Readiness, it is a fact about one attempt's
+    # outcome -- a caller catches the adapter's `ContentRefused` (raised
+    # by src/gateway/google.py) before consulting the ladder at all, and
+    # records REFUSED as what happened. Wiring that caller in is step 6's
+    # /chat cutover, out of this step's scope.
+    REFUSED = "content_refused"
     UNAVAILABLE = "503"
+
+
+class ContentRefused(RuntimeError):
+    """Raised by a provider adapter when the provider blocked generation on
+    policy grounds (safety/recitation/etc.) rather than failing transport-wise
+    or succeeding. Distinct from `src.gateway.retry.TransportError` (retrying
+    a refusal does not help) and from a normal `GenerationStream` (there is no
+    answer to drain). See `Rung.REFUSED` above for how this maps onto the
+    degradation ladder's vocabulary."""
 
 
 @dataclass(frozen=True)

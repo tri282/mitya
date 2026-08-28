@@ -122,7 +122,10 @@ _DEFAULT_MODEL_LIMITS: dict[str, dict] = {
     # work: OpenRouter's free pool caps at 50 rpd; Groq's tpm is 8000, roughly
     # 3% of Gemini's, and tpm binds long before rpm or rpd does.
     "openrouter/free":               {"provider": "openrouter", "rpm": 20, "tpm": None,   "rpd": 50,   "tpd": None,     "verified": False},
-    "openai/gpt-oss-120b":           {"provider": "groq",       "rpm": 30, "tpm": 8_000,  "rpd": 1000, "tpd": 200_000,  "verified": False},
+    # Promoted to verified=True (P2 Batch C step 3, R53): Groq's published
+    # per-model table matches this row exactly on a desk read -- unlike
+    # Google, Groq publishes free-tier limits.
+    "openai/gpt-oss-120b":           {"provider": "groq",       "rpm": 30, "tpm": 8_000,  "rpd": 1000, "tpd": 200_000,  "verified": True},
     "qwen/qwen3.6-27b":              {"provider": "groq",       "rpm": 30, "tpm": 8_000,  "rpd": 1000, "tpd": 200_000,  "verified": False},
 }
 
@@ -147,10 +150,31 @@ _DEFAULT_MODEL_RATES: dict[str, dict] = {
     # id             prompt $/Mtok  completion $/Mtok  metered
     "local-q4km":   {"prompt": 0.0, "completion": 0.0, "metered": False},
 
-    # Left commented rather than filled with today's public prices: an
-    # unverified price in a table gets read as a measurement sooner or later,
-    # and a wrong one is worse than a missing one (rate_for refuses to guess).
-    # "models/gemini-3.5-flash-lite": {"prompt": 0.10, "completion": 0.40, "metered": True},
+    # P2 Batch C step 3 (R48/R53/R55): published list rates for the two arms
+    # step 3 wires. metered=False on BOTH -- these calls run against free-tier
+    # quota (Config.MODEL_LIMITS), not a bill. R48's rule: price at list rate
+    # so a USD/answer figure exists at all, report it everywhere as a
+    # *list-rate estimate at the free tier*, never as spend. Each row cites
+    # its pricing page and the date read; a wrong unverified price is worse
+    # than a missing one (rate_for's comment above), so do not edit these
+    # without re-reading the source.
+    #
+    # Google Gemini 3.5 Flash-Lite -- ai.google.dev/gemini-api/docs/pricing,
+    # read 2026-08-28 (via p2-provider-survey.md P-1): $0.30 / $2.50 per Mtok.
+    # Chosen over 3.5 Flash for its larger free-tier rpd (500 vs 20).
+    "models/gemini-3.5-flash-lite": {"prompt": 0.30, "completion": 2.50, "metered": False},
+
+    # Groq openai/gpt-oss-120b -- $0.15 / $0.60 per Mtok. Confirmed 2026-08-28
+    # from secondary pricing trackers, NOT from Groq's own console page (that
+    # page was not reachable in this session). Re-read the console before any
+    # published USD figure leans on it:
+    # cached-input read is $0.075/Mtok, not wired here -- this table has no
+    # cache-rate column; see phase-2.md's Batch C write-up.
+    # completion_tokens on this arm INCLUDES reasoning tokens (R55) -- priced
+    # correctly here since that is what is billed; GroqUsage.reasoning_tokens
+    # carries the split for a cross-arm comparison that must not conflate the
+    # two (§II).
+    "openai/gpt-oss-120b":          {"prompt": 0.15, "completion": 0.60, "metered": False},
 }
 
 # Substring triggers for the STRUCTURAL route. Moved off src/rag/router.py.
