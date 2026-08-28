@@ -430,13 +430,17 @@ def configure_tracing(app=None) -> trace.Tracer:
         FastAPIInstrumentor.instrument_app(
             app,
             tracer_provider=provider,
-            # "health,metrics": both are operator traffic, both are the loudest
-            # and least interesting on the box, and at 100% sampling they
-            # dominate the trace store. /metrics was measured at P1 step 10
-            # producing one trace per 15s Prometheus scrape -- 240/hour of pure
-            # noise against R32's in-memory 50k ring buffer, evicting the real
-            # traces the buffer exists to hold.
-            excluded_urls="health,metrics",
+            # "health,ready,metrics": all three are operator/dependency
+            # traffic, all the loudest and least interesting on the box, and
+            # at 100% sampling they dominate the trace store. /metrics was
+            # measured at P1 step 10 producing one trace per 15s Prometheus
+            # scrape -- 240/hour of pure noise against R32's in-memory 50k
+            # ring buffer, evicting the real traces the buffer exists to
+            # hold. /ready added at v2 P2 step 10 (schedule §5: "adding an
+            # endpoint means revisiting the OTel exclusion list", R45) --
+            # same shape and same polling cadence as /health, so it is the
+            # same defect if left out.
+            excluded_urls="health,ready,metrics",
             exclude_spans=["send", "receive"],
         )
         # OTel's own query-param redaction list is AWS-shaped and ships as

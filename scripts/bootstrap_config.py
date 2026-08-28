@@ -47,6 +47,7 @@ _FIELD_SOURCES = {
     "gen_temperature": "GEN_TEMPERATURE",
     "gen_top_p": "GEN_TOP_P",
     "prompt_composition": "PROMPT_COMPOSITION",
+    "serving_model": "SERVING_MODEL",
     "book_title_aliases": "BOOK_TITLE_ALIASES",
     "model_limits": "MODEL_LIMITS",
     "unknown_model_limits": "UNKNOWN_MODEL_LIMITS",

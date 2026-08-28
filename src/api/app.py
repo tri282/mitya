@@ -47,6 +47,7 @@ from src.config_artifact import (
     active_corpus_version,
     assert_embed_model_matches,
 )
+from src.gateway.ladder import readiness_from_status
 from src.metrics import (
     StageTimer,
     configure_metrics,
@@ -218,11 +219,18 @@ async def metrics_endpoint(request: Request) -> Response:
     return Response(content=generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
 
 
-@app.get("/health")
-async def health(request: Request) -> JSONResponse:
+async def _dependency_status(state) -> tuple[bool, dict]:
     """llama-server reachability + Qdrant presence/count + artifact load
-    status. 200 only if all green (design §IV.2)."""
-    state = request.app.state
+    status. `healthy` is True only if all green (design §IV.2).
+
+    Factored out of `/health` (v2 P2 step 10, charter V) so `/ready` -- what
+    the degradation ladder reads -- shares this one dependency check instead
+    of a second copy of it. `/health` keeps calling it too, unchanged: the
+    frontend's `useHealth`/`HealthIndicator` already poll `/health` for this
+    exact body (`frontend/src/composables/useHealth.ts`), and this is a
+    liveness/readiness NAME split, not a behavior change to an existing,
+    live consumer.
+    """
     healthy = True
     result: dict = {}
 
@@ -249,7 +257,42 @@ async def health(request: Request) -> JSONResponse:
         "summaries_loaded": len(state.summaries),
         "structure_loaded": len(state.structure),
     }
+    return healthy, result
+
+
+@app.get("/health")
+async def health(request: Request) -> JSONResponse:
+    """llama-server reachability + Qdrant presence/count + artifact load
+    status. 200 only if all green (design §IV.2). Kept as-is for the
+    frontend's existing contract -- see `/ready` for the split this endpoint
+    now shares its check with."""
+    healthy, result = await _dependency_status(request.app.state)
     result["status"] = "ok" if healthy else "degraded"
+    return JSONResponse(result, status_code=200 if healthy else 503)
+
+
+@app.get("/ready")
+async def ready(request: Request) -> JSONResponse:
+    """Readiness (v2 P2 step 10, charter V): the same dependency checks as
+    `/health`, under the name the degradation ladder actually reads
+    (`src/gateway/ladder.py`'s `Readiness`/`readiness_from_status`). Split
+    from `/health` as a name, not a behavior -- an orchestrator's liveness
+    probe (should this process be restarted?) and the ladder's readiness
+    read (can this process serve the primary rung right now?) are two
+    different questions asked of the same underlying state, and giving them
+    one shared answer under two names is what lets each evolve without the
+    other silently changing meaning."""
+    state = request.app.state
+    healthy, result = await _dependency_status(state)
+    result["status"] = "ready" if healthy else "not_ready"
+    # The ladder's own view of this same status (Readiness has no `degraded`
+    # here -- that is step 4's spend-rate breaker, a per-request runtime
+    # state /ready does not have visibility into). `next_rung()` itself is
+    # NOT called here: it also needs `cache_hit`, which only exists for a
+    # specific query, so a bare /ready poll reports the readiness snapshot,
+    # not a rung -- P4 is what exercises actual rung selection under fault
+    # injection.
+    result["readiness"] = readiness_from_status(result, cache_available=state.cache.enabled).__dict__
     return JSONResponse(result, status_code=200 if healthy else 503)
 
 
@@ -347,6 +390,11 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                     "filter_relaxed": False,
                     "no_context": not cached["sources"],
                     "cache_hit": True,
+                    # Producing arm (v2 P2 step 9, R51): under per-request
+                    # routing one config_version can serve more than one arm,
+                    # so config_version alone cannot say which arm this hit
+                    # replays -- the value has to carry it.
+                    "model": cached["model"],
                     # A cache hit generates nothing, so it bills nothing. Not
                     # a placeholder: this is what makes A5's saving claim
                     # measurable as cost avoided the moment P2 meters
@@ -532,7 +580,14 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
             yield _sse("sources", {"sources": sources, "footer": footer})
 
             if answer:
-                state.cache.set(body.query, filters, route_name, config_version, corpus_version, answer, sources, footer)
+                # Config.SERVING_MODEL is the producing arm (v2 P2 step 9,
+                # R51) -- the only one there is until Batch D's routing picks
+                # per-request between more than one. Storing it now is what
+                # lets a hit under per-request routing say which arm answered.
+                state.cache.set(
+                    body.query, filters, route_name, config_version, corpus_version,
+                    answer, sources, footer, Config.SERVING_MODEL,
+                )
 
             total_ms = int((time.monotonic() - t_start) * 1000)
             ttft_ms = int((t_first_token - t_start) * 1000) if t_first_token is not None else None
@@ -576,6 +631,10 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                 "cache_hit": False,
                 "cost_usd": cost.usd,
                 "cost_metered": cost.metered,
+                # Producing arm (v2 P2 step 9, R51) -- same field the cache-hit
+                # meta event carries, so the frontend/attribution reader does
+                # not need a different lookup per cache_hit value.
+                "model": Config.SERVING_MODEL,
             })
             logger.info(
                 "chat: query=%r route=%s filters=%s entities=%s chunk_ids=%s "
