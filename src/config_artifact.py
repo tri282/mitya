@@ -184,6 +184,15 @@ class ServingConfig(BaseModel):
     gen_temperature: float
     gen_top_p: float
     prompt_composition: str
+    # Which model actually generates (v2 P2 step 9, R51). Moved off `Config`
+    # as a plain attribute for the same reason CTX_SIZE/MAX_TOKENS/
+    # PROMPT_COMPOSITION already are: it changes what a correct answer is
+    # (D9's versioned/deployment split), so it belongs in the hash. Its
+    # absence here was CP-delta's real defect (R51): switching generation
+    # arms did not churn config_version, so the cache did not invalidate
+    # across arms and arm B was served arm A's cached answers -- contaminating
+    # quality, latency, and cost measurements alike, not just cost.
+    serving_model: str
 
     # routing. Moved off src/rag/router.py: config by another name, and a P7
     # search axis. Left there, P7 finds an un-versionable knob.
@@ -248,6 +257,10 @@ class ServingConfig(BaseModel):
             gen_temperature=float(os.getenv("GEN_TEMPERATURE", "0.6")),
             gen_top_p=float(os.getenv("GEN_TOP_P", "0.9")),
             prompt_composition=os.getenv("PROMPT_COMPOSITION", "A"),
+            # Same env var and default Config.SERVING_MODEL used before this
+            # field existed (config.py's plain attribute is now removed --
+            # this is the one place the default lives).
+            serving_model=os.getenv("SERVING_MODEL", "local-q4km"),
             summary_intent=_DEFAULT_SUMMARY_INTENT,
             book_title_aliases=_DEFAULT_BOOK_TITLE_ALIASES,
             model_limits=_DEFAULT_MODEL_LIMITS,

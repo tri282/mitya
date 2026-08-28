@@ -174,10 +174,17 @@ class Config(metaclass=_ConfigMeta):
         }
 
     # --- RAG: serving ---
-    # The id the serving path prices against and the evidence log already
-    # names the frozen v1 baseline by (status/mitya-v2/STATUS.md). It is a
-    # billing identity, not a file path -- llama-server is addressed by URL.
-    SERVING_MODEL = os.getenv("SERVING_MODEL", "local-q4km")
+    # SERVING_MODEL moved to the versioned serving config (v2 P2 step 9,
+    # R51): it is the id the serving path prices against and the evidence log
+    # already names the frozen v1 baseline by (status/mitya-v2/STATUS.md) --
+    # a billing identity, not a file path (llama-server is addressed by URL)
+    # -- and it changes what a correct answer is (which model answered),
+    # exactly D9's criterion for belonging in the hash. Its absence here was
+    # the defect R51 found: switching generation arms did not churn
+    # config_version, so the answer cache did not invalidate across arms.
+    # Resolved through the _ConfigMeta facade above; default lives in
+    # src/config_artifact.py's ServingConfig.from_env().
+    #
     # One synthetic tenant until P5 makes identity real (v2 P1 step 4, A12).
     # The X-Tenant-ID header that overrides this is UNAUTHENTICATED -- anyone
     # who can reach the endpoint can claim any tenant -- so it is shape-

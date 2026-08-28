@@ -13,15 +13,29 @@ could not tell whether a delta came from the arm or from a prompt change that
 rode along with it. Two separate concerns kept in two separate places, so one
 can change without touching the other.
 
-Batch A (this commit) ships only the seam: the `Provider` contract
-(`contract.py`) and its first, vendor-free implementation, `FakeProvider`
-(`fake.py`). Routing, the budget guard, retry/circuit-breaker, real provider
-adapters, and provider-side caching are all named by the boundary above, but
-none of them is built here -- CP-alpha has not picked a provider pair yet and
+Batch A shipped the seam: the `Provider` contract (`contract.py`) and its
+first, vendor-free implementation, `FakeProvider` (`fake.py`).
+
+Batch B (schedule steps 4, 8(a), 9, 10) adds everything buildable with no
+vendor chosen: the spend guard (`guard.py` -- budget check, request size
+limits, spend-rate breaker, all before the provider call, and
+`RateLimiter.acquire_async`), the transport retry (`retry.py` -- bounded,
+jittered, budget-aware; the QUALITY retry stays step 8(b), not built here),
+and the degradation ladder written as policy (`ladder.py`). Routing, real
+provider adapters, and provider-side caching are still named by the boundary
+above but not built -- CP-alpha has not picked a provider pair yet and
 CP-beta has not picked a routing family, so building any of that now would be
 code shaped for a decision that has not been made.
 """
 
 from src.gateway.contract import GenerationStream, Provider, Usage
+from src.gateway.guard import BudgetExceeded, Degraded, RequestTooLarge, SpendRateBreaker, guarded_generate
+from src.gateway.ladder import Readiness, Rung, next_rung, readiness_from_status
+from src.gateway.retry import TransportError, record_if_empty_completion, retry_transport
 
-__all__ = ["GenerationStream", "Provider", "Usage"]
+__all__ = [
+    "GenerationStream", "Provider", "Usage",
+    "BudgetExceeded", "Degraded", "RequestTooLarge", "SpendRateBreaker", "guarded_generate",
+    "Readiness", "Rung", "next_rung", "readiness_from_status",
+    "TransportError", "record_if_empty_completion", "retry_transport",
+]

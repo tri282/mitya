@@ -12,6 +12,7 @@ rather than teacher.py's exception moving up, because a shared limiter module
 cannot import teacher.py to raise its exception.
 """
 
+import asyncio
 import logging
 import time
 from collections import deque
@@ -79,8 +80,10 @@ class RateLimiter:
     def _tokens_in_window(self) -> int:
         return int(sum(entry[1] for entry in self._window))
 
-    def acquire(self, tokens: int) -> None:
-        """Block until a request of `tokens` fits inside every limit."""
+    def _check_capacity(self, tokens: int) -> None:
+        """The two instant-fail checks, shared by both the sync and async
+        acquire -- neither is a window wait, so there is nothing to gain by
+        sleeping/awaiting first."""
         if tokens > self.tpm:
             raise LimitError(
                 f"single request needs ~{tokens} tokens, over the {self.tpm} tokens/min "
@@ -92,21 +95,63 @@ class RateLimiter:
                 f"resets -- completed work is already on disk and will be skipped"
             )
 
+    def _try_reserve(self, tokens: int) -> float | None:
+        """One attempt to fit `tokens` in the window. Reserves and returns
+        `None` on success (window/`requests_today` updated in place -- this
+        is the ONE place either is mutated, so the sync and async callers
+        below share state by construction, not by convention); otherwise
+        returns the seconds to wait before retrying.
+
+        Factored out of what used to be `acquire()`'s body so `acquire_async`
+        (schedule Batch B step 4) is a second caller of the same window logic
+        instead of a second copy of it -- two copies of an eviction/window
+        rule are how they drift apart."""
+        now = self._clock()
+        self._evict(now)
+        if len(self._window) < self.rpm and self._tokens_in_window() + tokens <= self.tpm:
+            self._window.append([now, float(tokens)])
+            self.requests_today += 1
+            return None
+        # Oldest entry leaving the window is the soonest anything frees up.
+        return WINDOW_SECONDS - (now - self._window[0][0]) + 0.05
+
+    def acquire(self, tokens: int) -> None:
+        """Block until a request of `tokens` fits inside every limit."""
+        self._check_capacity(tokens)
         while True:
-            now = self._clock()
-            self._evict(now)
-            if len(self._window) < self.rpm and self._tokens_in_window() + tokens <= self.tpm:
-                break
-            # Oldest entry leaving the window is the soonest anything frees up.
-            wait = WINDOW_SECONDS - (now - self._window[0][0]) + 0.05
+            wait = self._try_reserve(tokens)
+            if wait is None:
+                return
             logger.debug(
                 "rate limit: %d/%d req, %d/%d tok in window; sleeping %.1fs",
                 len(self._window), self.rpm, self._tokens_in_window(), self.tpm, wait,
             )
             self._sleep(max(wait, 0.05))
 
-        self._window.append([self._clock(), float(tokens)])
-        self.requests_today += 1
+    async def acquire_async(self, tokens: int) -> None:
+        """Non-blocking twin of `acquire()` (v2 P2 step 4). `RateLimiter` was
+        sync-only through P1, correct for the offline teacher/judge/eval
+        callers -- wrong for `/chat`, where `acquire()`'s `time.sleep` would
+        block the event loop for every OTHER concurrent request while one
+        caller waits out its own window.
+
+        Shares `self._window`/`self.requests_today` with `acquire()` through
+        `_try_reserve` -- the same instance, not a second limiter -- so an
+        offline batch run and a live request in one process cannot each
+        believe they own the full rpm/tpm/rpd budget. (The *per-process*
+        split this does not close -- two separate processes still keep
+        separate windows -- is R26's tracked, separate limitation.)
+        """
+        self._check_capacity(tokens)
+        while True:
+            wait = self._try_reserve(tokens)
+            if wait is None:
+                return
+            logger.debug(
+                "rate limit (async): %d/%d req, %d/%d tok in window; sleeping %.1fs",
+                len(self._window), self.rpm, self._tokens_in_window(), self.tpm, wait,
+            )
+            await asyncio.sleep(max(wait, 0.05))
 
     def true_up(self, actual_tokens: int) -> None:
         """Replace the last estimate with the real count from usage_metadata."""

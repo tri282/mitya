@@ -2,9 +2,22 @@
 
 Exact-match only, keyed on normalize(query) + filters + route (P1 5c), no
 TTL (static corpus), stores only successful non-empty answers. A semantic
-cache was considered and rejected: it would add an embedding index for a
-single-user app whose hit rate is near zero anyway (docs/RAG.md III.6) --
-this stays a ~20-line exact-match boundary instead.
+cache (L2) was re-examined for v2 P2 (R49) and refuted on measurement, not
+plausibility (R50): dense query cosine does not predict retrieved chunks,
+because the retrieval pipeline's sparse leg and cross-encoder rerank are both
+lexical. This stays an exact-match boundary.
+
+The cached VALUE carries `model` (v2 P2 step 9, R51/CP-delta): the producing
+arm. Its absence was CP-delta's real defect -- `ServingConfig` carried no
+generation-model field, so switching arms did not churn `config_version` and
+did not invalidate the cache; arm B was served arm A's answers, contaminating
+quality and latency measurements as well as cost. `config_artifact.py`'s new
+`serving_model` field fixes the SEQUENTIAL-arms case (config_version now
+churns per arm, so R42's existing invalidate-on-config-change drops the
+cache with no new cache code). `model` on the value fixes the
+PER-REQUEST-routing case (Batch D): once one config version can serve more
+than one arm, `config_version` alone can no longer say which arm produced a
+given hit, so the hit has to say so itself.
 """
 
 import hashlib
@@ -19,7 +32,8 @@ logger = logging.getLogger(__name__)
 
 
 class AnswerCache:
-    """Exact-match cache over (query, filters, route) -> {answer, sources, footer}."""
+    """Exact-match cache over (query, filters, route) -> {answer, sources,
+    footer, model}."""
 
     def __init__(self) -> None:
         # None when disabled -- get()/set() become no-ops rather than every
@@ -27,6 +41,14 @@ class AnswerCache:
         self._cache: diskcache.Cache | None = (
             diskcache.Cache(Config.CACHE_DIR) if Config.CACHE_ENABLED else None
         )
+
+    @property
+    def enabled(self) -> bool:
+        """Whether this cache can serve a hit at all -- what step 10's
+        degradation ladder (`src/gateway/ladder.py`) reads as
+        `Readiness.cache_available`. A public accessor rather than a caller
+        reaching for `self._cache is not None` directly."""
+        return self._cache is not None
 
     def _key(
         self, query: str, filters: dict | None, route: str,
@@ -59,10 +81,12 @@ class AnswerCache:
         self, query: str, filters: dict | None, route: str,
         config_version: str, corpus_version: str,
     ) -> dict | None:
-        """Return the cached {answer, sources, footer}, or None on a miss,
-        when disabled, or when the stored value predates this shape (R6/C10 --
-        self-healing: a legacy answer-only entry is treated as a miss and
-        re-generated once, not migrated).
+        """Return the cached {answer, sources, footer, model}, or None on a
+        miss, when disabled, or when the stored value predates this shape
+        (R6/C10, extended v2 P2 step 9 -- self-healing: a legacy entry
+        without `model` is treated as a miss and re-generated once, not
+        migrated. A stored value has no way to *acquire* a producing arm
+        after the fact, so migration would mean fabricating one).
 
         Keying on `route` (P1 5c), `config_version` and `corpus_version` (P1
         step 9) invalidates every entry stored before those changes --
@@ -72,19 +96,24 @@ class AnswerCache:
             return None
         key = self._key(query, filters, route, config_version, corpus_version)
         cached = self._cache.get(key)
-        if not isinstance(cached, dict) or cached.keys() != {"answer", "sources", "footer"}:
+        if not isinstance(cached, dict) or cached.keys() != {"answer", "sources", "footer", "model"}:
             return None
-        logger.info("AnswerCache: hit key=%s", key[:12])
+        logger.info("AnswerCache: hit key=%s model=%s", key[:12], cached["model"])
         return cached
 
     def set(
         self, query: str, filters: dict | None, route: str,
         config_version: str, corpus_version: str,
-        answer: str, sources: list[dict], footer: str,
+        answer: str, sources: list[dict], footer: str, model: str,
     ) -> None:
-        """Store a successful {answer, sources, footer}. No-op when disabled or answer is empty."""
+        """Store a successful {answer, sources, footer, model}. No-op when
+        disabled or answer is empty.
+
+        `model` (v2 P2 step 9, R51) is the producing arm -- required, not
+        optional, so a caller cannot silently reintroduce an unattributed
+        entry that `get()` would then have to guess about."""
         if self._cache is None or not answer:
             return
         key = self._key(query, filters, route, config_version, corpus_version)
-        self._cache.set(key, {"answer": answer, "sources": sources, "footer": footer})
-        logger.info("AnswerCache: stored key=%s", key[:12])
+        self._cache.set(key, {"answer": answer, "sources": sources, "footer": footer, "model": model})
+        logger.info("AnswerCache: stored key=%s model=%s", key[:12], model)
