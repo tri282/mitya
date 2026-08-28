@@ -68,6 +68,7 @@ import logging
 import os
 import statistics
 import sys
+from datetime import datetime, timezone
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -75,10 +76,11 @@ from fastembed import SparseTextEmbedding, TextEmbedding
 from qdrant_client import QdrantClient
 
 from src.config import Config
+from src.config_artifact import active_corpus_version, active_serving_config
 from src.rag.context import build_context
 from src.rag.entities import EntityMap
 from src.rag.generate import (
-    PERSONA_HEAD,
+    active_persona_head,
     LlamaServerTimeout,
     LlamaServerUnavailable,
     build_messages,
@@ -196,6 +198,40 @@ def _cell_stats(rows: list[dict], min_draws: int) -> tuple[list[dict], int]:
             },
         })
     return cells, failed
+
+def _provenance() -> dict:
+    """What is needed to reproduce this run, recorded IN the artifact.
+
+    `config_version` is the load-bearing one: it pins every versioned serving
+    knob including, from Batch C step 7, the persona prompt itself. The git SHA
+    covers the unversioned remainder (retrieval code, this script). `dirty`
+    matters more than it looks -- a measurement taken on an uncommitted tree is
+    not reproducible from its SHA, and silently recording the SHA anyway is how
+    that becomes invisible.
+    """
+    import subprocess
+
+    def _git(*args: str) -> str | None:
+        try:
+            return subprocess.run(
+                ["git", *args], capture_output=True, text=True, timeout=10, check=True
+            ).stdout.strip()
+        except Exception as exc:  # not a measurement failure -- record the gap
+            logger.warning("provenance: git %s unavailable: %s", " ".join(args), exc)
+            return None
+
+    status = _git("status", "--porcelain")
+    return {
+        "config_version": active_serving_config().version(),
+        "corpus_version": active_corpus_version(),
+        "git_sha": _git("rev-parse", "HEAD"),
+        "git_dirty": None if status is None else bool(status),
+        "measured_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "serving_model": Config.SERVING_MODEL,
+        "prompt_composition": Config.PROMPT_COMPOSITION,
+        "top_k_rerank": Config.TOP_K_RERANK,
+    }
+
 
 
 def _summarize(results: list[dict], modes: list[str], min_draws: int) -> dict:
@@ -398,7 +434,7 @@ async def run(
         # the GENERATOR, which carries 93% of persona-retention variance (R25).
         for mode in modes:
             for draw in range(draws):
-                messages = build_messages(PERSONA_HEAD, passages_block, query, mode=mode)
+                messages = build_messages(active_persona_head(), passages_block, query, mode=mode)
                 answer, error = await _collect_answer(messages)
                 if error is not None:
                     logger.warning("draw failed query=%r mode=%s draw=%d: %s", query, mode, draw, error)
@@ -446,6 +482,13 @@ async def run(
     # --modes of this chunk, so a resumed run still reports both A and B.
     summary_modes = sorted({r["mode"] for r in results}) or modes
     summary = _summarize(results, summary_modes, min_draws)
+    # Provenance block (v2 P2 Batch C, R54). P-3 found that the frozen
+    # 2026-08-24 row's own artifacts recorded NO config_version, git SHA or
+    # timestamp -- so it is reproducible from git history and from nothing the
+    # artifact itself carries, and A3 forbids re-measuring it, which makes that
+    # unrepairable after the fact. Every run from here stamps its own
+    # provenance so 11a does not inherit the same defect.
+    summary["provenance"] = _provenance()
     summary_path = out_path[:-len(".json")] + "_summary.json" if out_path.endswith(".json") else out_path + "_summary.json"
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)

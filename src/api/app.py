@@ -79,10 +79,12 @@ from src.observability import (
 from src.pricing import FREE, Cost, cost_usd, is_metered, total_usd
 from src.rag.context import build_context
 from src.rag.entities import EntityMap
+from src.gateway.guard import BudgetExceeded, Degraded, RequestTooLarge
+from src.gateway.ladder import ContentRefused
+from src.gateway.retry import TransportError
+from src.limits import QuotaExhausted
 from src.rag.generate import (
-    PERSONA_HEAD,
-    LlamaServerTimeout,
-    LlamaServerUnavailable,
+    active_persona_head,
     build_messages,
     build_sources_footer,
     stream_answer,
@@ -482,11 +484,25 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
         _abort()
         raise
 
-    messages = build_messages(PERSONA_HEAD, passages_block, body.query)
+    messages = build_messages(active_persona_head(), passages_block, body.query)
     # Filled in place as the stream runs, summed across every EMPTY_RETRIES
     # attempt. Stays empty if llama-server reports no usage, which is what
     # makes the request UNPRICED rather than estimated (P1 step 3).
     usage: dict = {}
+
+    def _serving_model() -> str:
+        """The arm that ACTUALLY served, for attribution.
+
+        Provider-neutral by construction: this reads a field the gateway fills,
+        it does not know what providers exist. `Config.SERVING_MODEL` is the
+        fallback for the window before the stream has reported anything (and
+        for a provider that reports no model at all) -- it is the configured
+        intent, which is the right answer when nothing better is known and the
+        wrong one to prefer once the gateway has said what really ran. Once
+        routing lands (step 5) the two genuinely differ per request.
+        """
+        return usage.get("model") or Config.SERVING_MODEL
+
     gen = stream_answer(messages, usage)
 
     # Prime the stream before opening the HTTP response body: a connect/read
@@ -528,12 +544,32 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                 deferred_to=STAGE_GENERATE_STREAM,
             )
         record_stage_duration(time.monotonic() - _t_gen_first, route_name, STAGE_GENERATE_FIRST)
-    except LlamaServerUnavailable as exc:
+    # Gateway vocabulary, not llama-server's (Batch C step 6). Each maps to the
+    # status that describes what actually happened, because collapsing them
+    # would make a policy refusal, a quota rejection and an outage
+    # indistinguishable in the one place an operator looks first.
+    except QuotaExhausted as exc:
         _abort()
-        raise HTTPException(status_code=503, detail="llama-server unreachable") from exc
-    except LlamaServerTimeout as exc:
+        raise HTTPException(status_code=429, detail="provider quota exhausted") from exc
+    except RequestTooLarge as exc:
         _abort()
-        raise HTTPException(status_code=504, detail="llama-server timed out") from exc
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except (BudgetExceeded, Degraded) as exc:
+        # 503, not 402/429: charter IV puts a tripped spend guard into DEGRADED
+        # mode, which is an availability statement about this deployment, not a
+        # bill the caller can settle or a rate they can back off from.
+        _abort()
+        raise HTTPException(status_code=503, detail="serving degraded: spend guard") from exc
+    except ContentRefused as exc:
+        # R53/R57: Google returns HTTP 200 carrying a refusal. Surfacing it as
+        # 502 would call a policy decision an upstream failure; 200-with-empty
+        # would report a block as an answer. 422 says the request was
+        # understood and declined.
+        _abort()
+        raise HTTPException(status_code=422, detail="provider refused to generate") from exc
+    except TransportError as exc:
+        _abort()
+        raise HTTPException(status_code=502, detail="provider unreachable") from exc
 
     def _generation_cost() -> Cost:
         """Price the generation stage from whatever usage has accumulated.
@@ -545,7 +581,7 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
         produced no answer still prices its four prompts (R33).
         """
         return cost_usd(
-            Config.SERVING_MODEL,
+            _serving_model(),
             usage.get("prompt_tokens"),
             usage.get("completion_tokens"),
         )
@@ -564,10 +600,13 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                 async for token in gen:
                     answer_parts.append(token)
                     yield _sse("token", {"text": token})
-            except (LlamaServerUnavailable, LlamaServerTimeout) as exc:
+            except (TransportError, ContentRefused) as exc:
                 # Mid-stream failure: the 200 status is already committed, so
-                # this cannot become a 503/504 -- surface as a terminal SSE
-                # error event instead of hanging (design §IV.2).
+                # this cannot become a 502/422 -- surface as a terminal SSE
+                # error event instead of hanging (design §IV.2). ContentRefused
+                # belongs here as well as in the pre-stream handler: Google can
+                # emit a refusal partway through a stream that had already
+                # started producing text (R57's in-band `error` event).
                 logger.error("chat: mid-stream failure query=%r: %s", body.query, exc)
                 stream_span.set_attribute("generate.mid_stream_error", type(exc).__name__)
                 yield _sse("error", {"detail": str(exc)})
@@ -586,7 +625,7 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                 # lets a hit under per-request routing say which arm answered.
                 state.cache.set(
                     body.query, filters, route_name, config_version, corpus_version,
-                    answer, sources, footer, Config.SERVING_MODEL,
+                    answer, sources, footer, _serving_model(),
                 )
 
             total_ms = int((time.monotonic() - t_start) * 1000)
@@ -610,11 +649,11 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
             # All three make an aggregate provisional; only one of them is a
             # cost.
             if not cost.metered:
-                record_unmetered_answer(Config.SERVING_MODEL)
+                record_unmetered_answer(_serving_model())
             elif cost.usd is None:
-                record_unpriced_answer(Config.SERVING_MODEL)
+                record_unpriced_answer(_serving_model())
             else:
-                record_answer_cost(cost.usd, Config.SERVING_MODEL)
+                record_answer_cost(cost.usd, _serving_model())
             stream_outcome[0] = "empty" if not answer else "ok"
 
             yield _sse("meta", {
@@ -634,7 +673,7 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                 # Producing arm (v2 P2 step 9, R51) -- same field the cache-hit
                 # meta event carries, so the frontend/attribution reader does
                 # not need a different lookup per cache_hit value.
-                "model": Config.SERVING_MODEL,
+                "model": _serving_model(),
             })
             logger.info(
                 "chat: query=%r route=%s filters=%s entities=%s chunk_ids=%s "
@@ -655,7 +694,7 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
             # reaches the meta event, but both paid for every token that
             # arrived -- an abandoned stream is exactly where an unstamped
             # span would silently under-report the bill.
-            stream_span.set_attribute("generate.model", Config.SERVING_MODEL)
+            stream_span.set_attribute("generate.model", _serving_model())
             for field in ("prompt_tokens", "completion_tokens"):
                 if usage.get(field) is not None:
                     stream_span.set_attribute(f"generate.{field}", usage[field])

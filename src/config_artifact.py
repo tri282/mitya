@@ -146,6 +146,16 @@ _DEFAULT_NO_TPM_LIMIT = 10 ** 9
 # own), and reporting that as "$0.00 of cost" would be false. Any aggregate
 # containing an unmetered span is reported PROVISIONAL, never as a cost.
 # P2's gateway adds provider rows here and changes nothing else.
+# Verbatim as it stood when ownership moved here (v2 P2 step 7, R54). It was
+# byte-identical to src/training.py's SYSTEM_PROMPT at that moment; the two are
+# now free to diverge, since one describes the fine-tune's training and the
+# other is a tunable serving knob.
+_DEFAULT_PERSONA_HEAD = (
+    "You are Fyodor Dostoevsky. Answer the user's question in the first person, "
+    "incorporating your deep literary, existential, and philosophical tone. "
+    "Give no editorial comments and references to external sources."
+)
+
 _DEFAULT_MODEL_RATES: dict[str, dict] = {
     # id             prompt $/Mtok  completion $/Mtok  metered
     "local-q4km":   {"prompt": 0.0, "completion": 0.0, "metered": False},
@@ -217,6 +227,28 @@ class ServingConfig(BaseModel):
     # across arms and arm B was served arm A's cached answers -- contaminating
     # quality, latency, and cost measurements alike, not just cost.
     serving_model: str
+    # The persona system prompt (v2 P2 Batch C step 7, C5 decided in favour of
+    # moving OWNERSHIP, not merely pinning). It used to be a module constant at
+    # src/rag/generate.py, kept word-for-word in sync with src/training.py's
+    # SYSTEM_PROMPT by a comment and nothing else -- P-3 measured that (R54):
+    # no test imported both, `config_version` did not move when the text
+    # changed, and the frozen row's own artifacts recorded no config_version,
+    # git SHA, or timestamp at all.
+    #
+    # Two things follow from putting it here rather than hashing it (the
+    # option NOT taken). First, editing the persona now churns config_version,
+    # so the cache invalidates and a measurement cannot silently span two
+    # prompts -- the same defect R51 closed for serving_model. Second, and this
+    # is the actual C5 decision: with the fine-tune out of the request path the
+    # persona is an ordinary prompt, so it becomes a P7 SEARCH AXIS rather than
+    # a constant someone must remember to keep in sync.
+    #
+    # src/training.py's SYSTEM_PROMPT is deliberately NOT changed to read this.
+    # That constant describes what the fine-tune was TRAINED on, which is
+    # history and must not drift when a serving knob is tuned. The two were
+    # byte-identical at 208 chars when they were split (R54, verified); from
+    # here they are free to diverge, and that divergence is the point.
+    persona_head: str
 
     # routing. Moved off src/rag/router.py: config by another name, and a P7
     # search axis. Left there, P7 finds an un-versionable knob.
@@ -284,7 +316,15 @@ class ServingConfig(BaseModel):
             # Same env var and default Config.SERVING_MODEL used before this
             # field existed (config.py's plain attribute is now removed --
             # this is the one place the default lives).
-            serving_model=os.getenv("SERVING_MODEL", "local-q4km"),
+            # Default changed from "local-q4km" at Batch C step 6. A3 makes
+            # local-q4km frozen recorded numbers -- a chart line, not a live
+            # arm -- and nothing in the request path may start llama-server.
+            # gemini-3.5-flash-lite over gemini-3.5-flash for two measured
+            # reasons: rpd 500 vs 20, and R56 measured it at ZERO thought
+            # tokens, so MAX_TOKENS is not consumed by thinking before the
+            # answer starts (3.5-flash spent 288 of 300 and returned 8).
+            serving_model=os.getenv("SERVING_MODEL", "models/gemini-3.5-flash-lite"),
+            persona_head=os.getenv("PERSONA_HEAD", _DEFAULT_PERSONA_HEAD),
             summary_intent=_DEFAULT_SUMMARY_INTENT,
             book_title_aliases=_DEFAULT_BOOK_TITLE_ALIASES,
             model_limits=_DEFAULT_MODEL_LIMITS,

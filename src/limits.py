@@ -18,6 +18,8 @@ import time
 from collections import deque
 from typing import Callable
 
+from src.config import Config
+
 logger = logging.getLogger(__name__)
 
 WINDOW_SECONDS = 60.0
@@ -160,3 +162,85 @@ class RateLimiter:
 
     def remaining_today(self) -> int:
         return max(0, self.rpd - self.requests_today)
+
+
+def quota_scope(model: str, provider: str | None) -> tuple[str, ...]:
+    """The key a limiter's window belongs to: the (provider, model) pair.
+
+    **Measured, not read off the docs.** Groq's rate-limit page says "rate
+    limits apply at the organization level, not individual users", which reads
+    like one shared bucket across models -- and an earlier version of this file
+    keyed Groq on the provider alone because of it. That was wrong. The phrase
+    answers *who shares a limit* (every user in the org), not *whether models
+    share one pool*, and per-model limit numbers in that same table would be
+    meaningless if they did.
+
+    Settled on the wire 2026-08-28 by reading `x-ratelimit-remaining-requests`:
+    one call to `gpt-oss-120b` left it at 999/1000; three calls to
+    `gpt-oss-20b` decremented only that model's counter (999, 998, 997); a
+    second `gpt-oss-120b` call returned **998**, not 996. Separate buckets.
+
+    Returns a tuple rather than a string so a provider name can never collide
+    with a model id that happens to equal it.
+    """
+    return (provider or "unknown", model)
+
+
+class ScopedRateLimiter:
+    """One limiter object holding a window per quota scope.
+
+    Deliberately NOT the defect `RateLimiter`'s docstring warns about. That one
+    was a *silent default* -- `RateLimiter()` with no arguments meaning "the
+    teacher's quota", so a judge on a different model burned the teacher's rows.
+    Here every window's limits come from that model's own `Config.limits_for()`
+    row, explicitly, on first use. There is no default to be silently wrong
+    about, which is what makes one shared object safe here.
+
+    What it buys is bookkeeping, not a different accounting model: one place
+    that owns every window, created from explicit rows, instead of callers each
+    holding their own limiter and each having to remember which row it came
+    from. Every provider measured so far meters per model (`quota_scope()`), so
+    the windows are one-per-model.
+
+    What it does NOT fix is **R26** -- the windows still live in one process, so
+    N uvicorn workers hold N sets of them and the effective quota is N times
+    what is configured. Unchanged by this class, still open, and it needs shared
+    state (Redis or equivalent) rather than a better key.
+    """
+
+    def __init__(self, clock=time.monotonic, sleep=time.sleep):
+        self._limiters: dict[tuple[str, ...], RateLimiter] = {}
+        self._clock, self._sleep = clock, sleep
+
+    def limiter_for(self, model: str) -> RateLimiter:
+        """The window for `model`'s quota scope, created on first use from that
+        model's own limits row."""
+        limits = Config.limits_for(model)
+        scope = quota_scope(model, limits.get("provider"))
+        limiter = self._limiters.get(scope)
+        if limiter is None:
+            limiter = RateLimiter(
+                rpm=limits["rpm"],
+                # A None tpm means "this provider publishes no token limit"
+                # (see NO_TPM_LIMIT's comment in config_artifact.py) -- not
+                # "zero tokens allowed", which would reject every request.
+                tpm=limits.get("tpm") or Config.NO_TPM_LIMIT,
+                rpd=limits["rpd"],
+                clock=self._clock,
+                sleep=self._sleep,
+            )
+            self._limiters[scope] = limiter
+            logger.info(
+                "rate limit: opened window for scope %s (model=%s, rpm=%s tpm=%s rpd=%s)",
+                "/".join(scope), model, limits["rpm"], limits.get("tpm"), limits["rpd"],
+            )
+        return limiter
+
+    async def acquire_async(self, model: str, tokens: int) -> None:
+        await self.limiter_for(model).acquire_async(tokens)
+
+    def true_up(self, model: str, actual_tokens: int) -> None:
+        self.limiter_for(model).true_up(actual_tokens)
+
+    def remaining_today(self, model: str) -> int:
+        return self.limiter_for(model).remaining_today()
