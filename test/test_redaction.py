@@ -300,6 +300,125 @@ def test_key_in_url_is_redacted_from_the_span() -> None:
         assert f'"{param}"' in source, f"{param} missing from configure_tracing()'s extend"
 
 
+# --- P2 Batch C step 3: Q11, real keys, not a sentinel ---------------------
+#
+# Everything above deliberately never reads Config.GOOGLE_API_KEY /
+# Config.GROQ_API_KEY -- it substitutes SENTINEL so the test is safe to run
+# anywhere. Q11 (schedule.md's Batch C) asks something stronger: that this
+# gate still holds with the REAL values from .env in play, for the two new
+# adapters (src/gateway/google.py, src/gateway/groq.py) and their exact
+# header shapes (`x-goog-api-key`, `Authorization: Bearer`).
+#
+# Still zero network egress: same technique as test_httpx_span_never_carries_
+# the_key (a refused loopback port, real instrumented transport, no mock
+# transport -- see that test's docstring for why a mock would make this
+# vacuous). The real key travels only as far as this process's own socket
+# buffer before the connection is refused.
+#
+# Hard rule for everything below: never let the real key value reach an
+# assertion message, a log line, or stdout -- even on FAILURE. A bare
+# `assert SENTINEL not in tree, tree` is fine when tree only carries a fake;
+# with a real key it would print the leak while "reporting" it. Every
+# assertion here uses a fixed, keyless failure message instead.
+#
+# Skips (does not fail) when a key is absent from .env -- this machine has
+# both, but the gate must not break a clone that has not been given them.
+
+def _real_key_span_tree(header_name: str, key: str, url: str) -> str:
+    """One instrumented, refused-loopback request carrying `key` in
+    `header_name` -- mirrors test_httpx_span_never_carries_the_key exactly,
+    parameterized over the two adapters' real header shapes instead of
+    google-genai's."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    instrumentor = HTTPXClientInstrumentor()
+    instrumentor.instrument(tracer_provider=provider)
+    try:
+        client = httpx.Client(timeout=1.0, headers={header_name: key})
+        try:
+            client.get(url)
+        except httpx.ConnectError:
+            pass  # expected -- 127.0.0.1:1 refuses every connection
+        client.close()
+    finally:
+        instrumentor.uninstrument()
+    spans = exporter.get_finished_spans()
+    assert len(spans) >= 1, "instrumentation produced no span -- test would be vacuous"
+    return _span_tree_text(spans)
+
+
+def test_google_adapter_real_key_never_leaks_into_the_span() -> None:
+    """Q11: src/gateway/google.py's real `x-goog-api-key` header, not a
+    sentinel. Google's key placement is identical to teacher.py's (header,
+    never URL) -- this proves the NEW adapter's request shape inherits the
+    same protection, rather than assuming it because teacher.py already
+    passed."""
+    key = Config.GOOGLE_API_KEY
+    if not key:
+        print("  skip test_google_adapter_real_key_never_leaks_into_the_span (no GOOGLE_API_KEY)")
+        return
+    tree = _real_key_span_tree(
+        "x-goog-api-key", key, "http://127.0.0.1:1/v1beta/interactions?alt=sse"
+    )
+    assert key not in tree, "REAL Google API key leaked into the span tree"
+
+
+def test_groq_adapter_real_key_never_leaks_into_the_span() -> None:
+    """Q11: src/gateway/groq.py's real `Authorization: Bearer` header, not a
+    sentinel. Never exercised anywhere above -- GROQ_API_KEY was, until this
+    step, an inert Config value with no live call path to replay (see this
+    file's module docstring, second named gap)."""
+    key = Config.GROQ_API_KEY
+    if not key:
+        print("  skip test_groq_adapter_real_key_never_leaks_into_the_span (no GROQ_API_KEY)")
+        return
+    tree = _real_key_span_tree(
+        "Authorization", f"Bearer {key}", "http://127.0.0.1:1/openai/v1/chat/completions"
+    )
+    assert key not in tree, "REAL Groq API key leaked into the span tree"
+
+
+def test_google_legacy_key_in_url_is_still_redacted_with_a_real_key() -> None:
+    """Q11 + the schedule's stated caveat: neither provider needs the URL
+    form, but Google's legacy `?key=` is still accepted, so it stays an easy
+    accident. Re-runs test_key_in_url_is_redacted_from_the_span's check with
+    the REAL key instead of the sentinel -- the PARAMS_TO_REDACT extension
+    must not have been tuned to only catch the fake value's shape."""
+    key = Config.GOOGLE_API_KEY
+    if not key:
+        print("  skip test_google_legacy_key_in_url_is_still_redacted_with_a_real_key (no GOOGLE_API_KEY)")
+        return
+    from opentelemetry.util import http as otel_http
+
+    saved = list(otel_http.PARAMS_TO_REDACT)
+    otel_http.PARAMS_TO_REDACT.extend(
+        p for p in ("key", "api_key", "apikey", "access_token", "token")
+        if p not in otel_http.PARAMS_TO_REDACT
+    )
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    instrumentor = HTTPXClientInstrumentor()
+    instrumentor.instrument(tracer_provider=provider)
+    try:
+        client = httpx.Client(timeout=1.0)
+        try:
+            client.get(f"http://127.0.0.1:1/v1beta/models/gemini:generateContent?key={key}")
+        except httpx.ConnectError:
+            pass
+        client.close()
+    finally:
+        instrumentor.uninstrument()
+        otel_http.PARAMS_TO_REDACT[:] = saved
+
+    spans = exporter.get_finished_spans()
+    assert len(spans) >= 1, "instrumentation produced no span -- test would be vacuous"
+    tree = _span_tree_text(spans)
+    assert "127.0.0.1:1" in tree, "span lost the URL entirely -- test would be vacuous the other way"
+    assert key not in tree, "REAL Google API key leaked into the span tree via the legacy ?key= form"
+
+
 def main() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in tests:
