@@ -1,6 +1,12 @@
-"""Tier 1 metric roster (mitya-v2 P0, charter §II, R7/R10/R11/R12). Pure,
-deterministic, no network, no judge call -- every function here is safe to
-run in a CI gate (P3) with no external dependency.
+"""Tier 1 metric roster (mitya-v2 P0, charter §II, R7/R10/R11/R12). Every
+function here is pure, deterministic, and calls no network and no judge.
+
+That does NOT make them all runnable in the P3 gate unattended, and the
+earlier version of this docstring claimed it did. A7's judge/no-judge line is
+necessary and not sufficient: `source_leak_rate` and `assistant_tell_rate` are
+regexes over *answers*, and an answer is a metered generation. The criterion
+that matters to the gate is whether a metric's INPUT exists without a provider
+call -- see TIER_1A / TIER_1B below (P3, F1).
 
 Retrieval metrics (`distinct_target_chapters_hit_at_k`, `precision_at_k`)
 operate on plain payload dicts, not `qdrant_client` point objects -- callers
@@ -55,6 +61,30 @@ RETRIEVAL_SCORED_FAMILIES = frozenset({
 # measuring -- it is the STRUCTURAL path's end-to-end tripwire -- but it is not
 # ranking quality, and mixing it into the headline would inflate recall with
 # rows that cannot miss. Hence its own denominator (R19).
+
+
+# --- gate tiers (mitya-v2 P3, F1) --------------------------------------------
+# The criterion is NOT purity and NOT "does it call a judge" (A7's line, which
+# is necessary and not sufficient). It is: does this metric's input exist
+# without a provider call. source_leak_rate is a regex over a string -- and
+# that string is a metered generation, so it cannot run unattended on every
+# gate run. Names are the report schema's metric keys (P3 step 5), so the two
+# files cannot drift apart silently.
+TIER_1A = frozenset({
+    "recall_at_k", "mrr", "distinct_target_chapters_hit_at_k", "precision_at_k",
+    "entity_fold_rate", "route_match", "determinism_spread", "family_denominators",
+    "computed_cost_usd", "config_version", "corpus_version",
+})
+TIER_1B = frozenset({
+    "source_leak_rate", "assistant_tell_rate", "style_distance",
+    "latency_ms", "measured_tokens", "measured_cost_usd",
+})
+
+# Public callables here that are NOT gate metrics. The coverage check in
+# _demo() subtracts these and requires everything left to be classified, so a
+# metric added to neither tier fails the self-check instead of silently
+# running in the wrong leg (or not at all).
+_NOT_A_METRIC = frozenset({"family_of", "extract_style_features"})
 
 
 def family_of(row: dict) -> str:
@@ -298,6 +328,15 @@ def _demo() -> None:
     assert family_of({"expected_route": "DEFAULT"}) == "primary"
     assert family_of({"family": "primary", "expected_route": "STRUCTURAL"}) == "primary"
     assert "structural" in FAMILIES and "structural" in RETRIEVAL_SCORED_FAMILIES
+
+    # gate tiers (P3 F1): disjoint, and no metric function escapes classification.
+    assert TIER_1A.isdisjoint(TIER_1B), "a metric cannot be both free and metered"
+    exported = {
+        name for name, obj in globals().items()
+        if callable(obj) and not name.startswith("_") and getattr(obj, "__module__", None) == __name__
+    }
+    unclassified = exported - _NOT_A_METRIC - TIER_1A - TIER_1B
+    assert not unclassified, f"metric(s) in neither tier: {sorted(unclassified)}"
     assert RETRIEVAL_SCORED_FAMILIES <= FAMILIES
     assert "sensitive" not in RETRIEVAL_SCORED_FAMILIES
     assert "adversarial" not in RETRIEVAL_SCORED_FAMILIES
