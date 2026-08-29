@@ -68,6 +68,7 @@ import logging
 import os
 import statistics
 import sys
+import time
 from datetime import datetime, timezone
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -76,6 +77,7 @@ from fastembed import SparseTextEmbedding, TextEmbedding
 from qdrant_client import QdrantClient
 
 from src.config import Config
+from src.pricing import cost_usd
 from src.gateway.guard import BudgetExceeded, Degraded, RequestTooLarge
 from src.gateway.ladder import ContentRefused
 from src.gateway.retry import TransportError
@@ -325,14 +327,58 @@ def _print_summary(summary: dict, modes: list[str]) -> None:
         )
 
 
-async def _collect_answer(messages: list[dict]) -> tuple[str, str | None]:
+async def _collect_answer(messages: list[dict]) -> tuple[str, str | None, dict]:
     """Stream one answer to completion. Returns (answer_text, error) --
     error is None on success, else a short description (llama-server
     unreachable/timed out) so the caller can record a failed row instead of
     crashing the whole run over one query."""
     parts: list[str] = []
+    # 11a records the cost/latency half, not just the judge half (schedule:
+    # "record per query tokens, USD, model, cache_hit, TTFT, total"). Without
+    # these the run measures quality alone and the phase's headline -- cost per
+    # answer per arm -- has no data behind it.
+    usage: dict = {}
+    t_start = time.monotonic()
+    t_first: float | None = None
+    # Two clocks, deliberately. `t_attempt` is reset by the caller-visible
+    # first token only, so `ttft_s` measures the SUCCESSFUL attempt -- provider
+    # latency. `t_start` never moves, so `total_s` measures what the caller
+    # actually waited, retries and rate-limit backoff included.
+    #
+    # Conflating them produced a 316-second "TTFT" on Groq, which was five
+    # minutes of honouring `retry-after` and roughly 1.5s of provider. Both
+    # numbers are legitimate; reporting one as the other is not.
+    # Filled by stream_answer() -- only the generator knows when its final
+    # attempt began, because the retry loop lives inside it.
+
+    def _telemetry(error: str | None) -> dict:
+        total = time.monotonic() - t_start
+        cost = cost_usd(usage.get("model") or Config.SERVING_MODEL,
+                        usage.get("prompt_tokens"), usage.get("completion_tokens"))
+        return {
+            "model": usage.get("model") or Config.SERVING_MODEL,
+            "prompt_tokens": usage.get("prompt_tokens"),
+            "completion_tokens": usage.get("completion_tokens"),
+            "reasoning_tokens": usage.get("reasoning_tokens"),
+            "cost_usd": cost.usd,
+            "cost_metered": cost.metered,
+            # Provider latency: first token measured from the attempt that
+            # actually produced it.
+            "ttft_s": None if t_first is None else round(t_first - t_start - usage.get("retry_wait_s", 0.0), 4),
+            # Wall-clock the caller waited, including every retry and backoff.
+            "total_s": round(total, 4),
+            "retry_wait_s": usage.get("retry_wait_s"),
+            # R33: ttft is None when no token ever arrived. Recording the
+            # give-up time as a TTFT would report the least trustworthy
+            # requests as the fastest.
+            "zero_token_completion": t_first is None,
+            "error": error,
+        }
+
     try:
-        async for token in stream_answer(messages):
+        async for token in stream_answer(messages, usage):
+            if t_first is None:
+                t_first = time.monotonic()
             parts.append(token)
     # Gateway vocabulary (v2 P2 Batch C step 6). This used to catch
     # LlamaServerUnavailable/LlamaServerTimeout, which the gateway path no
@@ -342,9 +388,9 @@ async def _collect_answer(messages: list[dict]) -> tuple[str, str | None]:
     # transient Google overload. Per-row isolation only isolates the
     # exceptions it names.
     except TransportError as exc:
-        return "", f"provider transport error: {exc}"
+        return "", f"provider transport error: {exc}", _telemetry(f"transport: {exc}")
     except ContentRefused as exc:
-        return "", f"provider refused to generate: {exc}"
+        return "", f"provider refused to generate: {exc}", _telemetry(f"refused: {exc}")
     except QuotaExhausted as exc:
         # Not isolatable the way the others are: quota does not recover within
         # a run, so every subsequent row would fail identically. Re-raised so
@@ -353,7 +399,7 @@ async def _collect_answer(messages: list[dict]) -> tuple[str, str | None]:
         logger.error("quota exhausted -- stopping the run; completed rows are on disk")
         raise
     except (BudgetExceeded, Degraded, RequestTooLarge) as exc:
-        return "", f"gateway refused the request: {type(exc).__name__}: {exc}"
+        return "", f"gateway refused the request: {type(exc).__name__}: {exc}", _telemetry(type(exc).__name__)
 
     # An empty stream is a generation FAILURE, not an answer worth zero. Before
     # this check (P0 step 9a) it returned ("", None), so the row looked healthy,
@@ -363,8 +409,51 @@ async def _collect_answer(messages: list[dict]) -> tuple[str, str | None]:
     # this. Excluding them flips the persona delta's sign.
     answer = "".join(parts)
     if not answer.strip():
-        return "", "llama-server returned an empty response (no tokens streamed)"
-    return answer, None
+        return "", "empty response (no tokens streamed)", _telemetry("empty")
+    return answer, None, _telemetry(None)
+
+
+def _truncation_report(results: list[dict]) -> dict:
+    """How many answers ran into the completion ceiling.
+
+    Exists because 11a's first two arms were judged on answers that stopped
+    mid-sentence and nobody noticed until the telemetry was read afterwards.
+    `Config.MAX_TOKENS` is an API parameter, NOT an instruction -- the model is
+    never told about it, so it writes as though unconstrained and is cut off.
+    Meanwhile the persona prompt asks for a "deep literary, existential, and
+    philosophical tone", i.e. the opposite of brevity.
+
+    A quality score computed over truncated answers measures the token budget
+    as much as the model, so this is surfaced in the summary and logged at
+    WARNING rather than left for someone to infer from a token histogram.
+    """
+    ceiling = Config.MAX_TOKENS
+    at_ceiling = sum(
+        1 for r in results
+        if (r.get("telemetry") or {}).get("completion_tokens") == ceiling
+    )
+    # Cheap textual proxy for rows with no telemetry: an answer that does not
+    # end on terminal punctuation was almost certainly cut off.
+    terminal = '.!?"\u201d)'
+    unterminated = sum(
+        1 for r in results
+        if (r.get("answer") or "").rstrip() and (r.get("answer") or "").rstrip()[-1] not in terminal
+    )
+    n = len(results) or 1
+    if at_ceiling or unterminated > n * 0.2:
+        logger.warning(
+            "TRUNCATION: %d/%d draws hit the %d-token completion ceiling and %d/%d "
+            "do not end on terminal punctuation. Config.MAX_TOKENS is an API cutoff, "
+            "not a prompt instruction -- quality scores over truncated answers "
+            "measure the token budget as much as the model.",
+            at_ceiling, len(results), ceiling, unterminated, len(results),
+        )
+    return {
+        "max_tokens": ceiling,
+        "draws_at_completion_ceiling": at_ceiling,
+        "draws_not_ending_on_terminal_punctuation": unterminated,
+        "n_draws": len(results),
+    }
 
 
 async def run(
@@ -453,7 +542,7 @@ async def run(
         for mode in modes:
             for draw in range(draws):
                 messages = build_messages(active_persona_head(), passages_block, query, mode=mode)
-                answer, error = await _collect_answer(messages)
+                answer, error, telemetry = await _collect_answer(messages)
                 if error is not None:
                     logger.warning("draw failed query=%r mode=%s draw=%d: %s", query, mode, draw, error)
 
@@ -484,6 +573,7 @@ async def run(
                     "passages_block": passages_block,
                     "answer": answer,
                     "generation_error": error,
+                    "telemetry": telemetry,
                     "judge": judge_result,
                     "judge_error": judge_error,
                 }
