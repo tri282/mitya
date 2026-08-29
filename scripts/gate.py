@@ -40,6 +40,18 @@ from src.config_artifact import (  # noqa: E402
     load,
     read_pointer,
 )
+from src.rag.gate import (  # noqa: E402
+    BREAK,
+    ERROR,
+    NOT_DETECTED,
+    computed_cost_usd,
+    cost_layer,
+    disposition_of,
+    flips,
+    invariants,
+    mcnemar_noninferiority,
+    validate_report,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -205,7 +217,97 @@ def frozen_reference() -> dict:
     return reference
 
 
+def _baseline_path(version: str) -> str:
+    return os.path.join(GATE_DIR, f"baseline-{version}.json")
+
+
+def read_baseline(version: str) -> dict | None:
+    """The recorded run for this config version, or None on its first sighting.
+
+    F7's bit-equality check needs something to compare against. A first run
+    RECORDS and reports NO-BASELINE rather than passing silently -- "nothing to
+    compare" and "compared and identical" are different claims and must not
+    print the same way. Retention is not decided; nothing prunes this directory
+    (gap G-G).
+    """
+    path = _baseline_path(version)
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def write_baseline(version: str, arm: dict) -> None:
+    with open(_baseline_path(version), "w", encoding="utf-8") as f:
+        json.dump({"config_version": version, "rows": arm["rows"],
+                   "recorded_utc": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")},
+                  f, indent=2)
+
+
 def write_report(report: dict, candidate: str | None) -> str:
+    os.makedirs(GATE_DIR, exist_ok=True)
+    stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
+    path = os.path.join(GATE_DIR, f"{stamp}-{candidate or 'production'}.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
+    return path
+
+
+def build_layers(prod: dict, cand: dict | None, baseline: dict | None,
+                 manifest) -> dict:
+    """The three layers. Quality is evaluated PER FAMILY, never pooled -- a
+    pooled denominator is the failure charter II was written against."""
+    layers = {
+        "invariants": invariants(prod, cand, baseline),
+        "cost": cost_layer(
+            computed_cost_usd(load(prod["config_version"]), manifest),
+            computed_cost_usd(load(cand["config_version"]), manifest) if cand else None,
+        ),
+        "quality_1a": [],
+        # Empty until its composition is chosen (G-B) and until any 1b metric
+        # has an MDE (G-C). 1b is report-only at promotion time; it does not
+        # block. This is the phase's largest open item, deliberately not closed.
+        "quality_1b": [],
+    }
+    if cand is None:
+        return layers
+
+    families = sorted({r["family"] for r in prod["rows"]})
+    for family in families:
+        prod_hits = {r["id"]: r["hit"] for r in prod["rows"] if r["family"] == family}
+        cand_hits = {r["id"]: r["hit"] for r in cand["rows"] if r["family"] == family}
+        record = mcnemar_noninferiority(prod_hits, cand_hits)
+        record["metric"] = "recall_at_5"
+        record["family"] = family
+        layers["quality_1a"].append(record)
+    return layers
+
+
+def build_caption(layers: dict, disposition: str, reason: str) -> str:
+    """The green check's wording is a charter obligation, not a UX detail (A13).
+
+    It must carry the BOUND, never the claim: a candidate can be up to one MDE
+    worse and still pass, so "quality preserved" would be a false statement
+    about a real promotion.
+    """
+    primary = next((r for r in layers["quality_1a"]
+                    if r.get("family") == "primary" and r.get("n")), None)
+    parts = [reason]
+    cost = layers["cost"][0]
+    if cost.get("delta_pct") is not None:
+        parts.append(f"computed cost {cost['delta_pct']:+.1f}% ({cost['basis']})")
+    if primary and primary.get("mde") is None:
+        parts.append(f"retrieval identical on all {primary['n']} primary rows "
+                     f"(no discordant pairs; MDE undefined)")
+    elif primary and primary["verdict"] == NOT_DETECTED:
+        parts.append(f"retrieval not detectably worse "
+                     f"(delta {primary['delta']:+.4f}, MDE {primary['mde']:.3f} at n={primary['n']})")
+    elif primary:
+        parts.append(f"retrieval {primary['verdict']} (delta {primary['delta']:+.4f}, "
+                     f"MDE {primary['mde']:.3f} at n={primary['n']})")
+    if layers["quality_1b"] == []:
+        parts.append("1b not evaluated (composition open, G-B)")
+    return "; ".join(parts)
     os.makedirs(GATE_DIR, exist_ok=True)
     stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
     path = os.path.join(GATE_DIR, f"{stamp}-{candidate or 'production'}.json")
@@ -226,19 +328,37 @@ def main(candidate: str | None, promote: bool) -> int:
         arms["candidate"] = run_arm(candidate, "candidate")
         assert_comparable(arms["production"], arms["candidate"])
 
+    prod = arms["production"]
+    cand = arms.get("candidate")
+    baseline = read_baseline(prod["config_version"])
+    layers = build_layers(prod, cand, baseline, active_corpus_manifest())
+    disposition, reason = disposition_of(layers)
+
     report = {
+        "schema_version": 1,
         "generated_utc": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
         "provenance": stamps,
         "arms": arms,
+        "layers": layers,
+        "flips": flips(prod["rows"], cand["rows"]) if cand else [],
         "local_q4km": frozen_reference(),
-        # Step 5 fills these. Named here so the schema exists before the layers
-        # do, and so nothing downstream invents its own verdict vocabulary.
-        "layers": None,
-        "disposition": None,
-        "caption": None,
+        "disposition": disposition,
+        "caption": build_caption(layers, disposition, reason),
     }
+    validate_report(report)
     path = write_report(report, candidate)
     logger.info("report written: %s", path)
+
+    if baseline is None:
+        write_baseline(prod["config_version"], prod)
+        logger.info("no baseline for %s -- recorded this run as the baseline",
+                    prod["config_version"])
+
+    logger.info("flips: %d", len(report["flips"]))
+    for flip in report["flips"]:
+        logger.info("  %s %s (%s) rank %s -> %s", flip["id"], flip["direction"],
+                    flip["family"], flip["prod_rank"], flip["cand_rank"])
+    logger.info("DISPOSITION %s -- %s", disposition.upper(), report["caption"])
 
     if promote:
         # Step 6 owns promotion. Refusing loudly beats a flag that silently
@@ -247,8 +367,9 @@ def main(candidate: str | None, promote: bool) -> int:
         logger.error("--promote is not implemented until step 6; nothing was promoted")
         return EXIT_ERROR
 
-    logger.info("layers not implemented (step 5) -- no verdict is claimed by this run")
-    return EXIT_PASS
+    if disposition == "error":
+        return EXIT_ERROR
+    return EXIT_BLOCK if disposition == "blocks" else EXIT_PASS
 
 
 if __name__ == "__main__":
