@@ -25,7 +25,9 @@ decoration BECAUSE those layers exist -- and the caption has to say so.
 
 import logging
 import math
+import random
 import re
+import statistics
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +103,75 @@ def mcnemar_noninferiority(
         # a NOT-DETECTED delta cannot enter a ranking as a gain.
         "recordable_as_improvement": verdict == DETECTED and delta > 0,
         "provenance": "measured",
+    }
+
+
+# Fixed seed, and it is load-bearing rather than tidy: an unseeded bootstrap
+# makes two gate runs on identical inputs disagree, which would trip the very
+# determinism invariant this module asserts (R18's tripwire) and make the gate
+# non-reproducible from its own report.
+_BOOTSTRAP_SEED = 20260829
+_BOOTSTRAP_DRAWS = 10000
+
+
+def paired_bootstrap(prod_scores: dict[str, float], cand_scores: dict[str, float],
+                     draws: int = _BOOTSTRAP_DRAWS) -> dict:
+    """Paired bootstrap CI for a CONTINUOUS per-row metric (MRR, dchit).
+
+    McNemar does not apply here. It conditions on discordant pairs, which only
+    exist for binary outcomes: a row whose rank moves 4 -> 2 is a real change
+    that no hit/miss table can see, so every row carries information and the
+    concordant/discordant split is meaningless. MRR is a mean of 1/rank with no
+    clean closed-form SE, so `notes/measurement-power.md` prescribes the paired
+    bootstrap -- resample ROWS, take both arms' scores for each resampled row,
+    which preserves pairing and gives a CI on the difference.
+
+    The MDE reported here is 2.8 x the bootstrap SE of the paired difference,
+    the same 2.8 (z_0.975 + z_0.80) used everywhere else in this project, so the
+    number is commensurable with the McNemar MDE beside it.
+    """
+    if set(prod_scores) != set(cand_scores):
+        return {"verdict": ERROR, "reason": "arms cover different row ids"}
+    ids = sorted(prod_scores)
+    n = len(ids)
+    if n == 0:
+        return {"verdict": ERROR, "reason": "empty family -- no rows to compare"}
+
+    diffs = [cand_scores[i] - prod_scores[i] for i in ids]
+    delta = sum(diffs) / n
+
+    rng = random.Random(_BOOTSTRAP_SEED)
+    means = []
+    for _ in range(draws):
+        total = 0.0
+        for _ in range(n):
+            total += diffs[rng.randrange(n)]
+        means.append(total / n)
+    means.sort()
+    se = statistics.pstdev(means)
+    mde = 2.8 * se if se else None
+    lo, hi = means[int(0.025 * draws)], means[int(0.975 * draws)]
+
+    # se == 0 means every row moved by the SAME amount. That is not "no
+    # information" -- it is a perfectly consistent effect, the most detectable
+    # thing this test can see. Treating it as NOT-DETECTED (an earlier bug here)
+    # would hide exactly the changes that move every row identically, e.g. a
+    # rerank that shifts every hit up one place.
+    if se == 0:
+        verdict = DETECTED if delta != 0 else NOT_DETECTED
+    elif lo > 0 or hi < 0:
+        verdict = DETECTED
+    else:
+        verdict = NOT_DETECTED
+    return {
+        "n": n, "delta": round(delta, 4), "ci95": [round(lo, 4), round(hi, 4)],
+        "se": round(se, 5), "mde": round(mde, 4) if mde else None,
+        "note": ("paired differences have zero variance -- the effect is constant "
+                 "across all rows, so no interval is needed") if se == 0 and delta else None,
+        "draws": draws, "seed": _BOOTSTRAP_SEED,
+        "verdict": verdict,
+        "recordable_as_improvement": verdict == DETECTED and delta > 0,
+        "provenance": "computed",
     }
 
 
@@ -307,7 +378,12 @@ def _assert_no_scalar_collapse(node, path: str) -> None:
 def disposition_of(layers: dict) -> tuple[str, str]:
     """Derive (disposition, caption fragment) from the layers. Separate from
     per-metric verdicts by design -- F5's conflation is fixed structurally."""
-    records = [r for group in layers.values() for r in group]
+    # Non-blocking records are reported, never decisive. Making a second
+    # quality metric decisive would silently WEIGHT ranking quality against hit
+    # quality -- exactly the composition A13's rider leaves open. Reporting it
+    # costs nothing and decides nothing.
+    records = [r for group in layers.values() for r in group
+               if r.get("blocking", True)]
     if any(r.get("verdict") == ERROR for r in records):
         return "error", "a layer could not be evaluated"
     if any(r.get("verdict") == BREAK for r in records):

@@ -50,6 +50,7 @@ from src.rag.gate import (  # noqa: E402
     flips,
     invariants,
     mcnemar_noninferiority,
+    paired_bootstrap,
     validate_report,
 )
 
@@ -283,8 +284,35 @@ def build_layers(prod: dict, cand: dict | None, baseline: dict | None,
         record = mcnemar_noninferiority(prod_hits, cand_hits)
         record["metric"] = "recall_at_5"
         record["family"] = family
+        record["blocking"] = True
         layers["quality_1a"].append(record)
+
+        # MRR and coverage are REPORTED, never decisive. They see changes
+        # recall@5 cannot -- a hit moving rank 4 -> 2 does not cross k -- so the
+        # information is real and worth carrying. But making a second quality
+        # metric blocking would implicitly weight ranking quality against hit
+        # quality, and A13's rider leaves that composition open (G-B). Whoever
+        # closes the rider decides whether these gate; until then they inform.
+        for metric, field in (("mrr", "rank"), ("distinct_target_chapters_hit_at_5", "dchit")):
+            prod_scores = {r["id"]: _score(r, field) for r in prod["rows"]
+                           if r["family"] == family}
+            cand_scores = {r["id"]: _score(r, field) for r in cand["rows"]
+                           if r["family"] == family}
+            record = paired_bootstrap(prod_scores, cand_scores)
+            record["metric"] = metric
+            record["family"] = family
+            record["blocking"] = False
+            record["why_not_blocking"] = ("composition open (A13 rider, G-B) -- gating a "
+                                          "second quality metric would pick weights nobody chose")
+            layers["quality_1a"].append(record)
     return layers
+
+
+def _score(row: dict, field: str) -> float:
+    """Per-row continuous score. Reciprocal rank for MRR, dchit as recorded."""
+    if field == "rank":
+        return 1.0 / row["rank"] if row["rank"] else 0.0
+    return float(row.get(field) or 0.0)
 
 
 def build_caption(layers: dict, disposition: str, reason: str) -> str:
