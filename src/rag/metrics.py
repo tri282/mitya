@@ -63,10 +63,20 @@ def family_of(row: dict) -> str:
     The 27 rows committed at P0 step 4 carry no `family` key and must never gain
     one -- A9 makes them immutable. They are classified by the `negative_control`
     boolean they already have, which is exactly the two-bucket split v1 used.
+
+    Two of those legacy rows (r-0024, r-0025) declare `expected_route:
+    STRUCTURAL`: they are hard-filtered to a resolved chapter, return rank 1 in
+    every arm, and are therefore incapable of discordance in any paired test
+    (R72). Deriving them into `primary` inflated the headline denominator with
+    guaranteed hits -- the 0.731 failure mode in a new costume (R19). The route
+    the row already declares decides the family, so the file still needs no
+    edit. Corrected 2026-08-29, Q4 / `plans/mitya-v2/02-decide/decisions.md`.
     """
     family = row.get("family")
     if family:
         return family
+    if row.get("expected_route") == "STRUCTURAL":
+        return "structural"
     return "negative_control" if row.get("negative_control") else "primary"
 
 
@@ -280,6 +290,14 @@ def _demo() -> None:
     assert family_of({"id": "r-0026", "negative_control": True}) == "negative_control"
     assert family_of({"id": "r-0031", "family": "entity_pair"}) == "entity_pair"
     assert family_of({"family": "sensitive", "negative_control": False}) == "sensitive"
+    # Q4: a legacy row with no `family` key derives `structural` from the route
+    # it already declares; an explicit key still wins, so a future row can
+    # classify itself against the route.
+    assert family_of({"id": "r-0024", "expected_route": "STRUCTURAL"}) == "structural"
+    assert family_of({"id": "r-0025", "expected_route": "STRUCTURAL"}) == "structural"
+    assert family_of({"expected_route": "DEFAULT"}) == "primary"
+    assert family_of({"family": "primary", "expected_route": "STRUCTURAL"}) == "primary"
+    assert "structural" in FAMILIES and "structural" in RETRIEVAL_SCORED_FAMILIES
     assert RETRIEVAL_SCORED_FAMILIES <= FAMILIES
     assert "sensitive" not in RETRIEVAL_SCORED_FAMILIES
     assert "adversarial" not in RETRIEVAL_SCORED_FAMILIES
