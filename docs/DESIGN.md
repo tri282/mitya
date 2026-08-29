@@ -115,3 +115,23 @@ A thin browser client over the existing `/chat` SSE endpoint — no new backend 
 * `frontend/` — Vue 3 + Vite + TS SPA (§VI); built.
 * `scripts/` — `build_dataset.py`, `train_model.py`, `quantize.sh` (Style); `build_entities.py`, `build_summaries.py`, `ingest_corpus.py` (Substance); `eval_retrieval.py`, `eval_quality.py`, `measure_latency.py` (eval).
 * `test/` — retrieval/quality eval sets and the offline assert suites.
+
+---
+
+## VIII. Scheduled: CP7 optimizer
+
+> **Amended 2026-08-29 (charter A13, `plans/mitya-v2/02-decide/decisions.md` Q3).** CP7's
+> objective is **cost**, not quality: search over retrieval/prompt/allocation config for the
+> cheapest configuration whose quality is **non-inferior at the measured MDE**, proposals gated
+> through the CP3 eval gate (`docs/RAG.md` §VII.4) like any human change. The original
+> quality-search question is closed as a measured negative (R20, R72, R63) — no quality
+> improvement this system can produce is detectable at any n this project will reach — and is
+> published as a first-class finding, not subsumed under the cost headline.
+>
+> **A13's rider is deliberate and still open:** A13 fixes the objective (cost) and the guard's
+> *form* (non-inferiority at the measured MDE). It does **not** fix the guard's *composition* —
+> which quality dimensions it contains, or how groundedness trades against persona retention.
+> That weighting is a decision for when the full picture exists, not one to hard-code from
+> today's evidence. Any component needing a single scalar "best" before then must state its
+> weighting inline and mark it provisional. Do not read a fixed quality-scoring formula into this
+> section; none is settled.

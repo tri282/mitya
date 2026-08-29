@@ -517,6 +517,10 @@ cold-start.
 >                           STRUCTURAL n=3 recall@5 1.0000  MRR 1.0000
 > ```
 >
+> This R19 headline (`0.7250` / `0.5287`, PRIMARY n=40) was itself superseded again, 2026-08-29
+> (Q4, `plans/mitya-v2/02-decide/decisions.md`): two rows misclassified as `primary` by a legacy
+> family-key gap moved to `structural`. See §VII.1's live number below.
+>
 > `structural` became its own family with its own denominator: a row whose chapter is
 > regex-resolved and hard-filtered **cannot miss**, and guaranteed hits inside the headline
 > denominator is the `0.731` bug in a new costume. Any route added to `router.py` must be
@@ -537,9 +541,11 @@ cold-start.
 >
 > Every observed delta is 3-7x below callable. The n that would resolve them is 470-940 rows;
 > n=150 yields MDE ~0.072 and is short of all of them. **The MDE-vs-n curve does not flatten at a
-> useful point — it never crosses one.** The directions flipped as well: post-fix `dense-only`
-> (0.7500) beats `full` (0.7250), where v1 published the dense leg as worth 2 rows and the sparse
-> leg 1. That is not a new finding; it is the same noise read a second time.
+> useful point — it never crosses one.** The sign also flipped from v1's reading (dense leg worth
+> 2 rows, sparse leg 1), which is the tell: at n=40, `dense-only` (0.7500) reading above `full`
+> (0.7250) is not one arm beating another, it is the same noise read a second time, and R72
+> (2026-08-29, 106-row set, identical MDE) confirms no arm in this ablation is distinguishable
+> from any other. The ablation is withdrawn as a set of noise readings, not re-ranked.
 >
 > **Rule adopted, binding on everything in this section and after it: publish the MDE alongside
 > every delta, or do not publish the delta.** Corollary: no configuration knob may be selected
@@ -575,7 +581,17 @@ cold-start.
 
 **Further correction (v2 phase 0, R18 + R19).** `0.720` is superseded in turn. It was measured under the entity-ordering defect, so it was one draw of a bimodal 0.720/0.760, and it was measured by a harness that ran the DEFAULT path for structural rows. Post-fix numbers, in the two forms worth quoting:
 
-* **`recall@5 = 0.7250` (29/40), `MRR = 0.5287`** — `primary` family, 45-row set, current harness. This is the number to quote going forward.
+* **`recall@5 = 0.7250` (29/40), `MRR = 0.5287`** — `primary` family, 45-row set, current harness. Superseded below.
+
+**Q4 correction (2026-08-29, `plans/mitya-v2/02-decide/decisions.md`).** `0.7250` is superseded
+in turn. Two legacy rows (`r-0024`, `r-0025`) carried no `family` key and were derived into
+`primary` by default; both are STRUCTURAL-routed and hit at rank 1 in every arm, so they are
+structurally incapable of discordance and were inflating the denominator with guaranteed hits —
+the `0.731` failure mode in a new costume (§VII.1, R19). `family_of()` now derives a row with
+`expected_route == STRUCTURAL` as family `structural` regardless of the legacy key gap; the set
+file itself is untouched (A9). Recomputed: primary n 40 → 38, hits 29 → 27,
+**`recall@5 = 27/38 = 0.7105`**, **`MRR = 0.5039`**. `structural` n rises 10 → 12, recall stays
+1.000. **`recall@5 = 0.7105` (27/38), `MRR = 0.5039` is the number to quote going forward.**
 * **`0.760` (19/25)** — the same fix re-scored on v1's frozen 25-row intersection, where `r-0025` now hits. Quoted only when comparing against a v1 number on the same rows (A9: two set versions compare on their intersection).
 
 `0.720` was never the retriever's recall on those rows. It was the recall of a pipeline production does not run.
@@ -649,6 +665,50 @@ cold-start.
 ### 3. Latency
 
 * Measured on the real card — see §VI (TTFT ~7.9s, total ~21.3s, retrieval ~2.25s, cache hit ~0.008s). Budgets revised there from data.
+
+### 4. CI eval gate (P3, decided 2026-08-29)
+
+**Three layers, one report, per `plans/mitya-v2/02-decide/decisions.md` Q1.**
+
+| Layer | Metrics | Rule | Power |
+|---|---|---|---|
+| Invariants (1a) | route-match count, cross-process determinism spread, per-family denominators, canary/redaction, guard false-refusal count, config-version stamps | exact assertion, tolerance 0 | absolute — both real defects ever caught (R18, R19) were this class |
+| Cost (1a, computed) | USD/answer from price table x token counts on the fixed prompt set | relative-regression: candidate <= production, exact arithmetic | exact |
+| Sampled quality (1a retrieval; 1b leak/tell/style at promotion time only) | recall@k, coverage, MRR per family | paired McNemar non-inferiority: block iff candidate's deficit clears alpha 0.05; epsilon = the run-computed MDE, never a hand-set floor | ~0.12-0.18 at n=38 (R72) |
+
+1a runs live-local, free, unattended, on every gate run. 1b (generation-dependent: source-leak
+rate, assistant-tell rate, style distance, latency, measured cost) runs only at promotion time,
+budgeted against all four provider rate limits with the minimum taken.
+
+**Verdict vocabulary is three-valued** (BREAK / NOT-DETECTED / DETECTED), never a bare pass/fail,
+so the gate's green check cannot launder "unmeasurable" into "fine." The gate's caption on a green
+run is **"invariants hold, cost did not grow, retrieval not detectably worse (MDE m at n=N)"** —
+never "quality preserved." A metric is NOT-DETECTED when `|delta| < MDE`; this passes the gate,
+prints delta and MDE side by side, and is never recordable as an improvement (the evidence-log
+template and P7's ranking function are both forbidden from reading a NOT-DETECTED delta as a
+gain). The primary quality artifact is the per-row flip list, not the aggregate delta alone: which
+rows changed and which direction, since retrieval hit/miss is exact and deterministic given config
+(A8b) even though the population-level claim is bounded by the MDE.
+
+**The measured negative (R20 + R72), published as a finding, not a footnote (A13):** no quality
+improvement this system can produce is detectable at any reachable n — MDE 0.121-0.185 against
+observed effects of 0.000-0.050, n_req 470-2195, on two independent measurement occasions (45-row
+and 106-row sets, identical result). The sampled-quality comparator will fire on approximately no
+real change this project will ever make; its live role is catastrophic-break detection (roughly 5+
+net row flips), and the gate's routine detection power lives in the invariant and cost layers
+instead.
+
+**R73 (open, hypothesis not measurement):** 0 of 40 primary queries contain a quotation mark, so
+the BM25 leg is evaluated on the one query distribution least able to demonstrate lexical
+retrieval's distinct advantage (exact matching of rare literal strings — proper nouns, present in
+all 40 queries, are handled by dense retrieval too). This is a plausible causal mechanism read off
+3 discordant rows, **not a measured cause**. Eval-set growth on the coverage axis (a quotation-
+bearing family) is the only known way to test it; unscheduled as of this writing.
+
+**Residual risk that matters:** the guard certifies only "not worse by >= the measured MDE." A
+promoted config can be up to roughly 12-18 recall points worse than production without detection.
+This is bounded, not removed, by the invariant layer catching structural breaks and by the printed
+MDE being part of every claim — the number is the honesty mechanism, not a fix.
 
 ---
 
