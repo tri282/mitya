@@ -241,13 +241,43 @@ Sources:
 * Crime and Punishment — Part 3, Chapter 2
 ```
 
-**Why** httpx over LiteLLM (drafted, and already in requirements): LiteLLM abstracts 100+ providers to call exactly one localhost endpoint — a heavy dependency with its own churn; the whole need is a ~30-line streaming client. Remove `litellm`, add `httpx`.
+> **REVERSED at v2 CP2 (2026-08-28).** The rationale below argued against a multi-provider
+> layer and it no longer holds — not because it was wrong, but because its premise changed.
+> `generate.py` is now a **gateway client**: it selects a provider from the versioned
+> `Config.SERVING_MODEL`, runs it through the spend guard, and coerces the result back into
+> the same `AsyncIterator[str]` + usage dict its callers already read. `/chat` never learns
+> which vendor served it. See §IV.8 below and `plans/mitya-v2/research/p2-findings.md` R61.
+>
+> The original reasoning is kept, not deleted, because the *test* it applied was correct and
+> is worth reusing: a provider abstraction earns its keep only against providers that
+> genuinely differ. CP-α selected Google + Groq on exactly that basis (3/3 divergence on
+> streaming shape, error taxonomy and rate-limit semantics, R53), and the two adapters really
+> are different — one is a named-event SSE machine that returns refusals inside HTTP 200, the
+> other a flat OpenAI chunk stream. Against one localhost endpoint the objection stood.
+
+**Why** httpx over LiteLLM (drafted, and already in requirements) — *the original v1 rationale,
+superseded above*: LiteLLM abstracts 100+ providers to call exactly one localhost endpoint — a
+heavy dependency with its own churn; the whole need is a ~30-line streaming client. Remove
+`litellm`, add `httpx`.
+
+Note that httpx survives the reversal: the v2 adapters are still ~30-line streaming clients over
+httpx (`src/gateway/{google,groq,local}.py`). What changed is that there are now three of them
+behind one contract, not that a framework was adopted.
 
 ### 6. Cache (`cache.py`)
 
 diskcache (SQLite-backed), **exact-match only**, keyed on `normalize(query) + filters`, no TTL (static corpus), stores only successful non-empty answers, `CACHE_ENABLED` flag.
 
-**Why** diskcache over redis: no external service for a solo local deploy. **Why** exact-match only: a semantic cache adds an embedding index for a single-user app whose hit rate is near zero anyway; the cache exists as the product's cache boundary, kept at ~15 lines. *Note: hit rate is expected to be low and that is accepted; cached answers also skip response variation — acceptable at exact-match granularity.*
+**Why** diskcache over redis: no external service for a solo local deploy. **Why** exact-match only:
+originally an argument from cost (a semantic cache adds an embedding index for a single-user app
+whose hit rate is near zero anyway); **at v2 CP2 this became a measurement.** A semantic retrieval
+cache keyed on query cosine was probed and **refuted**: `corr(cosine, retrieved-chunk overlap) =
++0.192` over 1204 pairs, and a paraphrase at cosine 0.9586 shared **zero** chunks with its source.
+The mechanism is that BM25 and the FlashRank cross-encoder are lexical, so a dense-vector key is
+blind to two of the three retrieval signals (R50). The conclusion is unchanged; the grounds are now
+empirical, and re-opening it requires a key that captures the lexical signal — which in the limit is
+the exact-match key already here. The cache exists as the product's cache boundary, kept at ~15
+lines. *Note: hit rate is expected to be low and that is accepted; cached answers also skip response variation — acceptable at exact-match granularity.*
 
 The cached value is `{answer, sources, footer}`, so a cache hit re-emits the `sources` event and grounding stays visible on a repeat question. `cache.get` treats any stored value that doesn't match this dict shape — i.e. a legacy answer-only entry written before this change — as a **cache miss**, re-generating once and self-healing on the next hit; no migration script, no key-namespace bump. See §IV.1 below for the corresponding SSE change.
 
@@ -348,6 +378,20 @@ and an unsliced percentile measures the traffic mix rather than the system.
 ---
 
 ## V. Hardware Budget
+
+> **HISTORICAL as of v2 CP2 (2026-08-28) — superseded by hosted serving, not deleted.**
+> Nothing in the `/chat` request path starts `llama-server` any more; the default serving model
+> is `models/gemini-3.5-flash-lite` and `local-q4km` is a frozen chart line, not a live arm
+> (charter A3). The numbers below are kept verbatim for two reasons: the **frozen quality
+> baseline cites them**, and `src/gateway/local.py` still adapts llama-server for offline
+> evaluation, so the budget remains real for that path. `docs/DESIGN.md` §V carries the same
+> figures and the two copies must stay consistent.
+>
+> One number here outlived the hardware and caused a measurement defect: `-c 3072` is why
+> `Config.MAX_TOKENS` was **400** — sized so a ~1742-token prompt plus its completion fitted the
+> local context window. Carried into hosted serving it truncated every answer 11a measured, and
+> was raised to **1024** once that was found (R66). A constraint of the hardware being escaped is
+> not a product decision, and this section is where that confusion started.
 
 6GB VRAM is the binding constraint. **GPU = LLM only; CPU = everything else.** Within a request the phases are sequential (CPU retrieval → GPU generation), so there is no GPU contention by construction.
 
