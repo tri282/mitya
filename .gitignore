@@ -48,3 +48,7 @@ CLAUDE.md
 
 # vendored build
 llama.cpp
+
+# P3 gate run artifacts: timestamped reports are outputs, not sources.
+# The frozen local-q4km reference line IS tracked -- it is a record, not a run.
+test/gate/*Z-*.json
