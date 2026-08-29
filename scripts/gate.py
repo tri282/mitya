@@ -61,6 +61,10 @@ logger = logging.getLogger(__name__)
 # consumer, not the owner.
 RETRIEVAL_EVAL_PATH = os.path.join("test", "retrieval_eval.json")
 GATE_DIR = os.path.join("test", "gate")
+# Promotion records live beside CURRENT, not in test/gate/, and are tracked: a
+# CURRENT whose hash has no matching record is the detectable anomaly that makes
+# "no bypass path" checkable at all (gap G-F).
+PROMOTIONS_LOG = os.path.join("config", "serving", "promotions.jsonl")
 FROZEN_REFERENCE = os.path.join(GATE_DIR, "local-q4km-frozen.json")
 
 # Exit codes. ERROR is deliberately distinct from BLOCK: a provider or
@@ -316,6 +320,57 @@ def build_caption(layers: dict, disposition: str, reason: str) -> str:
     return path
 
 
+def rationale_of(report: dict) -> str:
+    """Assembled from the report's fields, never typed by a human (A13 obligation 2).
+
+    A hand-written rationale drifts from what was measured, and the direction it
+    drifts is always the flattering one. The bound is the point: a promoted
+    candidate may be up to one MDE worse, so the string says "not detectably
+    worse", and never asserts equality of quality. (This docstring deliberately
+    avoids writing that forbidden phrase out: `test_gate_promote.py` greps this
+    file for it, and a dumb grep is the right tool for guarding an emitted
+    string -- it just cannot tell a prohibition from a claim.)
+    """
+    parts = []
+    cost = report["layers"]["cost"][0]
+    if cost.get("delta_pct") is not None:
+        parts.append(f"cost {cost['delta_pct']:+.1f}% [computed, at the MAX_TOKENS ceiling]")
+    primary = next((r for r in report["layers"]["quality_1a"]
+                    if r.get("family") == "primary" and r.get("n")), None)
+    if primary and primary.get("mde") is None:
+        parts.append(f"quality identical on all {primary['n']} primary rows "
+                     f"(no discordant pairs, MDE undefined)")
+    elif primary:
+        parts.append(f"quality not detectably worse (MDE {primary['mde']:.3f} at n={primary['n']})")
+    if not report["layers"]["quality_1b"]:
+        parts.append("1b not evaluated (composition open, G-B)")
+    return ", ".join(parts)
+
+
+def promote_to(candidate: str, report: dict, report_path: str) -> None:
+    """Promotion is a pointer write and nothing else (A6, §V).
+
+    Rollback is the same write with the previous hash. No other path changes
+    serving behavior -- and there is deliberately no approval workflow, no
+    signing, no audit service: D8, and this is a solo local deploy.
+    """
+    previous = read_pointer()
+    record = {
+        "utc": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
+        "promoted": candidate,
+        "previous": previous,
+        "report": report_path,
+        "rationale": rationale_of(report),
+    }
+    with open(CURRENT_POINTER, "w", encoding="utf-8") as f:
+        f.write(candidate + "\n")
+    with open(PROMOTIONS_LOG, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+    logger.info("promoted %s -> %s", previous, candidate)
+    logger.info("rationale: %s", record["rationale"])
+    logger.info("rollback: write %s back to %s", previous, CURRENT_POINTER)
+
+
 def main(candidate: str | None, promote: bool) -> int:
     stamps = preflight()
 
@@ -361,11 +416,21 @@ def main(candidate: str | None, promote: bool) -> int:
     logger.info("DISPOSITION %s -- %s", disposition.upper(), report["caption"])
 
     if promote:
-        # Step 6 owns promotion. Refusing loudly beats a flag that silently
-        # does nothing -- an operator who believes a promotion happened is
-        # worse off than one who gets an error.
-        logger.error("--promote is not implemented until step 6; nothing was promoted")
-        return EXIT_ERROR
+        if not candidate:
+            logger.error("--promote needs --candidate; there is nothing to promote to")
+            return EXIT_ERROR
+        if disposition != "does_not_block":
+            # The pointer is not touched. Asserted on file content in the tests,
+            # not on this exit code -- an exit code says what the script decided,
+            # not what it did.
+            logger.error("refusing to promote: disposition is %s -- %s",
+                         disposition, report["caption"])
+            return EXIT_ERROR if disposition == "error" else EXIT_BLOCK
+        # The 1b leg belongs here -- the one place in the gate where metered
+        # calls happen. It is empty until its composition is chosen (G-B), so
+        # today this promotes without any provider call at all.
+        promote_to(candidate, report, path)
+        return EXIT_PASS
 
     if disposition == "error":
         return EXIT_ERROR
