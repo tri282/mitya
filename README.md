@@ -24,9 +24,11 @@ fusion leg (dense nomic-embed-v1.5 + BM25, native RRF, 50/leg prefetch → 25 fu
 `ms-marco-MiniLM-L-12-v2` → 3). *(Superseded 2026-08-21. `0.731 (19/26)` / `MRR = 0.408` counted
 the two negative-control rows inside the headline; `0.720` then turned out to be one draw of a
 bimodal distribution caused by a set-ordering defect in the entity map, measured by a harness that
-ran the wrong retrieval path for structural rows. Current: `recall@5 = 0.7250` (29/40),
-`MRR = 0.5287` on the `primary` family. See `docs/RAG.md` §VII.1 — the full ablation is withdrawn,
-not merely restated.)*
+ran the wrong retrieval path for structural rows. `0.7250` (29/40) / `MRR = 0.5287` was in turn
+superseded 2026-08-29 (Q4): two rows misclassified `primary` by a legacy family-key gap were
+STRUCTURAL-routed guaranteed hits, reclassified in `family_of()`. Current: `recall@5 = 0.7105`
+(27/38), `MRR = 0.5039` on the `primary` family. See `docs/RAG.md` §VII.1 — the full ablation is
+withdrawn, not merely restated.)*
 
 **Serving** — **5.0GB / 6.0GB VRAM** at 4096 ctx with full offload (967MiB free). TTFT ~7.9s,
 end-to-end ~21.3s at ~23.6 tok/s, retrieval-only ~2.25s (rerank-bound). Exact-match disk cache
