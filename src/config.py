@@ -219,6 +219,28 @@ class Config(metaclass=_ConfigMeta):
     # but the spend rate is not. Trip it and the ladder degrades rather than
     # spending (charter IV).
     SPEND_RATE_MAX_USD_PER_MINUTE = float(os.getenv("SPEND_RATE_MAX_USD_PER_MINUTE", "0.10"))
+
+    # --- Retry policy (v2 P2 step 8(b), scoped by CP-γ / R70) -----------
+    # ONE attempt budget shared by both retry classes, so a transport retry and
+    # a quality retry cannot compound: three of each would be nine generations
+    # for one answer, and step 8 is explicit that "retries are a cost
+    # multiplier here". Deployment, not versioned -- a retry policy does not
+    # change what a correct answer is (same split EMPTY_RETRIES sits on).
+    MAX_GENERATION_ATTEMPTS = int(os.getenv("MAX_GENERATION_ATTEMPTS", "3"))
+
+    # Models where a zero-token completion is re-drawn. Default EMPTY, i.e. off
+    # everywhere, which is CP-γ's decision: 11a measured Google at 0 zero-token
+    # completions over 200 draws and Groq at 1 over 150 (R70). The rule keeps
+    # the mechanism on a single occurrence but defaults it off for providers
+    # measured at zero -- keeping a disabled mechanism costs a config field,
+    # deleting one that was needed costs a rediscovery.
+    #
+    # R56 is the reason this is not defaulted on for reasoning models: an empty
+    # answer there can mean the token budget was consumed by thinking, and a
+    # re-draw re-pays the full thinking cost and truncates identically.
+    QUALITY_RETRY_MODELS = frozenset(
+        m.strip() for m in os.getenv("QUALITY_RETRY_MODELS", "").split(",") if m.strip()
+    )
     CACHE_ENABLED = os.getenv("CACHE_ENABLED", "true").lower() == "true"
     CACHE_DIR = os.path.join(DATA_DIR, "cache")
 

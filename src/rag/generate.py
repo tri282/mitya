@@ -231,47 +231,80 @@ async def stream_answer(
     model = Config.SERVING_MODEL
     provider = _provider_for(model)
     t_open = time.monotonic()
-    # Retry only while NOTHING has been emitted. Once a token is out, a retry
-    # would duplicate text mid-answer, so the window closes at the first token
-    # -- the same constraint the old EMPTY_RETRIES loop worked under, and the
-    # reason TTFT is unaffected for a normal stream.
+    # ONE attempt budget shared by both retry classes (step 8(b)). Transport
+    # retries and quality retries must not compound: three of each would be
+    # nine generations for one answer, and phase-2-gateway.md step 8 is
+    # explicit that "retries are a cost multiplier here". A shared counter is
+    # what makes the ceiling a ceiling rather than a per-class ceiling.
     #
-    # This exists because 11a's first attempt died at cell 19 of 150 on a
-    # transient Google overload delivered IN-BAND: an `error` event with
-    # code `api_error` and the message "gemini-3.5-flash-lite is currently
-    # experiencing high demand". `retry_transport()` alone does not catch that
-    # -- it wraps `provider.generate()`, which had already returned
-    # successfully; the failure arrived while draining the stream. So the retry
-    # has to span generate() AND the first token, which is what this loop does.
-    attempt = 0
-    # Time spent waiting to retry, reported separately from generation. A
-    # caller that folds this into TTFT reports rate-limit backoff as provider
-    # latency -- on Groq that produced a 316-second "TTFT" made of five minutes
-    # of `retry-after` and about 1.5s of actual generation.
+    # Both classes retry only while NOTHING has been emitted. Once a token is
+    # out, a retry would duplicate text mid-answer, so the window closes at the
+    # first token -- the constraint the old EMPTY_RETRIES loop worked under,
+    # and why TTFT is unaffected for a normal stream.
+    #
+    # The two classes are distinct and are counted separately (C4/CP-γ):
+    #   * TRANSPORT -- no stream at all (429, 5xx, connect, timeout, or an
+    #     in-band provider error). Always retried; the failure is ours or the
+    #     network's, and a second attempt is the whole remedy.
+    #   * QUALITY -- the stream succeeded and produced zero tokens. Retried
+    #     ONLY where enabled, because a re-draw is a duplicated generation at
+    #     full price. Measured at 11a: Google 0 of 200 draws, Groq 1 of 150
+    #     (R70), so it defaults OFF everywhere and is opted into per model.
+    #     R56 is the reason not to default it on: on a thinking model an empty
+    #     answer can mean the budget was consumed by reasoning, and retrying
+    #     re-pays the full thinking cost and truncates identically.
+    attempts = 0
+    retries = {"transport": 0, "quality": 0}
     retry_wait = 0.0
+    quality_retry_on = model in Config.QUALITY_RETRY_MODELS
+
     while True:
-        attempt += 1
+        attempts += 1
         try:
             t_attempt = time.monotonic()
             stream = await _open_stream(provider, messages, model)
             first = await anext(aiter(stream.chunks), None)
-            retry_wait = t_attempt - t_open
-            break
         except TransportError as exc:
-            if attempt >= TRANSPORT_ATTEMPTS:
+            if attempts >= Config.MAX_GENERATION_ATTEMPTS:
                 raise
-            # The provider's own retry-after wins when it sends one -- it
-            # knows when capacity returns; our backoff is only a guess. Jitter
-            # is still added so concurrent retries do not wake in lockstep.
+            retries["transport"] += 1
+            # The provider's own retry-after wins when it sends one -- it knows
+            # when capacity returns; our backoff is only a guess. Jitter is
+            # still added so concurrent retries do not wake in lockstep.
             if exc.retry_after is not None:
                 delay = exc.retry_after * (1.0 + 0.25 * random.random())
             else:
-                delay = min(4.0, 0.25 * 2 ** (attempt - 1)) * (0.5 + random.random())
+                delay = min(4.0, 0.25 * 2 ** (attempts - 1)) * (0.5 + random.random())
             logger.warning(
-                "generation: transport retry %d/%d in %.2fs -- %s",
-                attempt, TRANSPORT_ATTEMPTS, delay, exc,
+                "generation: TRANSPORT retry %d (attempt %d/%d) in %.2fs -- %s",
+                retries["transport"], attempts, Config.MAX_GENERATION_ATTEMPTS, delay, exc,
             )
             await asyncio.sleep(delay)
+            continue
+
+        if first is not None:
+            retry_wait = t_attempt - t_open
+            break
+
+        # Zero-token completion. NOT counted here: `src/api/app.py` already
+        # increments the same instrument when this generator yields nothing
+        # (its StopAsyncIteration path), and `record_if_empty_completion`
+        # reuses that one counter on purpose -- one closed series across every
+        # arm is what lets 11a compare local and hosted zero-token rates.
+        # Counting in both places would double every event.
+        if not quality_retry_on or attempts >= Config.MAX_GENERATION_ATTEMPTS:
+            if not quality_retry_on:
+                logger.info(
+                    "generation: zero-token completion on %s; quality retry is OFF "
+                    "for this model (CP-γ default) -- returning empty", model,
+                )
+            retry_wait = t_attempt - t_open
+            break
+        retries["quality"] += 1
+        logger.warning(
+            "generation: QUALITY retry %d (attempt %d/%d) -- zero-token completion on %s",
+            retries["quality"], attempts, Config.MAX_GENERATION_ATTEMPTS, model,
+        )
 
     if first is not None:
         yield first
@@ -281,6 +314,12 @@ async def stream_answer(
     if usage is not None:
         _fill_usage_dict(usage, stream.usage)
         usage["retry_wait_s"] = round(retry_wait, 4)
+        # Split by class so 11b's retry cost multiplier can be reported per
+        # class rather than as one blended number -- a transport retry and a
+        # duplicated generation have different causes and different fixes.
+        usage["transport_retries"] = retries["transport"]
+        usage["quality_retries"] = retries["quality"]
+        usage["attempts"] = attempts
 
 
 async def _open_stream(provider: Provider, messages: list[dict], model: str) -> GenerationStream:
