@@ -210,6 +210,11 @@ def evaluate(
     # the previous two-bucket split exactly on the current set.
     family_rows: dict[str, list[tuple]] = {}
     reranked_rows: list[tuple] = []
+    # Per-row hit vector (P3). The aggregates below cannot produce a paired
+    # test: McNemar needs to know WHICH rows two arms disagree on, and a
+    # recall figure has already averaged that away. rank/hit are computed
+    # anyway -- this only stops them being thrown out with the scrollback.
+    per_row: list[dict] = []
     unscored: dict[str, int] = {}
     route_checked = 0
     route_mismatches = 0
@@ -281,6 +286,14 @@ def evaluate(
         )
 
         family_rows.setdefault(family, []).append((pair["query"], targets, rank, dchit))
+        per_row.append({
+            "id": pair.get("id"),
+            "family": family,
+            "route": route_name,
+            "rank": rank,
+            "hit": rank is not None,
+            "dchit": dchit,
+        })
 
         # Rerank arms score a second bucket over the SAME fused candidate pool,
         # so the arm is self-baselining in one pass (fused[:k] above vs
@@ -332,6 +345,7 @@ def evaluate(
         "route_matched": route_checked - route_mismatches,
         "route_checked": route_checked,
         "buckets": [b for b in buckets if b is not None],
+        "rows": per_row,
     }
 
 
