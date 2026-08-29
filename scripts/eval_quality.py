@@ -82,6 +82,8 @@ from src.gateway.guard import BudgetExceeded, Degraded, RequestTooLarge
 from src.gateway.ladder import ContentRefused
 from src.gateway.retry import TransportError
 from src.limits import QuotaExhausted
+from src.rag.gate import paired_bootstrap
+from src.rag.metrics import assistant_tell_rate, source_leak_rate
 from src.config_artifact import active_corpus_version, active_serving_config
 from src.rag.context import build_context
 from src.rag.entities import EntityMap
@@ -190,6 +192,11 @@ def _cell_stats(rows: list[dict], min_draws: int) -> tuple[list[dict], int]:
             "fabricated_events_UNRELIABLE": round(statistics.mean(fabricated_counts), 3),
             # Per-draw spread, kept so a reviewer can see whether a cell mean
             # rests on agreement or on averaging a 1 and a 5.
+            # Tier 1b MECHANICAL rates (regex, no judge). Computed here because
+            # the answers are already in hand: closing G-C costs nothing but the
+            # arithmetic, and these are the only 1b metrics A7 does not touch.
+            "source_leak": round(source_leak_rate([d["answer"] for d in judged]), 3),
+            "assistant_tell": round(assistant_tell_rate([d["answer"] for d in judged]), 3),
             "draw_persona_retention": personas,
             "draw_groundedness": grounds,
             "worst_draw": {
@@ -236,6 +243,52 @@ def _provenance() -> dict:
         "top_k_rerank": Config.TOP_K_RERANK,
     }
 
+
+
+# The axes a paired comparison is computed for. Judge axes are OFFLINE ONLY --
+# A7 bars a judge from CI, and this is not CI. The two mechanical rates carry no
+# judge dependency at all and are the 1b metrics G-C asked for an MDE on.
+_PAIRED_AXES = ("persona_retention", "groundedness", "fabrication",
+                "source_leak", "assistant_tell")
+
+
+def _paired_power(cells_a: list[dict], cells_b: list[dict], axis: str) -> dict | None:
+    """Paired delta, MDE and the PAIRING DIAGNOSTIC for one axis, across modes.
+
+    Every judge MDE this project has published (persona 1.147, groundedness
+    0.551 -- docs/RAG.md VII) was computed by hand, outside any script, so no run
+    reproduced it. This puts it in the artifact.
+
+    The correlation is not decoration. R23 measured that persona retention does
+    NOT pair (r ~ 0, sd_diff larger than either arm's own sd), which means query
+    difficulty is not a shared property on that axis and **n is the wrong lever
+    for it** -- growing the set cannot fix persona. Groundedness pairs properly
+    (r = +0.852), so rows do buy power there. Printing r on every run stops that
+    being rediscovered.
+
+    Reuses `src.rag.gate.paired_bootstrap` rather than growing a second
+    bootstrap: one implementation, one seed, one MDE convention (2.8 x SE).
+    """
+    by_id_a = {c["id"]: c for c in cells_a}
+    by_id_b = {c["id"]: c for c in cells_b}
+    shared = sorted(set(by_id_a) & set(by_id_b))
+    if len(shared) < 3:
+        return None
+
+    a = {i: by_id_a[i][axis] for i in shared}
+    b = {i: by_id_b[i][axis] for i in shared}
+    result = paired_bootstrap(a, b)
+
+    xs, ys = [a[i] for i in shared], [b[i] for i in shared]
+    try:
+        r = round(statistics.correlation(xs, ys), 3)
+    except statistics.StatisticsError:
+        r = None   # one arm is constant across cells; correlation undefined
+    result["axis"] = axis
+    result["pair_correlation"] = r
+    result["pairs_usefully"] = None if r is None else r > 0.3
+    result["judge_dependent"] = axis in ("persona_retention", "groundedness", "fabrication")
+    return result
 
 
 def _summarize(results: list[dict], modes: list[str], min_draws: int) -> dict:
@@ -286,6 +339,26 @@ def _summarize(results: list[dict], modes: list[str], min_draws: int) -> dict:
         # weakest, so a human can read those specific answers first.
         ranked = sorted(cells, key=lambda c: c["persona_retention"] + c["groundedness"])
         summary["worst_cells"][mode] = ranked[:5]
+
+    # Paired power across the two modes, when there are two. OFFLINE ONLY: the
+    # judge axes here are exactly what A7 forbids in CI, and that is the point --
+    # this is the evaluation phase, where the noisiest instruments most need an
+    # interval printed beside their means.
+    if len(modes) == 2:
+        cells_by_mode = {m: _cell_stats([r for r in results if r["mode"] == m], min_draws)[0]
+                         for m in modes}
+        power = [_paired_power(cells_by_mode[modes[0]], cells_by_mode[modes[1]], axis)
+                 for axis in _PAIRED_AXES]
+        summary["paired_power"] = {
+            "modes": list(modes),
+            "caveats": [
+                "Observed-effect MDE: computed from the run it judges, not fixed in advance.",
+                "A judge-axis MDE cannot go below the judge's own test-retest variance "
+                "(R25/R27) -- the floor is the instrument, not the sample size.",
+                "pairs_usefully=false means n is the WRONG LEVER for that axis (R23).",
+            ],
+            "axes": [p for p in power if p],
+        }
 
     themes = sorted({r["theme"] for r in results})
     for theme in themes:
