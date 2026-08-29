@@ -109,6 +109,38 @@ def test_a_cost_increase_breaks_and_a_decrease_is_recordable() -> None:
     assert better["verdict"] == gate.DETECTED and better["recordable_as_improvement"] is True
 
 
+def test_bootstrap_is_seeded_so_two_runs_agree() -> None:
+    """Load-bearing, not tidy: an unseeded bootstrap makes two gate runs on
+    identical inputs disagree, tripping the determinism invariant this same
+    module asserts and making a report unreproducible from its own inputs."""
+    prod = {i: 0.5 for i in IDS}
+    cand = {i: 0.6 for i in IDS}
+    assert gate.paired_bootstrap(prod, cand, draws=500) == \
+           gate.paired_bootstrap(prod, cand, draws=500)
+
+
+def test_bootstrap_sees_a_rank_change_that_recall_cannot() -> None:
+    """The whole reason MRR is computed: a hit moving rank 4 -> 2 never crosses
+    k, so hit/miss is blind to it while reciprocal rank is not."""
+    prod = {i: 1 / 4 for i in IDS}
+    cand = {i: 1 / 2 for i in IDS}
+    result = gate.paired_bootstrap(prod, cand, draws=2000)
+    assert result["delta"] > 0 and result["verdict"] == gate.DETECTED
+
+    hits = {i: True for i in IDS}   # identical hit/miss for the same rows
+    assert gate.mcnemar_noninferiority(hits, dict(hits))["verdict"] == gate.NOT_DETECTED
+
+
+def test_reported_metrics_do_not_decide_the_disposition() -> None:
+    """R74 / A13 rider: gating a second quality metric would pick weights nobody
+    chose. A non-blocking BREAK must not block."""
+    layers = {"quality_1a": [
+        {"metric": "recall_at_5", "verdict": gate.NOT_DETECTED, "blocking": True},
+        {"metric": "mrr", "verdict": gate.BREAK, "blocking": False},
+    ]}
+    assert gate.disposition_of(layers)[0] == "does_not_block"
+
+
 def test_disposition_is_derived_separately_from_verdicts() -> None:
     """F5: a metric may be NOT-DETECTED while the run does not block."""
     layers = {"quality_1a": [{"metric": "recall_at_5", "verdict": gate.NOT_DETECTED}],
