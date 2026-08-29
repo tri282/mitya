@@ -52,3 +52,6 @@ llama.cpp
 # P3 gate run artifacts: timestamped reports are outputs, not sources.
 # The frozen local-q4km reference line IS tracked -- it is a record, not a run.
 test/gate/*Z-*.json
+# Determinism baselines are per-machine: they are compared against a locally
+# built corpus, so a tracked one would false-positive on every other checkout.
+test/gate/baseline-*.json
