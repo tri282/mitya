@@ -368,6 +368,12 @@ async def _collect_answer(messages: list[dict]) -> tuple[str, str | None, dict]:
             # Wall-clock the caller waited, including every retry and backoff.
             "total_s": round(total, 4),
             "retry_wait_s": usage.get("retry_wait_s"),
+            # Split by class (step 8(b)): 11b reports the retry cost multiplier
+            # per class, never blended -- a transport retry and a duplicated
+            # generation have different causes and different remedies.
+            "transport_retries": usage.get("transport_retries"),
+            "quality_retries": usage.get("quality_retries"),
+            "attempts": usage.get("attempts"),
             # R33: ttft is None when no token ever arrived. Recording the
             # give-up time as a TTFT would report the least trustworthy
             # requests as the fastest.
