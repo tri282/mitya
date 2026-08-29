@@ -1,0 +1,29 @@
+{
+  "arm": "local-q4km",
+  "executed": false,
+  "why_not_executed": "Charter A3 freezes local-q4km as a recorded chart line, not a live arm. It is drawn for comparison and never run: the 1060 is the hardware v2 exists to escape, and re-running it would make the baseline drift against the thing it is supposed to hold still.",
+  "source": {
+    "run": "P0 step 13 -- scripts/eval_quality.py --draws 3 --modes A",
+    "transcript": "plans/mitya-v2/05-impl/quality_step13_A_k3_summary.json",
+    "transcript_tracked": false,
+    "transcript_note": "plans/ is gitignored (A11), so these values are copied here to keep the reference line readable from a fresh checkout. This file is the tracked record; the transcript is the provenance.",
+    "quality_set": {"rows": 50, "sha256_prefix": "ab459c77", "commit": "ef3c260"},
+    "conditions": "local-q4km on the GTX 1060, -c 3072, EMPTY_RETRIES=4, k=3 draws per cell",
+    "research_refs": ["R29", "R25"]
+  },
+  "quality": {
+    "mode": "A",
+    "n_draws": 150,
+    "n_cells": 50,
+    "n_cells_scored": 49,
+    "n_cells_failed": 1,
+    "mean_persona_retention": 3.626,
+    "mean_groundedness": 2.813,
+    "fabrication_rate": 0.616
+  },
+  "not_recorded": {
+    "retrieval": "No retrieval vector is frozen for this arm. Retrieval is config-independent of the generation model, so the gate compares retrieval against the live production arm, never against this line.",
+    "mean_fabricated_events": "Demoted by R27 -- the judge reproduces its own count 50% of the time. The boolean fabrication_rate above is kept; the count is not."
+  },
+  "reading_rule": "A chart line, not a threshold. Nothing is promoted or blocked by comparison against this arm, and its numbers were produced by a different judge run on a different generator -- they are not commensurable with a candidate's."
+}

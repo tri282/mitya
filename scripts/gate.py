@@ -16,11 +16,15 @@ its own script and its own manifest. The gate refuses, loudly, naming the
 command.
 """
 
+import argparse
+import datetime
 import hashlib
 import json
 import logging
 import os
+import subprocess
 import sys
+import tempfile
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -29,9 +33,12 @@ from qdrant_client import QdrantClient  # noqa: E402
 from src.config import Config  # noqa: E402
 from src.config_artifact import (  # noqa: E402
     CURRENT_POINTER,
+    VERSION_ENV,
     ConfigError,
     active_corpus_manifest,
     assert_embed_model_matches,
+    load,
+    read_pointer,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,6 +48,14 @@ logger = logging.getLogger(__name__)
 # Config. Restated here rather than added to Config: the gate is one more
 # consumer, not the owner.
 RETRIEVAL_EVAL_PATH = os.path.join("test", "retrieval_eval.json")
+GATE_DIR = os.path.join("test", "gate")
+FROZEN_REFERENCE = os.path.join(GATE_DIR, "local-q4km-frozen.json")
+
+# Exit codes. ERROR is deliberately distinct from BLOCK: a provider or
+# environment failure is a re-run condition, not a verdict about the candidate.
+# Collapsing them is how a flaky network becomes "the change is bad" and,
+# eventually, how the gate gets disabled (charter VIII).
+EXIT_PASS, EXIT_BLOCK, EXIT_ERROR = 0, 1, 2
 
 
 class PreflightError(RuntimeError):
@@ -128,7 +143,124 @@ def preflight() -> dict:
     return stamps
 
 
+def run_arm(version: str | None, label: str) -> dict:
+    """Score one arm in its own process.
+
+    Subprocess, not a function call, and not negotiable: `eval_retrieval.py`
+    imports the pipeline and reads a process-lifetime cached serving config
+    (`active_serving_config()`), so two arms in one process would score against
+    the same singleton. Mutating that global between arms is precisely the
+    contamination P0 spent a phase learning to detect. One embedder load per
+    arm is the price, amortised over 106 rows.
+    """
+    env = dict(os.environ)
+    if version:
+        env[VERSION_ENV] = version
+    else:
+        env.pop(VERSION_ENV, None)   # production resolves through CURRENT (A6)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "arm.json")
+        proc = subprocess.run(
+            [sys.executable, os.path.join("scripts", "eval_retrieval.py"),
+             "--arm", "full", "--json", out],
+            env=env, capture_output=True, text=True,
+        )
+        if proc.returncode != 0 or not os.path.exists(out):
+            raise RuntimeError(
+                f"arm {label!r} did not produce a result (exit {proc.returncode}): "
+                f"{proc.stderr.strip()[-400:]}"
+            )
+        with open(out, encoding="utf-8") as f:
+            record = json.load(f)[-1]
+
+    record["arm_label"] = label
+    record["config_version"] = version or read_pointer()
+    record["serving_model"] = load(record["config_version"]).serving_model
+    logger.info("arm %s: config=%s model=%s", label, record["config_version"],
+                record["serving_model"])
+    return record
+
+
+def assert_comparable(production: dict, candidate: dict) -> None:
+    """Refuse to compare arms whose serving model differs (P1 step 5's rule).
+
+    Without this the gate attributes a quality delta to a config change that
+    never happened -- the model moved underneath it. Fail-closed: a refusal is
+    an ERROR, not a BLOCK, because nothing was measured about the candidate.
+    """
+    if production["serving_model"] != candidate["serving_model"]:
+        raise RuntimeError(
+            f"refusing to compare arms on different models: production is "
+            f"{production['serving_model']!r}, candidate is {candidate['serving_model']!r}. "
+            f"A delta between them is not attributable to the config change."
+        )
+
+
+def frozen_reference() -> dict:
+    """The `local-q4km` chart line, read from its record and never executed (A3)."""
+    with open(FROZEN_REFERENCE, encoding="utf-8") as f:
+        reference = json.load(f)
+    assert reference["executed"] is False, "the frozen arm must never be marked executed"
+    return reference
+
+
+def write_report(report: dict, candidate: str | None) -> str:
+    os.makedirs(GATE_DIR, exist_ok=True)
+    stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
+    path = os.path.join(GATE_DIR, f"{stamp}-{candidate or 'production'}.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
+    return path
+
+
+def main(candidate: str | None, promote: bool) -> int:
+    stamps = preflight()
+
+    # Production is re-run live every time, never read from a stored record
+    # (F7). Its retrieval vector is free, and freezing it would trade a $0
+    # re-measurement for blindness to environment drift -- and would retire the
+    # cross-process determinism check that caught R18.
+    arms = {"production": run_arm(None, "production")}
+    if candidate:
+        arms["candidate"] = run_arm(candidate, "candidate")
+        assert_comparable(arms["production"], arms["candidate"])
+
+    report = {
+        "generated_utc": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
+        "provenance": stamps,
+        "arms": arms,
+        "local_q4km": frozen_reference(),
+        # Step 5 fills these. Named here so the schema exists before the layers
+        # do, and so nothing downstream invents its own verdict vocabulary.
+        "layers": None,
+        "disposition": None,
+        "caption": None,
+    }
+    path = write_report(report, candidate)
+    logger.info("report written: %s", path)
+
+    if promote:
+        # Step 6 owns promotion. Refusing loudly beats a flag that silently
+        # does nothing -- an operator who believes a promotion happened is
+        # worse off than one who gets an error.
+        logger.error("--promote is not implemented until step 6; nothing was promoted")
+        return EXIT_ERROR
+
+    logger.info("layers not implemented (step 5) -- no verdict is claimed by this run")
+    return EXIT_PASS
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    preflight()
-    logger.info("preflight passed")
+    ap = argparse.ArgumentParser(description="P3 eval gate (charter CP3).")
+    ap.add_argument("--candidate", default=None,
+                    help="serving config version to gate; omit to run production against itself")
+    ap.add_argument("--promote", action="store_true",
+                    help="move the CURRENT pointer on a passing verdict (step 6)")
+    args = ap.parse_args()
+    try:
+        sys.exit(main(args.candidate, args.promote))
+    except (PreflightError, ConfigError, RuntimeError) as exc:
+        logger.error("%s", exc)
+        sys.exit(EXIT_ERROR)
