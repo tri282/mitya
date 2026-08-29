@@ -103,6 +103,7 @@ async def guarded_generate(
     estimated_cost_usd: float,
     max_input_tokens: int,
     max_history_messages: int,
+    max_output_tokens: int = 0,
 ) -> GenerationStream:
     """Enforce spend safety, then delegate to `provider.generate()`.
 
@@ -126,7 +127,19 @@ async def guarded_generate(
 
     model = getattr(provider, "model", "unknown")
     try:
-        await limiter.acquire_async(input_tokens)
+        # Reserve input PLUS the completion ceiling, not input alone. Provider
+        # TPM counts tokens in both directions, so reserving only the prompt
+        # lets more requests through than the provider will accept and the
+        # difference comes back as 429s. Measured on Groq gpt-oss-120b (tpm
+        # 8000): a ~1712-token prompt reserved alone permits 4.7 req/min while
+        # the provider, counting the 400-token completion too, allows 3.8 --
+        # a 24% overshoot that the transport retry then absorbs, turning a
+        # limiter miss into latency and wasted rpd rather than an error.
+        #
+        # `_input_tokens` above stays input-only on purpose: that check is
+        # about REQUEST SIZE (does this prompt fit at all), which is a
+        # different question from how much quota the round trip consumes.
+        await limiter.acquire_async(input_tokens + max_output_tokens)
     except QuotaExhausted:
         # First live call site for mitya_quota_rejections_total (Q13,
         # src/metrics.py) -- QuotaExhausted has existed since P1 5b with no

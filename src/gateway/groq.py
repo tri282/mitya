@@ -193,6 +193,19 @@ class GroqProvider:
             except httpx.TimeoutException as e:
                 raise TransportError(f"groq adapter: timed out: {e}") from e
             except httpx.HTTPStatusError as e:
-                raise TransportError(f"groq adapter: HTTP {e.response.status_code}: {e}") from e
+                # Groq sends `retry-after` on 429 and it is authoritative: its
+                # leaky bucket knows when capacity actually returns, which a
+                # client-side sliding window cannot compute (see TransportError).
+                retry_after = None
+                raw = e.response.headers.get("retry-after")
+                if raw:
+                    try:
+                        retry_after = float(raw)
+                    except ValueError:
+                        logger.warning("groq adapter: unparseable retry-after %r", raw)
+                raise TransportError(
+                    f"groq adapter: HTTP {e.response.status_code}: {e}",
+                    retry_after=retry_after,
+                ) from e
 
         return GenerationStream(chunks=_chunks(), usage=usage)

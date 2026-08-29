@@ -25,6 +25,7 @@ assembly (src/rag/context.py owns dedup + ordering of the sources list).
 import asyncio
 import logging
 import random
+import time
 from collections.abc import AsyncIterator
 
 from src.config import Config
@@ -229,6 +230,7 @@ async def stream_answer(
     """
     model = Config.SERVING_MODEL
     provider = _provider_for(model)
+    t_open = time.monotonic()
     # Retry only while NOTHING has been emitted. Once a token is out, a retry
     # would duplicate text mid-answer, so the window closes at the first token
     # -- the same constraint the old EMPTY_RETRIES loop worked under, and the
@@ -242,16 +244,29 @@ async def stream_answer(
     # successfully; the failure arrived while draining the stream. So the retry
     # has to span generate() AND the first token, which is what this loop does.
     attempt = 0
+    # Time spent waiting to retry, reported separately from generation. A
+    # caller that folds this into TTFT reports rate-limit backoff as provider
+    # latency -- on Groq that produced a 316-second "TTFT" made of five minutes
+    # of `retry-after` and about 1.5s of actual generation.
+    retry_wait = 0.0
     while True:
         attempt += 1
         try:
+            t_attempt = time.monotonic()
             stream = await _open_stream(provider, messages, model)
             first = await anext(aiter(stream.chunks), None)
+            retry_wait = t_attempt - t_open
             break
         except TransportError as exc:
             if attempt >= TRANSPORT_ATTEMPTS:
                 raise
-            delay = min(4.0, 0.25 * 2 ** (attempt - 1)) * (0.5 + random.random())
+            # The provider's own retry-after wins when it sends one -- it
+            # knows when capacity returns; our backoff is only a guess. Jitter
+            # is still added so concurrent retries do not wake in lockstep.
+            if exc.retry_after is not None:
+                delay = exc.retry_after * (1.0 + 0.25 * random.random())
+            else:
+                delay = min(4.0, 0.25 * 2 ** (attempt - 1)) * (0.5 + random.random())
             logger.warning(
                 "generation: transport retry %d/%d in %.2fs -- %s",
                 attempt, TRANSPORT_ATTEMPTS, delay, exc,
@@ -265,6 +280,7 @@ async def stream_answer(
 
     if usage is not None:
         _fill_usage_dict(usage, stream.usage)
+        usage["retry_wait_s"] = round(retry_wait, 4)
 
 
 async def _open_stream(provider: Provider, messages: list[dict], model: str) -> GenerationStream:
@@ -286,6 +302,7 @@ async def _open_stream(provider: Provider, messages: list[dict], model: str) -> 
         estimated_cost_usd=_estimated_cost_usd(messages, model),
         max_input_tokens=Config.CTX_SIZE,
         max_history_messages=MAX_HISTORY_MESSAGES,
+        max_output_tokens=Config.MAX_TOKENS,
     )
 
 

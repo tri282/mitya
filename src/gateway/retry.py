@@ -24,10 +24,26 @@ logger = logging.getLogger(__name__)
 
 
 class TransportError(RuntimeError):
-    """A provider call failed for a transport reason (connect, timeout,
-    5xx). The class of error this module's retry exists for -- a real
-    adapter (Batch C) raises it; `FakeProvider` never does, since it has no
-    transport to fail."""
+    """A transport-level failure worth retrying: connect, timeout, 5xx, 429.
+
+    `retry_after` carries the provider's own instruction when it sends one, in
+    seconds. Groq returns `retry-after` on every 429; Google returns no
+    rate-limit headers at all (R53's survey), so it stays None there and the
+    caller falls back to its own backoff.
+
+    Honouring it matters more than it looks. Groq meters with a **leaky
+    bucket** that refills continuously (`x-ratelimit-reset-tokens: 547ms`),
+    while `src.limits.RateLimiter` is a **60-second sliding window**. The
+    window admits a burst that fits under the per-minute total; the bucket
+    refuses it because the tokens are not available at that instant. No amount
+    of reserving the right token count fixes that -- the two disagree about
+    *when*, not *how much* -- so the provider's own wait is the only correct
+    answer available.
+    """
+
+    def __init__(self, *args, retry_after: float | None = None) -> None:
+        super().__init__(*args)
+        self.retry_after = retry_after
 
 
 async def retry_transport(
