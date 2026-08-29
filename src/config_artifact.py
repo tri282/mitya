@@ -309,7 +309,27 @@ class ServingConfig(BaseModel):
             top_k_rerank=int(os.getenv("TOP_K_RERANK", "3")),
             top_k_structural_excerpts=int(os.getenv("TOP_K_STRUCTURAL_EXCERPTS", "2")),
             ctx_size=int(os.getenv("CTX_SIZE", "3072")),
-            max_tokens=int(os.getenv("MAX_TOKENS", "400")),
+            # Raised 400 -> 1024 (v2 P2, R66/R68). 400 was never an
+            # answer-length decision: it was sized to fit CTX_SIZE=3072 on the
+            # 1060 (~1742-token prompt + 400 = 2142), i.e. a fossil of the
+            # hardware this phase exists to escape. It is an API cutoff the
+            # model is never told about, while the persona asks for a "deep
+            # literary, existential, and philosophical tone" -- so 11a judged
+            # both arms on answers that stopped mid-sentence (128/150 and
+            # 91/141).
+            #
+            # 1024 is the largest value that clears all three constraints at
+            # once, which is why it is not larger:
+            #   * local fit  -- 1742 + 1024 = 2766, still inside CTX_SIZE 3072,
+            #     so LocalProvider keeps working (1330 would sit exactly at the
+            #     ceiling with no headroom for a longer prompt);
+            #   * Groq tpd  -- 200k / 2766 = 72 draws/day, down from 93 (R68);
+            #   * cost      -- roughly 2x per answer on Google
+            #     ($0.001523 -> $0.003083), since completion is the expensive leg.
+            #
+            # Raising this CHURNS config_version, so quality measured at 400 and
+            # at 1024 are different arms and must not be pooled (R51).
+            max_tokens=int(os.getenv("MAX_TOKENS", "1024")),
             gen_temperature=float(os.getenv("GEN_TEMPERATURE", "0.6")),
             gen_top_p=float(os.getenv("GEN_TOP_P", "0.9")),
             prompt_composition=os.getenv("PROMPT_COMPOSITION", "A"),
