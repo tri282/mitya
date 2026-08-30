@@ -26,6 +26,17 @@ nothing to measure post-rerank. The rerank arms below therefore score at k=3
 against their own fused-top-3 baseline, and their numbers are NOT comparable
 to the k=5 headline.
 
+Every bucket also reports POOL RECALL: recall over the whole fused candidate
+pool, before the k-slice. rerank() is handed all Config.TOP_K_FUSED points
+(src/rag/retrieve.py:172), not the top 5, so recall@5 is neither an upper nor
+a lower bound on what the served top-3 contains -- a target at pool rank 12
+is a recall@5 miss that the reranker can still serve. Pool recall separates
+the two failures recall@5 folds together: a pool miss is a RETRIEVAL failure
+no downstream stage can undo, while a pool hit below k is an ORDERING failure
+and is exactly the headroom a reranker is paid to convert. Reported only --
+recall@5 remains the frozen headline and the sole blocking metric (R79,
+scripts/gate.py).
+
 ABLATION ARMS (--arm, plans/mitya-ablation/plan.md). The default arm "full"
 is the shipped config and reproduces the headline; the rest each disable one
 stage so its contribution can be attributed:
@@ -150,6 +161,57 @@ def _rank_of(points: list, targets: set[tuple]) -> int | None:
         if (p.get("book"), p.get("part"), p.get("chapter")) in targets:
             return i
     return None
+
+
+def _report_pool_recall(per_row: list[dict], k: int) -> dict:
+    """Log per-family pool recall (recall over the FULL fused candidate pool)
+    and the headroom recall@k leaves on the table.
+
+    recall@k measures the k-slice, but rerank() is handed the whole pool, so
+    the two failures folded into a single "miss" are not the same failure:
+
+      pool miss           target absent from the pool -- a RETRIEVAL failure.
+                          No downstream stage can recover it. This is the
+                          true ceiling of the shipped system.
+      pool hit, k miss    target in the pool, below the cut -- an ORDERING
+                          failure, and precisely the headroom a reranker
+                          exists to convert.
+
+    headroom = pool_recall - recall@k. Near zero means rerank has nothing to
+    win and P3's decision to defer it out of CI (R79) costs nothing; large
+    means recall@k understates the served system and the choice of blocking
+    metric is worth revisiting deliberately (a named open question, not a
+    silent swap -- see gate.py's recall_at_3_reranked note).
+
+    Reported, never decisive: pool recall saturates by construction, so it has
+    far fewer discordant pairs than recall@k and would make a weaker gate, and
+    moving the blocking metric would break the published baseline.
+    """
+    out: dict[str, dict] = {}
+    for family in sorted({r["family"] for r in per_row}):
+        rows = [r for r in per_row if r["family"] == family]
+        hits = sum(1 for r in rows if r["hit"])
+        pool_hits = sum(1 for r in rows if r["pool_hit"])
+        pool_sizes = {r["pool_size"] for r in rows}
+        recall = hits / len(rows)
+        pool_recall = pool_hits / len(rows)
+        out[family] = {
+            "rows": len(rows),
+            "recall_at_k": round(recall, 4),
+            "pool_recall": round(pool_recall, 4),
+            "headroom": round(pool_recall - recall, 4),
+            "pool_size_max": max(pool_sizes),
+        }
+        logger.info(
+            "%s: recall@%d = %.3f | pool recall = %.3f (pool<=%d) | headroom = %.3f "
+            "(%d rows in pool but below k -- ordering, not retrieval)",
+            family.upper(), k, recall, pool_recall, max(pool_sizes),
+            pool_recall - recall, pool_hits - hits,
+        )
+        for r in rows:
+            if not r["pool_hit"]:
+                logger.info("  %s: pool MISS -- unrecoverable downstream", r["id"])
+    return out
 
 
 def _score_bucket(label: str, rows: list[tuple], k: int) -> dict | None:
@@ -281,6 +343,14 @@ def evaluate(
         else:
             fused = retrieve(client, embedder, bm25, query_used, hard_filter=hard_filter, legs=legs)
         rank = _rank_of(fused[:k], targets)
+        # Rank in the WHOLE fused pool, not the k-slice. rerank() consumes all
+        # Config.TOP_K_FUSED points (src/rag/retrieve.py:172), so a target at
+        # pool rank 12 can still reach the served top-3 while recall@k scores
+        # it a miss. pool recall is therefore the real ceiling: a miss here can
+        # never be recovered by any downstream stage, a miss at k that is a hit
+        # here is an ORDERING failure and exactly what rerank is paid to fix.
+        # Reported only -- the blocking metric stays recall@5 (gate.py:287).
+        pool_rank = _rank_of(fused, targets)
         dchit = distinct_target_chapters_hit_at_k(
             [p.payload or {} for p in fused[:k]], pair["targets"]
         )
@@ -292,6 +362,9 @@ def evaluate(
             "route": route_name,
             "rank": rank,
             "hit": rank is not None,
+            "pool_rank": pool_rank,
+            "pool_hit": pool_rank is not None,
+            "pool_size": len(fused),
             "dchit": dchit,
         }
         per_row.append(row_record)
@@ -331,6 +404,8 @@ def evaluate(
         logger.info("%s: %d rows skipped -- no correct chapter; R15 calibration (step 14) "
                     "scores these on its own path", fam.upper(), n)
 
+    pool = _report_pool_recall(per_row, k)
+
     buckets = [
         _score_bucket(f"PRIMARY (headline recall@{k} / MRR)", family_rows.get("primary", []), k),
         _score_bucket("NEGATIVE-CONTROL (reported separately, not headline)",
@@ -352,6 +427,7 @@ def evaluate(
         "route_matched": route_checked - route_mismatches,
         "route_checked": route_checked,
         "buckets": [b for b in buckets if b is not None],
+        "pool": pool,
         "rows": per_row,
     }
 
