@@ -596,6 +596,29 @@ file itself is untouched (A9). Recomputed: primary n 40 → 38, hits 29 → 27,
 
 `0.720` was never the retriever's recall on those rows. It was the recall of a pipeline production does not run.
 
+**Pool recall, added 2026-08-30 (R81). Reported, not blocking; `0.7105` is unchanged.**
+`recall@5` scores `fused[:5]`, but `rerank()` receives the whole `TOP_K_FUSED` pool of 25
+(`src/rag/retrieve.py`), so `recall@5` is **neither an upper nor a lower bound** on what the served
+top-3 contains — a target at pool rank 12 is a `recall@5` miss the reranker can still serve. Every
+miss therefore folds together two failures with opposite remedies: a **pool miss** (target absent
+from the pool) is a retrieval failure no downstream stage can undo, while a **pool hit below k** is
+an ordering failure and is exactly the headroom a reranker exists to convert.
+`scripts/eval_retrieval.py` now reports both per family:
+
+```
+full arm, 121-row set    recall@5   pool recall   headroom   pool misses
+  primary   (n=38)        0.7105      0.9211       0.2105     3
+  quotation (n=15)        0.8667      0.9333       0.0667     1
+```
+
+The pool is **not** saturated: `r-0032` and `r-0044` miss the pool in every arm and are
+unreachable at `PREFETCH_LIMIT=50`. The `0.2105` primary headroom is the honest upper bound on
+what any reranking work can buy, and the price — in recall, not seconds — of deferring rerank out
+of CI (R79). `recall@5` keeps the blocking role: pool recall saturates by construction and would
+yield too few discordant pairs to gate on, it is blind to every ordering defect, and swapping the
+blocking metric is a measurement break to be taken deliberately, not absorbed as a side effect of
+adding a diagnostic. Whether it should move remains a named open question.
+
 ### 2. Answer quality
 
 * Four themed sets (Motivation / Philosophy / Ambiguity, 15 each; `Textual`, 5), **50 rows** at
