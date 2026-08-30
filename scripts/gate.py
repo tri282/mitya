@@ -370,6 +370,8 @@ def build_caption(layers: dict, disposition: str, reason: str) -> str:
                      f"MDE {primary['mde']:.3f} at n={primary['n']})")
     if layers["quality_1b"] == []:
         parts.append("1b not evaluated (composition open, G-B)")
+    if not any(r.get("metric") == "recall_at_3_reranked" for r in layers["quality_1a"]):
+        parts.append("serving-path (rerank) bucket not evaluated -- promotion-time only, R79")
     # R77 / branch B, measured 2026-08-29: stripping every passage from the
     # prompt -- a total regression -- moved source_leak and assistant_tell by
     # EXACTLY ZERO, while the offline judge saw groundedness fall 4.022 -> 1.000.
@@ -450,9 +452,18 @@ def main(candidate: str | None, promote: bool) -> int:
     if candidate:
         arms["candidate"] = run_arm(candidate, "candidate")
         assert_comparable(arms["production"], arms["candidate"])
-        # Second pass on the serving path (R75). Free, ~2x runtime, no API call.
-        rerank_arms["production"] = run_arm(None, "production", arm="rerank")
-        rerank_arms["candidate"] = run_arm(candidate, "candidate", arm="rerank")
+        # The serving-path bucket (R75) runs at PROMOTION TIME ONLY, the same
+        # tier logic 1b follows. R79 measured why: it is 87% of a gate run's
+        # wall clock (104.7s per arm against 14.1s for `full`, FlashRank scoring
+        # 25 candidates per query over 106 rows on CPU) and it cannot block
+        # anything -- it is there to make the serving path visible, not to
+        # decide. Paying 7.4x on every routine run for a bucket that never
+        # decides is throughput P7 cannot spare: it pays the gate on every
+        # promotion attempt, and on this leg the scarce resource is time, not
+        # money (USD is exactly zero).
+        if promote:
+            rerank_arms["production"] = run_arm(None, "production", arm="rerank")
+            rerank_arms["candidate"] = run_arm(candidate, "candidate", arm="rerank")
 
     prod = arms["production"]
     cand = arms.get("candidate")

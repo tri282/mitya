@@ -43,6 +43,7 @@ FAMILIES = frozenset({
     "adversarial",              # correct-refusal denominator
     "book_named_no_chapter",    # the organic in-prompt scoping gap (R6)
     "structural",               # STRUCTURAL-routed; own denominator (R19)
+    "quotation",                # verbatim quoted span in the query; own denominator (R73)
 })
 
 # Families whose rows have a correct chapter and are therefore scored for
@@ -52,7 +53,7 @@ FAMILIES = frozenset({
 # them would pollute recall's denominator with guaranteed misses.
 RETRIEVAL_SCORED_FAMILIES = frozenset({
     "primary", "negative_control", "entity_pair", "book_named_no_chapter",
-    "structural",
+    "structural", "quotation",
 })
 
 # `structural` is scored, but its hit is close to tautological: the router
@@ -328,6 +329,8 @@ def _demo() -> None:
     assert family_of({"expected_route": "DEFAULT"}) == "primary"
     assert family_of({"family": "primary", "expected_route": "STRUCTURAL"}) == "primary"
     assert "structural" in FAMILIES and "structural" in RETRIEVAL_SCORED_FAMILIES
+    assert "quotation" in FAMILIES and "quotation" in RETRIEVAL_SCORED_FAMILIES
+    assert family_of({"id": "r-0107", "family": "quotation"}) == "quotation"
 
     # gate tiers (P3 F1): disjoint, and no metric function escapes classification.
     assert TIER_1A.isdisjoint(TIER_1B), "a metric cannot be both free and metered"
