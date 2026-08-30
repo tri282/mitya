@@ -47,8 +47,11 @@ from src.rag.ingest import BOOK_META
 # guard-rail against a caller that has not been written yet, not a live limit.
 MAX_HISTORY_MESSAGES = 8
 
-# Bounded transport attempts, matching `src.gateway.retry.retry_transport`'s
-# own default. Kept as a module constant rather than a versioned config knob:
+# Bounded transport attempts. `src.gateway.retry.retry_transport` used to be
+# the other half of a parity claim here; Batch A0 item 3 deleted it (R88 --
+# the two loops had already diverged on `retry_after`, so the claim was false
+# before it was removed). Kept as a module constant rather than a versioned
+# config knob:
 # it is a deployment/resilience policy, not something that changes what a
 # correct answer is.
 TRANSPORT_ATTEMPTS = 3
@@ -175,6 +178,47 @@ def _provider_for(model: str) -> Provider:
         f"no adapter for provider {provider_name!r} (model {model!r}). Add one "
         f"under src/gateway/ and a branch here."
     )
+
+
+# Which credential each hosted provider needs, kept beside `_provider_for()`
+# for the reason its own docstring gives: this module is the only place a model
+# id becomes a vendor. A readiness check that resolved vendors on its own would
+# be a second, parallel notion of what serves -- which is the defect Batch A0
+# item 1 exists to remove, not to duplicate one layer up.
+LOCAL_PROVIDER = "local"
+_PROVIDER_CREDENTIAL = {"google": "GOOGLE_API_KEY", "groq": "GROQ_API_KEY"}
+
+
+def serving_provider_name() -> str:
+    """The provider `_provider_for(Config.SERVING_MODEL)` would return, named.
+
+    A vendor key (`"google"`, `"groq"`), or `LOCAL_PROVIDER` for the
+    llama-server adapter. Resolution mirrors `_provider_for()` exactly,
+    including its provider-is-None fallback to local, so readiness cannot
+    disagree with what the request path actually calls.
+    """
+    model = Config.SERVING_MODEL
+    provider = Config.limits_for(model).get("provider")
+    if model == LOCAL_MODEL_ID or provider is None:
+        return LOCAL_PROVIDER
+    return provider
+
+
+def credential_status(provider: str) -> str:
+    """`"ok"`, or why the serving provider cannot be called. Config-only.
+
+    Deliberately NOT a live probe. `/health` is polled every few seconds by the
+    SPA, and Gemini Flash allows 5 requests per MINUTE (R85) -- a probe would
+    spend the quota the deployment exists to serve with, and on a token-bound
+    provider it would spend the limit that actually binds. A missing key is the
+    hosted failure mode that is knowable for free, and it is the one that
+    happens; a provider outage surfaces at the request, as a 502, where it
+    already has a code path (`TransportError`).
+    """
+    env = _PROVIDER_CREDENTIAL.get(provider)
+    if env is None:
+        return f"no credential mapping for provider {provider!r}"
+    return "ok" if getattr(Config, env, None) else f"{env} is not set"
 
 
 def _estimated_cost_usd(messages: list[dict], model: str) -> float:
