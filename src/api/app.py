@@ -47,7 +47,7 @@ from src.config_artifact import (
     active_corpus_version,
     assert_embed_model_matches,
 )
-from src.gateway.ladder import readiness_from_status
+from src.gateway.ladder import Rung, next_rung, readiness_from_status
 from src.metrics import (
     StageTimer,
     configure_metrics,
@@ -84,9 +84,12 @@ from src.gateway.ladder import ContentRefused
 from src.gateway.retry import TransportError
 from src.limits import QuotaExhausted
 from src.rag.generate import (
+    LOCAL_PROVIDER,
     active_persona_head,
     build_messages,
     build_sources_footer,
+    credential_status,
+    serving_provider_name,
     stream_answer,
 )
 from src.rag.cache import AnswerCache
@@ -222,7 +225,7 @@ async def metrics_endpoint(request: Request) -> Response:
 
 
 async def _dependency_status(state) -> tuple[bool, dict]:
-    """llama-server reachability + Qdrant presence/count + artifact load
+    """Serving-generation reachability + Qdrant presence/count + artifact load
     status. `healthy` is True only if all green (design §IV.2).
 
     Factored out of `/health` (v2 P2 step 10, charter V) so `/ready` -- what
@@ -232,18 +235,45 @@ async def _dependency_status(state) -> tuple[bool, dict]:
     exact body (`frontend/src/composables/useHealth.ts`), and this is a
     liveness/readiness NAME split, not a behavior change to an existing,
     live consumer.
+
+    The generation check follows what actually SERVES (v2 P4 Batch A0 item 1,
+    R89). Before this, it probed `Config.LLAMA_SERVER_URL` unconditionally --
+    a process P2 step 6's cutover took out of the request path (A3) -- so a
+    perfectly healthy hosted deployment returned 503 `degraded` and the SPA
+    rendered it as an outage. `src/rag/generate.py` resolves which provider
+    serves, because it is the module that resolves it for the request path
+    too; asking a second time here is how the two drift apart.
     """
     healthy = True
     result: dict = {}
 
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(3.0)) as client:
-            resp = await client.get(f"{Config.LLAMA_SERVER_URL}/health")
-            resp.raise_for_status()
-        result["llama_server"] = "ok"
-    except httpx.HTTPError as exc:
-        result["llama_server"] = f"unreachable: {exc}"
+    provider = serving_provider_name()
+    if provider == LOCAL_PROVIDER:
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(3.0)) as client:
+                resp = await client.get(f"{Config.LLAMA_SERVER_URL}/health")
+                resp.raise_for_status()
+            generation_status = "ok"
+        except httpx.HTTPError as exc:
+            generation_status = f"unreachable: {exc}"
+    else:
+        generation_status = credential_status(provider)
+    if generation_status != "ok":
         healthy = False
+    result["generation"] = {
+        "model": Config.SERVING_MODEL,
+        "provider": provider,
+        "status": generation_status,
+    }
+    # `llama_server` is kept as a SUBSYSTEM line, not the generation verdict.
+    # The SPA's degraded tooltip reads this key by name
+    # (frontend/src/api/types.ts:80, HealthIndicator.vue:40) and the SPA is
+    # explicitly outside Batch A0's scope, so the field stays -- it just stops
+    # deciding anything when llama-server is not what serves.
+    result["llama_server"] = (
+        generation_status if provider == LOCAL_PROVIDER
+        else f"not serving generation (provider={provider})"
+    )
 
     try:
         count = state.qdrant.count(Config.QDRANT_COLLECTION).count
@@ -264,8 +294,8 @@ async def _dependency_status(state) -> tuple[bool, dict]:
 
 @app.get("/health")
 async def health(request: Request) -> JSONResponse:
-    """llama-server reachability + Qdrant presence/count + artifact load
-    status. 200 only if all green (design §IV.2). Kept as-is for the
+    """Serving-generation reachability + Qdrant presence/count + artifact
+    load status. 200 only if all green (design §IV.2). Kept as-is for the
     frontend's existing contract -- see `/ready` for the split this endpoint
     now shares its check with."""
     healthy, result = await _dependency_status(request.app.state)
@@ -365,6 +395,30 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
         span.set_attribute("cache.hit", cached is not None)
         set_cost(span)
     record_cache_lookup(route_name, "hit" if cached is not None else "miss")
+
+    # --- degradation ladder (charter V; policy written at P2 step 10, wired
+    # here by P4 Batch A0 item 2) ---
+    # Readiness comes from the SAME bridge `/ready` reports, never a second
+    # health notion invented for the request path -- that duplication is what
+    # R89 cost. In the hosted shape this costs no network at all: the
+    # generation check is a config read (`credential_status()`), and only a
+    # deployment where llama-server is what serves pays for a probe here.
+    #
+    # `next_rung()` returns PRIMARY whenever generation is available, cache hit
+    # or not: `rung` is which TIER of service this deployment is operating at,
+    # and `cache_hit` is the orthogonal fact about what produced the bytes --
+    # the same orthogonality the meta event already documents for `route_name`.
+    # A cache hit is therefore still served exactly as before; the ladder only
+    # changes what happens when generation is NOT available.
+    _, dependency_result = await _dependency_status(state)
+    readiness = readiness_from_status(dependency_result, cache_available=state.cache.enabled)
+    rung = next_rung(readiness, cache_hit=cached is not None)
+    # R93: the exception paths below emit no `meta` event, so a failed request
+    # had no served-rung field at all. One header, set on every /chat error
+    # exit, is the machine-readable answer for those paths; the streaming paths
+    # carry `rung` inside `meta`.
+    rung_header = {"X-Mitya-Rung": rung.value}
+
     if cached is not None:
         logger.info(
             "chat: query=%r filters=%s session_id=%s cache_hit=true", body.query, filters, body.session_id,
@@ -392,6 +446,8 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                     "filter_relaxed": False,
                     "no_context": not cached["sources"],
                     "cache_hit": True,
+                    # Ladder tier this request was served at (P4 Batch A0).
+                    "rung": rung.value,
                     # Producing arm (v2 P2 step 9, R51): under per-request
                     # routing one config_version can serve more than one arm,
                     # so config_version alone cannot say which arm this hit
@@ -418,6 +474,23 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                 state.sem.release()
 
         return StreamingResponse(cached_stream(), media_type="text/event-stream")
+
+    if rung is Rung.UNAVAILABLE:
+        # The ladder's bottom rung: generation is down, no cached answer for
+        # this query, and retrieval is down too -- there is nothing left to
+        # serve. Raised BEFORE retrieval rather than letting retrieval fail on
+        # its own, because a 503 that says "the ladder found no rung" and a 500
+        # from a broken Qdrant call are different operator facts.
+        logger.warning(
+            "chat: rung=%s query=%r -- no rung can serve this request (%s)",
+            rung.value, body.query, dependency_result.get("generation"),
+        )
+        _abort()
+        raise HTTPException(
+            status_code=503,
+            detail="serving unavailable: no degradation rung can serve this request",
+            headers=rung_header,
+        )
 
     # --- resolve/expand -> retrieve -> rerank -> build_context (route already
     # resolved above, ahead of the cache check) ---
@@ -479,10 +552,64 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
         # loudly (matches Config.resolve_book_title()'s own contract) rather
         # than let it surface as a 500.
         _abort()
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=str(exc), headers=rung_header) from exc
     except Exception:
         _abort()
         raise
+
+    if rung is Rung.RETRIEVAL_ONLY:
+        # Generation is down and this query has no cached answer, but retrieval
+        # is up: serve the passages and generate nothing (charter V's fourth
+        # rung). No `token` event is emitted at all -- with no generation there
+        # is no persona, and inventing prose here is precisely the failure mode
+        # the rung exists to avoid. How the SPA PRESENTS this state is O9,
+        # decided at CP-4c by looking at what it renders; Batch A0 does not
+        # touch `frontend/`.
+        logger.warning(
+            "chat: rung=%s query=%r sources=%d -- generation unavailable, serving "
+            "passages only (%s)",
+            rung.value, body.query, len(sources), dependency_result.get("generation"),
+        )
+        footer = "" if no_context else build_sources_footer(sources)
+        retrieval_only_outcome = ["error"]
+
+        async def retrieval_only_stream():
+            try:
+                yield _sse("sources", {"sources": sources, "footer": footer})
+                yield _sse("meta", {
+                    "request_id": current_request_id(),
+                    "tenant": current_tenant(),
+                    "config_version": config_version,
+                    "corpus_version": corpus_version,
+                    "route_name": route_name,
+                    "chunk_ids": [p.id for p in points],
+                    # No token ever arrived because none was asked for -- None,
+                    # not 0, for the same reason as the empty-completion path
+                    # (R33): a number here would read as a measurement.
+                    "ttft_ms": None,
+                    "total_ms": int((time.monotonic() - t_start) * 1000),
+                    "filter_relaxed": filter_relaxed,
+                    "no_context": no_context,
+                    "cache_hit": False,
+                    "rung": rung.value,
+                    # Nothing generated, so nothing billed and no producing arm
+                    # to name. `model` is None rather than
+                    # `Config.SERVING_MODEL`: the configured intent did not run.
+                    "model": None,
+                    "cost_usd": FREE.usd,
+                    "cost_metered": FREE.metered,
+                })
+                yield _sse("done", {})
+                retrieval_only_outcome[0] = "ok"
+            finally:
+                # Same posture as the cache-hit stream: a client that
+                # disconnects mid-stream still consumed a request.
+                record_request_duration(
+                    time.monotonic() - t_start, route_name, retrieval_only_outcome[0],
+                )
+                state.sem.release()
+
+        return StreamingResponse(retrieval_only_stream(), media_type="text/event-stream")
 
     messages = build_messages(active_persona_head(), passages_block, body.query)
     # Filled in place as the stream runs, summed across every EMPTY_RETRIES
@@ -550,26 +677,34 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
     # indistinguishable in the one place an operator looks first.
     except QuotaExhausted as exc:
         _abort()
-        raise HTTPException(status_code=429, detail="provider quota exhausted") from exc
+        raise HTTPException(
+            status_code=429, detail="provider quota exhausted", headers=rung_header,
+        ) from exc
     except RequestTooLarge as exc:
         _abort()
-        raise HTTPException(status_code=413, detail=str(exc)) from exc
+        raise HTTPException(status_code=413, detail=str(exc), headers=rung_header) from exc
     except (BudgetExceeded, Degraded) as exc:
         # 503, not 402/429: charter IV puts a tripped spend guard into DEGRADED
         # mode, which is an availability statement about this deployment, not a
         # bill the caller can settle or a rate they can back off from.
         _abort()
-        raise HTTPException(status_code=503, detail="serving degraded: spend guard") from exc
+        raise HTTPException(
+            status_code=503, detail="serving degraded: spend guard", headers=rung_header,
+        ) from exc
     except ContentRefused as exc:
         # R53/R57: Google returns HTTP 200 carrying a refusal. Surfacing it as
         # 502 would call a policy decision an upstream failure; 200-with-empty
         # would report a block as an answer. 422 says the request was
         # understood and declined.
         _abort()
-        raise HTTPException(status_code=422, detail="provider refused to generate") from exc
+        raise HTTPException(
+            status_code=422, detail="provider refused to generate", headers=rung_header,
+        ) from exc
     except TransportError as exc:
         _abort()
-        raise HTTPException(status_code=502, detail="provider unreachable") from exc
+        raise HTTPException(
+            status_code=502, detail="provider unreachable", headers=rung_header,
+        ) from exc
 
     def _generation_cost() -> Cost:
         """Price the generation stage from whatever usage has accumulated.
@@ -668,6 +803,8 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                 "filter_relaxed": filter_relaxed,
                 "no_context": no_context,
                 "cache_hit": False,
+                # Ladder tier this request was served at (P4 Batch A0).
+                "rung": rung.value,
                 "cost_usd": cost.usd,
                 "cost_metered": cost.metered,
                 # Producing arm (v2 P2 step 9, R51) -- same field the cache-hit

@@ -31,16 +31,20 @@ class _CountingProvider:
     """Records how many generations were actually requested -- the number the
     cost multiplier is computed from."""
 
-    def __init__(self, model: str, script: list) -> None:
+    def __init__(self, model: str, script: list, retry_after: float | None = None) -> None:
         self.model = model
         self.script = list(script)
         self.calls = 0
+        # What the provider itself says to wait, in seconds -- Groq sends it on
+        # every 429, Google sends nothing (R53). None means the loop must fall
+        # back to its own backoff.
+        self.retry_after = retry_after
 
     async def generate(self, messages, tier, tenant, budget) -> GenerationStream:
         self.calls += 1
         outcome = self.script.pop(0) if self.script else "ok"
         if outcome == "transport":
-            raise TransportError("fake transport failure")
+            raise TransportError("fake transport failure", retry_after=self.retry_after)
 
         async def _chunks():
             if outcome == "empty":
@@ -93,6 +97,70 @@ async def _run(provider, model="test/model"):
     finally:
         Config.SERVING_MODEL = orig
     return text, usage
+
+
+class _recorded_sleeps:
+    """Record every delay the retry loop asks for, without waiting it out.
+
+    Swaps `asyncio.sleep` for a recorder that delegates to the real one with a
+    zero delay, so a test asserting a 30-second wait takes no seconds. Restored
+    unconditionally -- a leaked patch would silently disarm every later test's
+    timing.
+    """
+
+    def __init__(self) -> None:
+        self.delays: list[float] = []
+
+    def __enter__(self):
+        self._orig = asyncio.sleep
+        recorder = self
+
+        async def _sleep(delay, *args, **kwargs):
+            recorder.delays.append(delay)
+            return await recorder._orig(0, *args, **kwargs)
+
+        asyncio.sleep = _sleep
+        return self
+
+    def __exit__(self, *exc):
+        asyncio.sleep = self._orig
+
+
+def test_the_live_loop_sleeps_on_the_providers_own_retry_after() -> None:
+    """Batch A0's price for deleting `retry_transport()` (D1, R88).
+
+    Before this, NO test in the repo asserted that `exc.retry_after` is
+    honoured, in either retry loop -- so the R68 fix (Groq's `Retry-After`
+    latterly arriving in MINUTES, not the ~4s a jittered backoff would guess)
+    was unguarded, and the deleted loop had already lost it silently
+    (`retry.py` never read the field).
+
+    30s is chosen to be unreachable by the fallback: the backoff is capped at
+    `min(4.0, ...) * (0.5 + random())`, i.e. under 6.0s always. A delay at or
+    above 30s can only have come from `retry_after`.
+    """
+    p = _CountingProvider("test/model", ["transport", "ok"], retry_after=30.0)
+    with _patched(p), _recorded_sleeps() as slept:
+        text, usage = asyncio.run(_run(p))
+    assert text == "an answer", text
+    assert usage["transport_retries"] == 1, usage
+    assert len(slept.delays) == 1, slept.delays
+    # Jitter is ADDITIVE on this branch (`* (1.0 + 0.25 * random())`): never
+    # shorter than the provider asked for, at most 25% longer.
+    assert 30.0 <= slept.delays[0] < 37.5, (
+        f"the provider asked for 30s and the loop waited {slept.delays[0]}s -- "
+        f"retry_after is not being honoured"
+    )
+
+
+def test_without_a_retry_after_the_loop_falls_back_to_its_own_backoff() -> None:
+    """The other half of the branch. Google sends no rate-limit headers at all
+    (R53), so `retry_after=None` must NOT become a zero wait or an infinity."""
+    p = _CountingProvider("test/model", ["transport", "ok"], retry_after=None)
+    with _patched(p), _recorded_sleeps() as slept:
+        asyncio.run(_run(p))
+    assert len(slept.delays) == 1, slept.delays
+    assert 0.0 < slept.delays[0] <= 6.0, slept.delays
 
 
 def test_transport_failures_are_retried_then_succeed() -> None:

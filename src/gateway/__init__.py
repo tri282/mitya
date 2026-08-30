@@ -19,8 +19,10 @@ first, vendor-free implementation, `FakeProvider` (`fake.py`).
 Batch B (schedule steps 4, 8(a), 9, 10) adds everything buildable with no
 vendor chosen: the spend guard (`guard.py` -- budget check, request size
 limits, spend-rate breaker, all before the provider call, and
-`RateLimiter.acquire_async`), the transport retry (`retry.py` -- bounded,
-jittered, budget-aware; the QUALITY retry stays step 8(b), not built here),
+`RateLimiter.acquire_async`), the transport failure vocabulary (`retry.py` -- its
+`retry_transport()` loop was deleted at P4 Batch A0 item 3, R88: zero
+request-path call sites, and the live loop in `src/rag/generate.py` is the
+implementation),
 and the degradation ladder written as policy (`ladder.py`). Routing, real
 provider adapters, and provider-side caching are still named by the boundary
 above but not built -- CP-alpha has not picked a provider pair yet and
@@ -31,11 +33,11 @@ code shaped for a decision that has not been made.
 from src.gateway.contract import GenerationStream, Provider, Usage
 from src.gateway.guard import BudgetExceeded, Degraded, RequestTooLarge, SpendRateBreaker, guarded_generate
 from src.gateway.ladder import Readiness, Rung, next_rung, readiness_from_status
-from src.gateway.retry import TransportError, record_if_empty_completion, retry_transport
+from src.gateway.retry import TransportError, record_if_empty_completion
 
 __all__ = [
     "GenerationStream", "Provider", "Usage",
     "BudgetExceeded", "Degraded", "RequestTooLarge", "SpendRateBreaker", "guarded_generate",
     "Readiness", "Rung", "next_rung", "readiness_from_status",
-    "TransportError", "record_if_empty_completion", "retry_transport",
+    "TransportError", "record_if_empty_completion",
 ]

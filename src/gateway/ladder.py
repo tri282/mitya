@@ -86,12 +86,27 @@ def readiness_from_status(result: dict, cache_available: bool) -> Readiness:
     boolean would make "generation is down" indistinguishable from
     "retrieval is down", which is exactly the distinction this rung exists
     to act on.
+
+    `generation_available` reads the `generation` sub-result, which reports
+    whatever `Config.SERVING_MODEL` actually resolves to (v2 P4 Batch A0 item
+    1, R89). It used to read `llama_server`, unconditionally -- a fact about a
+    process that P2's cutover took out of the request path, so a healthy
+    hosted deployment reported itself degraded. The `llama_server` fallback
+    below is kept for bodies that predate that sub-result (and for this
+    module's own unit tests, which are about the ladder, not about the probe):
+    when a caller has nothing better to say about generation, the llama-server
+    probe is still the right answer for the deployment where llama-server is
+    what serves.
     """
-    llama_ok = result.get("llama_server") == "ok"
+    generation = result.get("generation")
+    if isinstance(generation, dict):
+        generation_ok = generation.get("status") == "ok"
+    else:
+        generation_ok = result.get("llama_server") == "ok"
     qdrant_result = result.get("qdrant")
     qdrant_ok = isinstance(qdrant_result, dict) and qdrant_result.get("count", 0) > 0
     return Readiness(
-        generation_available=llama_ok,
+        generation_available=generation_ok,
         retrieval_available=qdrant_ok,
         cache_available=cache_available,
     )
