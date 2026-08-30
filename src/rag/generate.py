@@ -154,9 +154,10 @@ def build_messages(
 # is a rewrite of one function rather than surgery across the request path.
 
 
-def _provider_for(model: str) -> Provider:
-    """Pick the adapter for `model`. The ONLY place a model id becomes a
-    vendor, so adding a provider does not touch the request path."""
+def _resolve_adapter(model: str) -> Provider:
+    """Pick the bare vendor adapter for `model`, before any fault-injection
+    wrapping. The ONLY place a model id becomes a vendor, so adding a
+    provider does not touch the request path."""
     limits = Config.limits_for(model)
     provider_name = limits.get("provider")
     if model == LOCAL_MODEL_ID or provider_name is None:
@@ -178,6 +179,27 @@ def _provider_for(model: str) -> Provider:
         f"no adapter for provider {provider_name!r} (model {model!r}). Add one "
         f"under src/gateway/ and a branch here."
     )
+
+
+def _provider_for(model: str) -> Provider:
+    """`_resolve_adapter(model)`, wrapped in `FaultProvider` when
+    `Config.FAULT_INJECT` is set (v2 P4 Batch C step 7, D8). One branch, so a
+    fault-injection run exercises the exact same resolution path a real
+    request does -- the wrapping happens here rather than at the call site so
+    nothing in `stream_answer()` has to know injection exists.
+    """
+    provider = _resolve_adapter(model)
+    if Config.FAULT_INJECT:
+        from src.gateway.fault import FaultProvider, parse_fault_spec
+
+        logger.warning(
+            "generation is running under FAULT INJECTION (MITYA_FAULT_INJECT=%r) "
+            "-- every request in this process will have faults injected. This "
+            "must never be set on a run whose answers are meant to be real.",
+            Config.FAULT_INJECT,
+        )
+        return FaultProvider(provider, parse_fault_spec(Config.FAULT_INJECT))
+    return provider
 
 
 # Which credential each hosted provider needs, kept beside `_provider_for()`
