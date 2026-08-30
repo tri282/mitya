@@ -286,14 +286,15 @@ def evaluate(
         )
 
         family_rows.setdefault(family, []).append((pair["query"], targets, rank, dchit))
-        per_row.append({
+        row_record = {
             "id": pair.get("id"),
             "family": family,
             "route": route_name,
             "rank": rank,
             "hit": rank is not None,
             "dchit": dchit,
-        })
+        }
+        per_row.append(row_record)
 
         # Rerank arms score a second bucket over the SAME fused candidate pool,
         # so the arm is self-baselining in one pass (fused[:k] above vs
@@ -305,9 +306,15 @@ def evaluate(
             reranked_dchit = distinct_target_chapters_hit_at_k(
                 [p.payload or {} for p in reranked_top_k], pair["targets"]
             )
+            reranked_rank = _rank_of(reranked_top_k, targets)
             reranked_rows.append(
-                (pair["query"], targets, _rank_of(reranked_top_k, targets), reranked_dchit)
+                (pair["query"], targets, reranked_rank, reranked_dchit)
             )
+            # Carried on the SAME row record, so a consumer can pair fused
+            # against reranked per row without joining two lists (P3 step 5c).
+            row_record["reranked_rank"] = reranked_rank
+            row_record["reranked_hit"] = reranked_rank is not None
+            row_record["reranked_dchit"] = reranked_dchit
 
         logger.info(
             "query=%r targets=%s rank=%s route=%s resolved_entities=%s filters=%s",

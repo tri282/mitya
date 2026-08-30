@@ -160,7 +160,7 @@ def preflight() -> dict:
     return stamps
 
 
-def run_arm(version: str | None, label: str) -> dict:
+def run_arm(version: str | None, label: str, arm: str = "full") -> dict:
     """Score one arm in its own process.
 
     Subprocess, not a function call, and not negotiable: `eval_retrieval.py`
@@ -180,7 +180,7 @@ def run_arm(version: str | None, label: str) -> dict:
         out = os.path.join(tmp, "arm.json")
         proc = subprocess.run(
             [sys.executable, os.path.join("scripts", "eval_retrieval.py"),
-             "--arm", "full", "--json", out],
+             "--arm", arm, "--json", out],
             env=env, capture_output=True, text=True,
         )
         if proc.returncode != 0 or not os.path.exists(out):
@@ -192,9 +192,10 @@ def run_arm(version: str | None, label: str) -> dict:
             record = json.load(f)[-1]
 
     record["arm_label"] = label
+    record["eval_arm"] = arm
     record["config_version"] = version or read_pointer()
     record["serving_model"] = load(record["config_version"]).serving_model
-    logger.info("arm %s: config=%s model=%s", label, record["config_version"],
+    logger.info("arm %s (%s): config=%s model=%s", label, arm, record["config_version"],
                 record["serving_model"])
     return record
 
@@ -259,7 +260,8 @@ def write_report(report: dict, candidate: str | None) -> str:
 
 
 def build_layers(prod: dict, cand: dict | None, baseline: dict | None,
-                 manifest) -> dict:
+                 manifest, prod_rr: dict | None = None,
+                 cand_rr: dict | None = None) -> dict:
     """The three layers. Quality is evaluated PER FAMILY, never pooled -- a
     pooled denominator is the failure charter II was written against."""
     layers = {
@@ -305,6 +307,35 @@ def build_layers(prod: dict, cand: dict | None, baseline: dict | None,
             record["why_not_blocking"] = ("composition open (A13 rider, G-B) -- gating a "
                                           "second quality metric would pick weights nobody chose")
             layers["quality_1a"].append(record)
+
+    # THE SERVING-PATH BUCKET (R75, decision 2c). `--arm full` scores fused[:5]
+    # and never reranks, while production reranks every non-STRUCTURAL request
+    # -- so rerank knobs were visible to the cost layer and invisible to the
+    # quality layer. This adds the k=3 reranked view.
+    #
+    # NON-BLOCKING, and `full` keeps the blocking role, for two reasons: moving
+    # the blocking metric to recall@3 would be a measurement break of the same
+    # class as MAX_TOKENS 400 -> 1024, invalidating every published retrieval
+    # number two days after the headline was superseded to 0.7105; and choosing
+    # which of the two arms decides IS a composition, which A13's rider leaves
+    # open. Whether the blocking metric should eventually move here is a named
+    # future decision, taken deliberately with the break announced.
+    if prod_rr and cand_rr:
+        for family in sorted({r["family"] for r in prod_rr["rows"]}):
+            prod_hits = {r["id"]: r.get("reranked_hit") for r in prod_rr["rows"]
+                         if r["family"] == family and "reranked_hit" in r}
+            cand_hits = {r["id"]: r.get("reranked_hit") for r in cand_rr["rows"]
+                         if r["family"] == family and "reranked_hit" in r}
+            if not prod_hits:
+                continue
+            record = mcnemar_noninferiority(prod_hits, cand_hits)
+            record["metric"] = "recall_at_3_reranked"
+            record["family"] = family
+            record["blocking"] = False
+            record["why_not_blocking"] = ("serving-path view (R75); making it blocking would "
+                                          "break the published recall@5 baseline and pick a "
+                                          "composition A13's rider leaves open")
+            layers["quality_1a"].append(record)
     return layers
 
 
@@ -339,6 +370,14 @@ def build_caption(layers: dict, disposition: str, reason: str) -> str:
                      f"MDE {primary['mde']:.3f} at n={primary['n']})")
     if layers["quality_1b"] == []:
         parts.append("1b not evaluated (composition open, G-B)")
+    # R77 / branch B, measured 2026-08-29: stripping every passage from the
+    # prompt -- a total regression -- moved source_leak and assistant_tell by
+    # EXACTLY ZERO, while the offline judge saw groundedness fall 4.022 -> 1.000.
+    # The gate is blind to grounding, and no sample size fixes a metric that does
+    # not respond. This clause is not decoration: without it a reader completes
+    # "did not block" as "the answers are fine", and the cheapest config the
+    # optimizer can find is the ungrounded one (-32% shadow cost, R77).
+    parts.append("GROUNDING NOT CHECKED (R77: Tier 1 cannot see it)")
     return "; ".join(parts)
     os.makedirs(GATE_DIR, exist_ok=True)
     stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -407,14 +446,19 @@ def main(candidate: str | None, promote: bool) -> int:
     # re-measurement for blindness to environment drift -- and would retire the
     # cross-process determinism check that caught R18.
     arms = {"production": run_arm(None, "production")}
+    rerank_arms: dict[str, dict] = {}
     if candidate:
         arms["candidate"] = run_arm(candidate, "candidate")
         assert_comparable(arms["production"], arms["candidate"])
+        # Second pass on the serving path (R75). Free, ~2x runtime, no API call.
+        rerank_arms["production"] = run_arm(None, "production", arm="rerank")
+        rerank_arms["candidate"] = run_arm(candidate, "candidate", arm="rerank")
 
     prod = arms["production"]
     cand = arms.get("candidate")
     baseline = read_baseline(prod["config_version"])
-    layers = build_layers(prod, cand, baseline, active_corpus_manifest())
+    layers = build_layers(prod, cand, baseline, active_corpus_manifest(),
+                          rerank_arms.get("production"), rerank_arms.get("candidate"))
     disposition, reason = disposition_of(layers)
 
     report = {
@@ -422,6 +466,7 @@ def main(candidate: str | None, promote: bool) -> int:
         "generated_utc": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
         "provenance": stamps,
         "arms": arms,
+        "rerank_arms": rerank_arms,
         "layers": layers,
         "flips": flips(prod["rows"], cand["rows"]) if cand else [],
         "local_q4km": frozen_reference(),
