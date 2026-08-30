@@ -1339,5 +1339,200 @@
       "chapter": 2
     },
     "phrasing_position": "recap-leading"
+  },
+  {
+    "id": "r-0107",
+    "query": "Which chapter contains the line \"The Father Superior stepped into the middle of the room to receive his guests.\"",
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 2,
+        "chapter": 8
+      }
+    ],
+    "note": "quotation family (R73/P3 step 10): verbatim span extracted from the indexed chunk for this chapter, so the literal is guaranteed present in the corpus. Tests whether the BM25 leg acts when a rare literal string is available.",
+    "family": "quotation"
+  },
+  {
+    "id": "r-0108",
+    "query": "Which chapter contains the line \"He suddenly recollected that the general had come for advice on a most important matter, affecting his destiny.\"",
+    "targets": [
+      {
+        "book": "The Idiot",
+        "part": 4,
+        "chapter": 4
+      }
+    ],
+    "note": "quotation family (R73/P3 step 10): verbatim span extracted from the indexed chunk for this chapter, so the literal is guaranteed present in the corpus. Tests whether the BM25 leg acts when a rare literal string is available.",
+    "family": "quotation"
+  },
+  {
+    "id": "r-0109",
+    "query": "Which chapter contains the line \"He was painfully surprised, therefore, when three days passed with no word from her.\"",
+    "targets": [
+      {
+        "book": "The Idiot",
+        "part": 2,
+        "chapter": 11
+      }
+    ],
+    "note": "quotation family (R73/P3 step 10): verbatim span extracted from the indexed chunk for this chapter, so the literal is guaranteed present in the corpus. Tests whether the BM25 leg acts when a rare literal string is available.",
+    "family": "quotation"
+  },
+  {
+    "id": "r-0110",
+    "query": "Which chapter contains the line \"These are less noticed, or passed over in silence.\"",
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 6,
+        "chapter": 3
+      }
+    ],
+    "note": "quotation family (R73/P3 step 10): verbatim span extracted from the indexed chunk for this chapter, so the literal is guaranteed present in the corpus. Tests whether the BM25 leg acts when a rare literal string is available.",
+    "family": "quotation"
+  },
+  {
+    "id": "r-0111",
+    "query": "Which chapter contains the line \"How glad I am to find you here, too!\"",
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 8,
+        "chapter": 7
+      }
+    ],
+    "note": "quotation family (R73/P3 step 10): verbatim span extracted from the indexed chunk for this chapter, so the literal is guaranteed present in the corpus. Tests whether the BM25 leg acts when a rare literal string is available.",
+    "family": "quotation"
+  },
+  {
+    "id": "r-0112",
+    "query": "Which chapter contains the line \"There was vodka, rum and Lisbon wine, all of the poorest quality but in sufficient quantity.\"",
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 5,
+        "chapter": 2
+      }
+    ],
+    "note": "quotation family (R73/P3 step 10): verbatim span extracted from the indexed chunk for this chapter, so the literal is guaranteed present in the corpus. Tests whether the BM25 leg acts when a rare literal string is available.",
+    "family": "quotation"
+  },
+  {
+    "id": "r-0113",
+    "query": "Which chapter contains the line \"She was exhibited to their guests like a valuable picture, or vase, or statue, or firescreen.\"",
+    "targets": [
+      {
+        "book": "The Idiot",
+        "part": 1,
+        "chapter": 15
+      }
+    ],
+    "note": "quotation family (R73/P3 step 10): verbatim span extracted from the indexed chunk for this chapter, so the literal is guaranteed present in the corpus. Tests whether the BM25 leg acts when a rare literal string is available.",
+    "family": "quotation"
+  },
+  {
+    "id": "r-0114",
+    "query": "Which chapter contains the line \"He came in looking as though he had the utmost difficulty not to burst out laughing again.\"",
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 3,
+        "chapter": 5
+      }
+    ],
+    "note": "quotation family (R73/P3 step 10): verbatim span extracted from the indexed chunk for this chapter, so the literal is guaranteed present in the corpus. Tests whether the BM25 leg acts when a rare literal string is available.",
+    "family": "quotation"
+  },
+  {
+    "id": "r-0115",
+    "query": "Which chapter contains the line \"He spoke, as it were, without caution, and he did not reflect on his words.\"",
+    "targets": [
+      {
+        "book": "The Possessed",
+        "part": 2,
+        "chapter": 8
+      }
+    ],
+    "note": "quotation family (R73/P3 step 10): verbatim span extracted from the indexed chunk for this chapter, so the literal is guaranteed present in the corpus. Tests whether the BM25 leg acts when a rare literal string is available.",
+    "family": "quotation"
+  },
+  {
+    "id": "r-0116",
+    "query": "Which chapter contains the line \"You know I am a coward, I went lately to Dr.\"",
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 6,
+        "chapter": 2
+      }
+    ],
+    "note": "quotation family (R73/P3 step 10): verbatim span extracted from the indexed chunk for this chapter, so the literal is guaranteed present in the corpus. Tests whether the BM25 leg acts when a rare literal string is available.",
+    "family": "quotation"
+  },
+  {
+    "id": "r-0117",
+    "query": "Which chapter contains the line \"I had not been treated like that even at school, though they all hated me.\"",
+    "targets": [
+      {
+        "book": "Notes from the Underground",
+        "part": 2,
+        "chapter": 3
+      }
+    ],
+    "note": "quotation family (R73/P3 step 10): verbatim span extracted from the indexed chunk for this chapter, so the literal is guaranteed present in the corpus. Tests whether the BM25 leg acts when a rare literal string is available.",
+    "family": "quotation"
+  },
+  {
+    "id": "r-0118",
+    "query": "Which chapter contains the line \"His moans become nasty, disgustingly malignant, and go on for whole days and nights.\"",
+    "targets": [
+      {
+        "book": "Notes from the Underground",
+        "part": 1,
+        "chapter": 4
+      }
+    ],
+    "note": "quotation family (R73/P3 step 10): verbatim span extracted from the indexed chunk for this chapter, so the literal is guaranteed present in the corpus. Tests whether the BM25 leg acts when a rare literal string is available.",
+    "family": "quotation"
+  },
+  {
+    "id": "r-0119",
+    "query": "Which chapter contains the line \"Either to be a hero or to grovel in the mud\u2014there was nothing between.\"",
+    "targets": [
+      {
+        "book": "Notes from the Underground",
+        "part": 2,
+        "chapter": 2
+      }
+    ],
+    "note": "quotation family (R73/P3 step 10): verbatim span extracted from the indexed chunk for this chapter, so the literal is guaranteed present in the corpus. Tests whether the BM25 leg acts when a rare literal string is available.",
+    "family": "quotation"
+  },
+  {
+    "id": "r-0120",
+    "query": "Which chapter contains the line \"They were all, that is Liza, her mother, and Mavriky Nikolaevitch, sitting in the big drawing-room, arguing.\"",
+    "targets": [
+      {
+        "book": "The Possessed",
+        "part": 1,
+        "chapter": 4
+      }
+    ],
+    "note": "quotation family (R73/P3 step 10): verbatim span extracted from the indexed chunk for this chapter, so the literal is guaranteed present in the corpus. Tests whether the BM25 leg acts when a rare literal string is available.",
+    "family": "quotation"
+  },
+  {
+    "id": "r-0121",
+    "query": "Which chapter contains the line \"As far as was known, neither of the combatants had been troubled by the police.\"",
+    "targets": [
+      {
+        "book": "The Possessed",
+        "part": 2,
+        "chapter": 4
+      }
+    ],
+    "note": "quotation family (R73/P3 step 10): verbatim span extracted from the indexed chunk for this chapter, so the literal is guaranteed present in the corpus. Tests whether the BM25 leg acts when a rare literal string is available.",
+    "family": "quotation"
   }
 ]
