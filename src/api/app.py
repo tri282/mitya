@@ -141,6 +141,16 @@ async def lifespan(app: FastAPI):
     # them. Lifespan runs late enough. Idempotent -- see configure_logging().
     configure_logging(logging.INFO)
     logger.info("lifespan: loading RAG artifacts and models...")
+    # v2 P4 Batch C step 7 (D8): loud once, at startup, in the log a run is
+    # actually read from -- an unversioned toggle (Config.FAULT_INJECT) has no
+    # artifact proof it was off, so the readiness plane and this line are the
+    # two places that say so instead.
+    if Config.FAULT_INJECT:
+        logger.warning(
+            "lifespan: MITYA_FAULT_INJECT=%r -- generation faults are being "
+            "injected on every request this process serves. Do not read this "
+            "run's answers as real.", Config.FAULT_INJECT,
+        )
 
     app.state.embedder = TextEmbedding(Config.EMBED_MODEL)
     app.state.bm25 = SparseTextEmbedding(model_name=_BM25_MODEL)
@@ -289,6 +299,12 @@ async def _dependency_status(state) -> tuple[bool, dict]:
         "summaries_loaded": len(state.summaries),
         "structure_loaded": len(state.structure),
     }
+    # v2 P4 Batch C step 7 (D8): "what the harness must observe, the API must
+    # expose" -- an unversioned toggle leaves no artifact proof it was off, so
+    # its state is reported here instead of being inferable only from a hash.
+    # Present ONLY when set, so a normal run's `/ready` body is unchanged.
+    if Config.FAULT_INJECT:
+        result["fault_injection"] = Config.FAULT_INJECT
     return healthy, result
 
 

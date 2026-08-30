@@ -9,11 +9,15 @@ outside plus P1's operator plane (`/metrics`, `/health`, `/ready`), that is a
 finding about the API (recorded in `plans/mitya-v2/05-impl/phase-4.md`'s
 observability gap list), not a reason to reach inside.
 
-Batch A ships two of the four modes named in `04-plan/phase-4-harness.md`:
-`client.py` (step 1, the external client) and `replay.py` (step 2, replay
-mode). The session-corpus generator, load ramp, and fault injector are later
-batches (schedule.md §6) and do not exist yet -- nothing here scaffolds for
-them.
+Batch A shipped `client.py` (step 1, the external client) and `replay.py`
+(step 2, replay mode). Batch B added `sessions.py` (step 3/4, the frozen
+session corpus and its A5 repeat-rate dial). Batch C adds the measuring
+machinery: `ramp.py` (step 5, the load-ramp driver), `saturation.py` (step 6,
+the backpressure OBSERVATION per D2 -- not a verification), and `rungs.py`
+(step 8, the ladder rung forcer). Step 7's fault injector is server-side by
+CP-4b's own decision (D7/D8) -- `src/gateway/fault.py`, not here; nothing in
+this package injects a fault, it only observes what the server did when one
+was.
 """
 
 from src.harness.client import ChatResult, HarnessClient

@@ -75,6 +75,7 @@ class ChatResult:
     error_detail: str | None
     answer_chars: int
     request_id: str | None  # correlates back to the server's own logs/spans
+    rung: str | None  # served Rung.value (Batch C step 8, R93/R94); None on transport failure
 
 
 class HarnessClient:
@@ -85,8 +86,23 @@ class HarnessClient:
         base_url: str = DEFAULT_BASE_URL,
         timeout: httpx.Timeout = DEFAULT_TIMEOUT,
         transport: httpx.AsyncBaseTransport | None = None,
+        limits: httpx.Limits | None = None,
     ) -> None:
-        self._client = httpx.AsyncClient(base_url=base_url, timeout=timeout, transport=transport)
+        # `limits=None` leaves httpx's own default (max_connections=100,
+        # max_keepalive_connections=20) untouched -- fine for Batch A/B's
+        # one-request-at-a-time callers. Batch C's ramp driver (step 5) passes
+        # an explicit `httpx.Limits(max_connections=concurrency, ...)` so the
+        # CLIENT's own pool is never the thing capping how many requests
+        # actually reach the server -- a ramp that measures its own
+        # bottleneck is the failure schedule-p4.md's Batch C Verify names
+        # first. (Not passed unconditionally: `httpx.Limits()` with no
+        # arguments means UNLIMITED, not "httpx's default", so a bare
+        # `limits or httpx.Limits()` would silently change Batch A/B's
+        # existing behavior.)
+        kwargs = {"base_url": base_url, "timeout": timeout, "transport": transport}
+        if limits is not None:
+            kwargs["limits"] = limits
+        self._client = httpx.AsyncClient(**kwargs)
 
     async def __aenter__(self) -> "HarnessClient":
         return self
@@ -155,6 +171,9 @@ class HarnessClient:
                         fault_phase="pre_first_token",
                         error_detail=body.decode(errors="replace")[:500], answer_chars=0,
                         request_id=None,
+                        # R93: every /chat error exit carries X-Mitya-Rung, since the
+                        # exception paths emit no `meta` event to carry it instead.
+                        rung=resp.headers.get("x-mitya-rung"),
                     )
                 return await self._consume_stream(query, resp, t_start)
         except httpx.HTTPError as exc:
@@ -167,6 +186,10 @@ class HarnessClient:
                 no_context=None, filter_relaxed=None, chunk_ids=None, terminal_event=None,
                 fault_phase="pre_first_token", error_detail=str(exc), answer_chars=0,
                 request_id=None,
+                # No response ever arrived, so no header either -- distinct from
+                # the pre_first_token-with-a-status-code case above, which reads
+                # the rung header from a response that DID arrive.
+                rung=None,
             )
 
     @staticmethod
@@ -175,7 +198,7 @@ class HarnessClient:
         (`src/api/app.py:183-186`) off an already-200 response."""
         t_first_token: float | None = None
         route = cache_hit = cost_usd = cost_metered = model = None
-        no_context = filter_relaxed = chunk_ids = request_id = None
+        no_context = filter_relaxed = chunk_ids = request_id = rung = None
         terminal_event: str | None = None
         error_detail: str | None = None
         answer_chars = 0
@@ -204,6 +227,7 @@ class HarnessClient:
                     filter_relaxed = body.get("filter_relaxed")
                     chunk_ids = body.get("chunk_ids")
                     request_id = body.get("request_id")
+                    rung = body.get("rung")  # Batch C step 8 (R93/R94)
                 elif event_name in ("done", "error"):
                     terminal_event = event_name
                     if event_name == "error":
@@ -219,4 +243,5 @@ class HarnessClient:
             model=model, no_context=no_context, filter_relaxed=filter_relaxed,
             chunk_ids=chunk_ids, terminal_event=terminal_event, fault_phase=fault_phase,
             error_detail=error_detail, answer_chars=answer_chars, request_id=request_id,
+            rung=rung,
         )

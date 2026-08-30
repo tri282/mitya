@@ -228,6 +228,19 @@ class Config(metaclass=_ConfigMeta):
     # change what a correct answer is (same split EMPTY_RETRIES sits on).
     MAX_GENERATION_ATTEMPTS = int(os.getenv("MAX_GENERATION_ATTEMPTS", "3"))
 
+    # Fault injection (v2 P4 Batch C step 7, decided at CP-4b:
+    # `plans/mitya-v2/02-decide/decisions-p4-cp4b.md` D7-D9). DEPLOYMENT, not
+    # versioned: an availability switch that either changes nothing (off) or
+    # prevents an answer rather than altering one (on) -- never what a
+    # correct answer SAYS, which is D9's own criterion (same split
+    # EMPTY_RETRIES / MAX_GENERATION_ATTEMPTS / SPEND_RATE_MAX_USD_PER_MINUTE /
+    # CACHE_ENABLED sit on). Empty string = off, the default, and off in
+    # every deployment that does not set it deliberately -- no serving config
+    # under config/serving/ may set it, since it is a JSON versioned artifact
+    # and this is an env var read straight onto Config. Grammar
+    # `<class>:<attempts|*>` (e.g. `429:2`), parsed by `src/gateway/fault.py`.
+    FAULT_INJECT = os.getenv("MITYA_FAULT_INJECT", "")
+
     # Models where a zero-token completion is re-drawn. Default EMPTY, i.e. off
     # everywhere, which is CP-γ's decision: 11a measured Google at 0 zero-token
     # completions over 200 draws and Groq at 1 over 150 (R70). The rule keeps
