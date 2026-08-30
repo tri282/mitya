@@ -698,12 +698,59 @@ real change this project will ever make; its live role is catastrophic-break det
 net row flips), and the gate's routine detection power lives in the invariant and cost layers
 instead.
 
-**R73 (open, hypothesis not measurement):** 0 of 40 primary queries contain a quotation mark, so
-the BM25 leg is evaluated on the one query distribution least able to demonstrate lexical
-retrieval's distinct advantage (exact matching of rare literal strings — proper nouns, present in
-all 40 queries, are handled by dense retrieval too). This is a plausible causal mechanism read off
-3 discordant rows, **not a measured cause**. Eval-set growth on the coverage axis (a quotation-
-bearing family) is the only known way to test it; unscheduled as of this writing.
+**R73, now answered by R80 — and it is the phase's one positive result.** 0 of 40 primary queries
+contained a quotation mark, so the BM25 leg was evaluated on the query distribution least able to
+demonstrate lexical retrieval's advantage. 15 authored `quotation` rows (`r-0107..r-0121`, verbatim
+spans extracted from each target chapter's own indexed chunk) settle it: `full` **0.8667** vs
+`dense-only` **0.4667**, 6 discordant rows all one way, exact binomial **p = 0.0156** — the first
+ablation arm in this project's history to produce a statistically callable retrieval effect. The
+BM25 leg was never the problem; the instrument was. R20's growth rule (coverage, not n) is
+vindicated concretely: 15 rows produced what 900 more of the old composition provably could not.
+**Honest limit:** these rows are synthetic and maximally favourable to lexical retrieval by
+construction, so the claim is *"BM25 acts when literals are present"*, not *"production traffic
+needs BM25"* — and v2 has no real traffic to check (D3/O10).
+
+**Step 7's positive control — the gate cannot see grounding (R77, branch B, predicted before the
+run).** Stripping every passage from the prompt, a certain and total regression, moved
+`source_leak_rate` and `assistant_tell_rate` by **exactly zero**, while the offline judge saw
+groundedness fall **4.022 → 1.000** (5.4x its own MDE) and persona stay at **5.000 in both arms**.
+This is not a power problem — a metric that does not respond is not fixed by more rows. Those
+regexes measure persona *register*, a different construct from grounding. Consequences, binding:
+groundedness is Tier 2 (offline, non-blocking, never gate machinery, consistent with A7); every
+report must carry **"GROUNDING NOT CHECKED"** and `validate_report()` rejects one that does not;
+and the gate is a retrieval-and-cost regression tripwire that may not be described as an
+answer-quality gate. The same run measured that the ungrounded arm is **32% cheaper**
+($0.001324 vs $0.001942 shadow per answer), so A13's "structurally incentivized toward invisible
+degradation" is now a measurement with a named degenerate solution inside P7's search space.
+
+**Calibration on five synthesized defects (R78) — `n = 5`, provisional.** v1's ablation arms could
+not serve as labelled history (R20 withdrew them as noise), so the defects were synthesized:
+
+| defect | shape | disposition | what fired |
+|---|---|---|---|
+| nondeterminism | R18 | blocks | `determinism_vs_baseline` |
+| route corruption | R19 | blocks | `route_match_prod/_cand`, `determinism_vs_baseline` |
+| no-RAG arm | R77 | does not block | nothing in Tier 1 |
+| `prefetch_limit` 50 → 1 | large sampled effect | blocks | `recall_at_5` BREAK, 9 flips, −0.2105 vs MDE 0.2084 |
+| the null | no defect | does not block | nothing, 0 flips |
+
+Two readings the table hides. `prefetch_limit` 50 → **3** moved one row, in the *positive*
+direction; only starving both legs to a single candidate broke it, and it cleared its own MDE by
+**0.002** — the sampled layer is a catastrophe detector, not a quality gate. And the
+nondeterminism defect was caught by the **baseline comparison**, not the within-run spread, so
+R18-class detection depends on the baseline store (`test/gate/baseline-*.json`), which has no
+retention policy — gap G-G is load-bearing, not housekeeping.
+
+**Gate cost (R79), O8's central number.** A gate run costs **$0.00000 and ~30s**; three runs before
+the rerank bucket moved to promotion-time measured 243.9 / 237.9 / 242.9s (2.5% spread), of which
+the non-blocking serving-path bucket was 87% — FlashRank scoring 25 candidates per query over 106
+rows on CPU, twice. Moving that bucket to promotion time (its detection value is zero on a routine
+run) cut a run to **29.9s**, an 8.1x throughput gain. `[estimate] 10 gate runs/week, 1
+promotion/week` → `[computed]` **$0.00/month and ~0.4 machine-hours** for 1a; 1b is *unmeasured,
+not zero*, since `quality_1b` is empty pending its composition (G-B). **On the 1a leg the scarce
+resource is time, not money** — P7 pays ~30s per promotion attempt and $0. Against CP2's
+$0.001473/answer, one 45-draw promotion check costs the equivalent of ~59 served answers:
+measurement dominates serving for a solo deploy.
 
 **Residual risk that matters:** the guard certifies only "not worse by >= the measured MDE." A
 promoted config can be up to roughly 12-18 recall points worse than production without detection.
