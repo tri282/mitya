@@ -544,6 +544,7 @@ async def run(
     themes_only: list[str] | None,
     append: bool,
     draws: int,
+    no_rag: bool = False,
 ) -> None:
     # A cell needs two judged draws to mean anything; at k=1 there is nothing to
     # average and the single draw is the cell. Not a flag -- there is no reason
@@ -608,6 +609,20 @@ async def run(
             points = rerank(query, points, ranker)
 
         passages_block, sources = build_context(route_name, points, summaries, scope)
+
+        # P3 step 7 -- the no-RAG positive control (charter 9(b), F4). Retrieval
+        # above still RUNS, so route, entities and sources are recorded exactly
+        # as the grounded arm records them; only the passages the model actually
+        # sees are removed. That is the point: the two arms differ in one thing,
+        # the grounding, and everything upstream is held identical.
+        #
+        # The failure mode this guards is specific and silent: if the flag were
+        # not threaded past this seam the arms would be identical, the run would
+        # report "no difference", and that reads exactly like outcome C (a broken
+        # gate). Hence the assertion rather than a log line.
+        if no_rag:
+            passages_block = ""
+            assert not passages_block, "no-RAG arm still carries passage text"
         logger.info(
             "query=%r theme=%s route=%s entities=%s sources=%s",
             query, theme, route_name, resolved_entities, sources,
@@ -650,6 +665,12 @@ async def run(
                     # (R25). Groundedness and fabricated_events are both defined
                     # against these passages; without them they cannot be measured.
                     "passages_block": passages_block,
+                    # Stamped because the two arms are otherwise INDISTINGUISHABLE
+                    # in a transcript: retrieval runs in both, so route, entities
+                    # and sources are populated identically, and only the filename
+                    # would say which arm a row came from. A checkpoint whose whole
+                    # output is a comparison cannot rest on a filename.
+                    "no_rag": no_rag,
                     "answer": answer,
                     "generation_error": error,
                     "telemetry": telemetry,
@@ -705,10 +726,17 @@ if __name__ == "__main__":
                          "candidate must use the SAME k or their means are not comparable. Use 1 for "
                          "smoke tests only.")
     ap.add_argument("--skip-judge", action="store_true", help="write transcripts without calling the judge API")
+    ap.add_argument("--no-rag", action="store_true",
+                    help="P3 step 7 positive control: run retrieval, then send the model NO "
+                         "passages. Everything upstream (route, entities, sources) is recorded "
+                         "identically, so the two arms differ only in grounding.")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     if args.draws < 1:
         ap.error("--draws must be >= 1")
+    if args.no_rag:
+        logger.warning("--no-rag: POSITIVE CONTROL arm. The model receives no passages. "
+                       "This arm is expected to be ungrounded; that is what it measures.")
     asyncio.run(run(args.themes, args.out, args.modes, args.limit, args.skip_judge,
-                    args.themes_only, args.append, args.draws))
+                    args.themes_only, args.append, args.draws, args.no_rag))

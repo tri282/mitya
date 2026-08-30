@@ -358,6 +358,17 @@ def validate_report(report: dict) -> None:
         raise ValueError("caption claims 'quality preserved'; the guard certifies "
                          "only 'not detectably worse' -- see A13's second obligation")
 
+    # R77, measured: the gate cannot detect a completely ungrounded answer. Any
+    # caption implying otherwise is false, so the disclaimer is mandatory rather
+    # than advisory -- a report is invalid without it.
+    if "GROUNDING NOT CHECKED" not in report["caption"]:
+        raise ValueError(
+            "caption omits the grounding disclaimer. R77 measured that stripping every "
+            "passage moves source_leak and assistant_tell by exactly zero while "
+            "groundedness falls 4.022 -> 1.000 offline. A gate that cannot see grounding "
+            "must say so on every report."
+        )
+
 
 def _assert_no_scalar_collapse(node, path: str) -> None:
     if isinstance(node, dict):
@@ -433,12 +444,14 @@ def _demo() -> None:
                       "direction": "prod_miss_cand_hit", "prod_rank": None, "cand_rank": 3}], moved
 
     # schema rules
-    ok = {"caption": "invariants hold, retrieval not detectably worse (MDE 0.128 at n=38)",
+    ok = {"caption": "invariants hold, retrieval not detectably worse (MDE 0.128 at n=38); "
+                     "GROUNDING NOT CHECKED (R77: Tier 1 cannot see it)",
           "disposition": "does_not_block", "layers": {"quality_1a": [r]}}
     validate_report(ok)
     for bad, why in (
         ({**ok, "caption": ""}, "missing caption"),
-        ({**ok, "caption": "quality preserved"}, "forbidden claim"),
+        ({**ok, "caption": "quality preserved; GROUNDING NOT CHECKED"}, "forbidden claim"),
+        ({**ok, "caption": "invariants hold"}, "missing the R77 grounding disclaimer"),
         ({**ok, "layers": {"quality_1a": [{"verdict": NOT_DETECTED,
                                            "recordable_as_improvement": True}]}}, "Q2"),
         ({**ok, "overall_score": 0.9}, "scalar collapse"),

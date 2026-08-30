@@ -141,6 +141,22 @@ def test_reported_metrics_do_not_decide_the_disposition() -> None:
     assert gate.disposition_of(layers)[0] == "does_not_block"
 
 
+def test_a_report_must_admit_it_cannot_see_grounding() -> None:
+    """R77, measured: stripping every passage moved source_leak and
+    assistant_tell by EXACTLY zero while the offline judge saw groundedness fall
+    4.022 -> 1.000. A reader completes "did not block" as "the answers are fine",
+    and the cheapest config the optimizer can reach is the ungrounded one
+    (-32% shadow cost). The disclaimer is mandatory, not advisory."""
+    bare = {"caption": "invariants hold, cost did not grow",
+            "disposition": "does_not_block", "layers": {"quality_1a": []}}
+    try:
+        gate.validate_report(bare)
+    except ValueError as exc:
+        assert "grounding" in str(exc).lower()
+        return
+    raise AssertionError("a report claiming a pass without the grounding disclaimer was accepted")
+
+
 def test_disposition_is_derived_separately_from_verdicts() -> None:
     """F5: a metric may be NOT-DETECTED while the run does not block."""
     layers = {"quality_1a": [{"metric": "recall_at_5", "verdict": gate.NOT_DETECTED}],
@@ -156,8 +172,8 @@ def test_the_scalar_tripwire_fires_on_a_sort_key_and_not_on_a_count() -> None:
     """A13's rider. The false-positive half matters as much as the true-positive
     half: a tripwire that rejects `n_cells_scored` gets deleted by whoever hits
     it first, and then the rule is gone."""
-    ok = {"caption": "invariants hold", "disposition": "does_not_block",
-          "layers": {"quality_1a": []}}
+    ok = {"caption": "invariants hold; GROUNDING NOT CHECKED (R77)",
+          "disposition": "does_not_block", "layers": {"quality_1a": []}}
     gate.validate_report({**ok, "counts": {"n_cells_scored": 49}})
     for offender in ({"overall_score": 1}, {"composite": 1}, {"weighted_quality": 1}):
         try:
