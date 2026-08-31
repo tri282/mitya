@@ -56,6 +56,7 @@ no server, no Qdrant, no network.
 
 import asyncio
 import inspect
+import os
 import shutil
 import sys
 import tempfile
@@ -229,8 +230,18 @@ async def _drive_two_turns(session_id: str | None) -> "_RecordingCache":
 
     import src.api.app as app_mod
     from src.api.app import ChatRequest, chat
+    from src.db import init_schema
     from src.gateway.ladder import Rung
     from src.memory import SessionTurns
+
+    # P6 Batch C: /chat now reads the profile store, so this fixture needs the
+    # memory tables. It drives `chat()` directly rather than through the app, so
+    # `lifespan()` -- the only caller of `init_schema()` in the request path --
+    # never runs. Point DB_PATH at a temp file and initialise it here: the
+    # alternative, leaning on whatever `data/mitya.sqlite3` happens to contain,
+    # makes the test pass on a developer box and fail on a fresh clone.
+    Config.DB_PATH = os.path.join(tempfile.mkdtemp(prefix="mitya-cache-db-"), "t.sqlite3")
+    init_schema()
 
     points = [types.SimpleNamespace(id="chunk-1")]
 

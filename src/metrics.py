@@ -316,6 +316,10 @@ def configure_metrics():
         "mitya_admission_rejections_total",
         description="Requests not admitted by the concurrency bound, by reason (v2 P5, A12(3))",
     )
+    _instruments["memory_write_failures"] = meter.create_counter(
+        "mitya_memory_write_failures_total",
+        description="Memory writes that failed without failing the turn, by stage (v2 P6, G-P13)",
+    )
 
     logger.info("metrics: meter configured, %d instruments registered", len(_instruments))
     return meter
@@ -401,6 +405,27 @@ def record_admission_rejection(tenant: str, reason: str) -> None:
     came back with nine rejections attributed to nothing."""
     _instruments.get("admission_rejections", _NULL).add(
         1, {"tenant": _tenant_key(tenant), "reason": reason if reason in ADMISSION_REASONS else UNKNOWN},
+    )
+
+
+MEMORY_WRITE_STAGES = ("extract", "episodic")
+
+
+def record_memory_write_failure(stage: str) -> None:
+    """A memory write that failed while the turn succeeded (G-P13, Batch C).
+
+    **Metered, not merely logged**, and that is a deliberate departure from the
+    budget guard's precedent at `src/gateway/guard.py:210-218` ("logged, not
+    metered, until a later phase asks"). A silently stale memory changes what
+    the multi-turn metric measures, so staleness has to be loud.
+
+    `stage` separates the per-turn EXTRACTOR from the session-end SUMMARIZER,
+    per CP-6a's O-E residual risk (2): the extractor has no instrument
+    distinguishing "extracted nothing" (correct on the 68 of 108 context-free
+    corpus turns, R120(c)) from "failed", so pooling the two write paths under
+    one series would make that already-blunt signal unreadable."""
+    _instruments.get("memory_write_failures", _NULL).add(
+        1, {"stage": stage if stage in MEMORY_WRITE_STAGES else UNKNOWN},
     )
 
 

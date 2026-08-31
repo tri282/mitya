@@ -81,6 +81,7 @@ from src.metrics import (
     record_unmetered_answer,
     record_unpriced_answer,
 )
+from src import memory_store
 from src.memory import (
     AllocationInputs,
     SessionTurns,
@@ -88,6 +89,7 @@ from src.memory import (
     active_policy,
     context_budget_tokens,
 )
+from src.summarizer import write_profile_from_turn
 from src.observability import (
     STAGE_ALLOCATE,
     STAGE_CACHE,
@@ -95,6 +97,7 @@ from src.observability import (
     STAGE_ENTITIES,
     STAGE_GENERATE_FIRST,
     STAGE_GENERATE_STREAM,
+    STAGE_MEMORY_WRITE,
     STAGE_RERANK,
     STAGE_RETRIEVE,
     STAGE_ROUTE,
@@ -683,7 +686,17 @@ async def chat(
         # answers pooled under one arm, which is R51's defect in a new place.
         # One predicate, evaluated once, policy-independent.
         recent_turns = state.turns.recent(tenant, body.session_id)
-        memory_bearing = bool(recent_turns)
+        # Batch C: the persisted tiers join the predicate, and joining it is the
+        # SECURITY half of this batch. A turn-1 request from a tenant who has a
+        # profile is memory-bearing even with an empty transcript, and caching
+        # its answer under a memory-free key would serve one tenant's
+        # profile-shaped answer to another -- the exact condition
+        # `test_cache_isolation.py` guards, now guarding something real rather
+        # than firing on a module name. Two indexed primary-key lookups, on the
+        # connection policy `src/db.py` already states.
+        profile_facts = memory_store.profile(tenant)
+        episodes = memory_store.episodes(tenant)
+        memory_bearing = bool(recent_turns or profile_facts or episodes)
 
         with tracer.start_as_current_span(STAGE_CACHE) as span, StageTimer(route_name, STAGE_CACHE):
             cached = (
@@ -936,6 +949,8 @@ async def chat(
             budget_tokens=context_budget_tokens(),
             passages_block=passages_block,
             recent_turns=recent_turns,
+            profile_facts=profile_facts,
+            episodes=episodes,
         ))
         # Per-block tokens and provenance onto the span -- P1's spine, through
         # the mechanism P1 already defines. Provenance is the point of step 1:
@@ -1181,6 +1196,55 @@ async def chat(
                 usage.get("prompt_tokens"), usage.get("completion_tokens"),
                 cost.usd, cost.metered, body.session_id,
             )
+
+            # --- v2 P6 step 4: the memory write, in band (G-P13) -------------
+            #
+            # AFTER the meta event, deliberately. G-P13's residual risk: latency
+            # comparability with P4/P5 survives only if it is measured at the
+            # answer-done SSE event and not at stream close, and `meta.total_ms`
+            # IS that timestamp (Batch B's driver reads it as
+            # `server_total_ms`). Writing before the meta yield would fold the
+            # write's duration into every published p95 -- the R97
+            # looks-identical-to-success shape.
+            #
+            # BEFORE the stream closes and the admission slot releases, equally
+            # deliberately: this is the turn's own work, on the turn's own slot.
+            # A second slot would be hold-and-wait under contention and would
+            # count one user action twice against CHAT_MAX_INFLIGHT_TOTAL.
+            #
+            # The write's own duration is reported separately, which is what the
+            # Verify table's serving-vs-summarizer USD/latency split already
+            # demands. Slot occupancy grows by it on turns where it fires, so
+            # `src/config.py:255-266`'s ~12.6 s admitted-wait arithmetic no
+            # longer holds on those turns -- recorded, not retuned (R119 puts
+            # the path at ~0.25 rps, where the queue never forms).
+            #
+            # `write_profile_from_turn` never raises: a failed write must not
+            # fail a turn whose answer has already been delivered. It counts
+            # instead (`mitya_memory_write_failures_total`), because "logged,
+            # not metered" was ruled out here -- a silently stale memory changes
+            # what the multi-turn metric measures.
+            #
+            # The QUESTION ONLY reaches the extractor (O-E), never `answer`.
+            #
+            # THE EPISODIC WRITE IS ABSENT AND THAT IS G-P15: no session-end
+            # signal exists to trigger it from, and inventing one is CP-6d's
+            # decision, not this batch's. The episodic writer in
+            # `src/summarizer.py` is built, unit-tested and has no caller
+            # anywhere. Consequence, which must travel with
+            # the number: `memory_episodic` is never written in any run, so
+            # step 10's per-tier utilization reads zero for `episodic` --
+            # zero-because-untriggered, which is not zero-because-unused.
+            if answer:
+                _t_write = time.monotonic()
+                written = await write_profile_from_turn(tenant, body.query)
+                record_stage_duration(
+                    time.monotonic() - _t_write, route_name, STAGE_MEMORY_WRITE,
+                )
+                logger.info(
+                    "chat: memory_write rows=%d session_id=%s write_ms=%d",
+                    written, body.session_id, int((time.monotonic() - _t_write) * 1000),
+                )
         finally:
             # Ended here, not by a context manager: the span opens in this
             # generator and must close whether the stream completed, errored

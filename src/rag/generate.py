@@ -363,7 +363,7 @@ async def stream_answer(
         attempts += 1
         try:
             t_attempt = time.monotonic()
-            stream = await _open_stream(provider, messages, model)
+            stream = await open_guarded_stream(provider, messages, model)
             first = await anext(aiter(stream.chunks), None)
         except TransportError as exc:
             if attempts >= Config.MAX_GENERATION_ATTEMPTS:
@@ -423,9 +423,17 @@ async def stream_answer(
         usage["attempts"] = attempts
 
 
-async def _open_stream(provider: Provider, messages: list[dict], model: str) -> GenerationStream:
+async def open_guarded_stream(provider: Provider, messages: list[dict], model: str) -> GenerationStream:
     """One guarded attempt. Separate so the retry loop above reads as a retry
-    rather than as a wall of keyword arguments."""
+    rather than as a wall of keyword arguments.
+
+    Public (it lost its leading underscore at v2 P6 Batch C) because it is now
+    the seam `src/summarizer.py` calls too: step 4's requirement is that memory
+    writes go through **the same gateway path serving uses**, so that they
+    appear in cost attribution and count against quota rather than being an
+    unmetered faucet. It is already fully model-parameterized -- the limiter is
+    picked per quota scope from `model`, so passing `Config.SUMMARIZER_MODEL`
+    here yields the summarizer's own independent window (G-P11)."""
     return await guarded_generate(
         provider,
         messages,

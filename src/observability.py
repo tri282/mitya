@@ -359,6 +359,12 @@ STAGE_ALLOCATE = "context.allocate"
 # children (R33).
 STAGE_GENERATE_FIRST = "generate.first_token"
 STAGE_GENERATE_STREAM = "generate.stream"
+# v2 P6 step 4 (G-P13): the in-band memory write, its OWN stage, after the meta
+# event and before the stream closes. Separate from generation because the
+# Verify table demands the serving-vs-summarizer USD/latency split -- one blended
+# stage would make the write's duration unreadable, and G-P13's residual risk is
+# specifically that write time must not silently fold into a latency figure.
+STAGE_MEMORY_WRITE = "memory.write"
 
 
 def set_cost(span, cost: "Cost | None" = None, deferred_to: str | None = None) -> None:
