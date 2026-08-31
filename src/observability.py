@@ -342,6 +342,13 @@ STAGE_ENTITIES = "entities.resolve"
 STAGE_RETRIEVE = "retrieve"
 STAGE_RERANK = "rerank"
 STAGE_CONTEXT = "context.build"
+# v2 P6 step 1: allocation is its own stage because the context PLAN is its own
+# artifact. It sits after context.build (it needs the passages block to price
+# it) and before generation, and it is where the plan's per-block tokens and
+# provenance are stamped -- via ordinary span attributes, from
+# `ContextPlan.attributes()`. No second telemetry mechanism: "visible in P1's
+# spine" (`phase-6-memory.md` Verify) means visible the way every other stage is.
+STAGE_ALLOCATE = "context.allocate"
 # Generation is two spans, not one. The handler primes the stream eagerly (so a
 # connect failure can still become a 503 rather than a hung stream), and the
 # rest is consumed inside the SSE generator after the handler has returned. A

@@ -1,0 +1,61 @@
+{
+  "probe": "P-17",
+  "finding": "R125",
+  "corpus_version": "4155c97b0a2b",
+  "seed": 91,
+  "key_components_held_fixed": {
+    "filters": null,
+    "route": "default",
+    "config_version": "fixed",
+    "corpus_version": "fixed"
+  },
+  "label": "Derived from a harness-authored synthetic session corpus (P4, R91). Its resemblance to real usage is unproven and was not tested: no real traffic exists to compare against (D3), and the corpus was declared unvalidated by choice rather than validated by a check. Its composition is a pre-registered design parameter -- 40 sessions across five families, 50% literal-bearing -- chosen for measurability, not realism, and its cache repeat rate is a dial, not an observation. Per-family figures are reported separately so any reweighting is arithmetic rather than a regeneration.",
+  "rates": {
+    "0.0": {
+      "turns": 108,
+      "hits": 57,
+      "distinct_keys": 51,
+      "hit_rate": 0.5278,
+      "requested_repeat_rate": 0.0,
+      "observed_repeat_rate": 0.0
+    },
+    "0.3": {
+      "turns": 108,
+      "hits": 62,
+      "distinct_keys": 46,
+      "hit_rate": 0.5741,
+      "requested_repeat_rate": 0.3,
+      "observed_repeat_rate": 0.213
+    }
+  },
+  "memory_fingerprints": {
+    "per_turn": {
+      "turns": 108,
+      "hits": 0,
+      "distinct_keys": 108,
+      "hit_rate": 0.0,
+      "provenance": "by_construction"
+    },
+    "per_session": {
+      "turns": 108,
+      "hits": 0,
+      "distinct_keys": 108,
+      "hit_rate": 0.0,
+      "provenance": "computed"
+    },
+    "bucket:8": {
+      "turns": 108,
+      "hits": 17,
+      "distinct_keys": 91,
+      "hit_rate": 0.1574,
+      "provenance": "computed"
+    },
+    "bucket:32": {
+      "turns": 108,
+      "hits": 1,
+      "distinct_keys": 107,
+      "hit_rate": 0.0093,
+      "provenance": "computed"
+    }
+  }
+}

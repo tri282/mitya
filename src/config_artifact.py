@@ -174,6 +174,24 @@ _DEFAULT_MODEL_RATES: dict[str, dict] = {
     # Chosen over 3.5 Flash for its larger free-tier rpd (500 vs 20).
     "models/gemini-3.5-flash-lite": {"prompt": 0.30, "completion": 2.50, "metered": False},
 
+    # Google Gemini 3.1 Flash-Lite -- ai.google.dev/gemini-api/docs/pricing,
+    # read 2026-08-31 (v2 P6, G-P11 prereq 1). Paid-tier text input $0.25 /
+    # Mtok, output $1.50 / Mtok. The page splits this row's input by modality
+    # ($0.25 text/image/video, $0.50 audio) unlike the 3.5-lite row above,
+    # which is unified; we send text only, so the text rate is the correct one
+    # and the audio rate is deliberately not wired -- this table has no
+    # modality column. The 3.5-lite row was re-read in the same pass and still
+    # says $0.30 / $2.50, which is what makes this read a cross-check rather
+    # than a single-source edit.
+    #
+    # P6's summarizer/memory-builder arm (G-P11, owner decision): it draws on
+    # its OWN quota window, since quota_scope() is (provider, model)
+    # (src/limits.py:167-186), and it is also cheaper than the serving arm on
+    # both axes. Without this row summarizer draws are unpriced,
+    # metrics.unpriced_answers fires (src/metrics.py:376), and phase-6 step 4's
+    # stated purpose -- memory writes appear in cost attribution -- is defeated.
+    "models/gemini-3.1-flash-lite": {"prompt": 0.25, "completion": 1.50, "metered": False},
+
     # Groq openai/gpt-oss-120b -- $0.15 / $0.60 per Mtok. Confirmed 2026-08-28
     # from secondary pricing trackers, NOT from Groq's own console page (that
     # page was not reachable in this session). Re-read the console before any
@@ -249,6 +267,26 @@ class ServingConfig(BaseModel):
     # byte-identical at 208 chars when they were split (R54, verified); from
     # here they are free to diverge, and that divergence is the point.
     persona_head: str
+
+    # --- context allocation (v2 P6 step 3) ---
+    # Which allocator policy composes the prompt. Versioned, not deployment:
+    # a different allocation is a different prompt, so it changes what a
+    # correct answer is (D9's split) and must churn `config_version` -- the
+    # R51 defect, applied to the allocator. `src/memory.py`'s `POLICIES`
+    # registry is the set of legal values; `active_policy()` raises on an
+    # unknown one rather than silently falling back to a default, because a
+    # silent fallback is how two policies' rows get pooled under one arm.
+    #
+    # This IS the seam P7 searches: swapping the policy is this field and
+    # nothing else -- no call site names a policy class.
+    allocation_policy: str
+    # Ceiling on tokens the memory tiers may take, per request. 306 is C-2's
+    # measured headroom (`plans/mitya-v2/02-decide/cp-6a-input.md`): CTX_SIZE
+    # 3072 - MAX_TOKENS 1024 = 2048 of prompt budget, against a measured P4
+    # prompt draw of 1742 (R121/R96). It is deliberately NOT the store cap --
+    # N-1: the store holds 30 rows and the allocator injects a handful, and
+    # the first person to tune one will conflate them if they share a name.
+    memory_budget_tokens: int
 
     # routing. Moved off src/rag/router.py: config by another name, and a P7
     # search axis. Left there, P7 finds an un-versionable knob.
@@ -345,6 +383,12 @@ class ServingConfig(BaseModel):
             # answer starts (3.5-flash spent 288 of 300 and returned 8).
             serving_model=os.getenv("SERVING_MODEL", "models/gemini-3.5-flash-lite"),
             persona_head=os.getenv("PERSONA_HEAD", _DEFAULT_PERSONA_HEAD),
+            # "passages_first" is the one real policy P6 ships; "passages_only"
+            # is the trivial second one that proves the seam, and doubles as
+            # the Verify table's no-memory baseline arm and Batch B's starved
+            # arm. Neither is claimed to be a good policy -- O4 is P7's.
+            allocation_policy=os.getenv("ALLOCATION_POLICY", "passages_first"),
+            memory_budget_tokens=int(os.getenv("MEMORY_BUDGET_TOKENS", "306")),
             summary_intent=_DEFAULT_SUMMARY_INTENT,
             book_title_aliases=_DEFAULT_BOOK_TITLE_ALIASES,
             model_limits=_DEFAULT_MODEL_LIMITS,

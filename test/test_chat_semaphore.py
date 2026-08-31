@@ -38,6 +38,7 @@ sys.path.insert(0, ".")
 from src.api.app import ChatRequest, chat  # noqa: E402
 import src.api.app as app_mod  # noqa: E402
 from src.gateway.ladder import Rung  # noqa: E402
+from src.memory import SessionTurns  # noqa: E402
 from src.gateway.retry import TransportError  # noqa: E402
 from fastapi import HTTPException  # noqa: E402
 
@@ -69,6 +70,11 @@ def _state(cached=None):
         entities=_StubEntities(),
         qdrant=None, embedder=None, bm25=None, ranker=None,
         summaries={}, structure={},
+        # v2 P6 step 2(a): `chat()` now reads the recent-turns store before the
+        # cache lookup (the G-P12(b) bypass predicate) and appends to it after
+        # the answer. A real one, not a stub: it is pure process memory with no
+        # I/O, so stubbing it would only hide a signature change.
+        turns=SessionTurns(),
     )
 
 
@@ -100,7 +106,9 @@ def _patch(monkeypatched, **overrides):
         "rerank": lambda query, points, ranker: list(points),
         "build_context": lambda *a, **kw: ("passages", list(_SOURCES)),
         # generation half -- outside the lock
-        "build_messages": lambda head, block, query: [],
+        # `memory_block=` is passed by keyword since P6 Batch A -- **kw rather
+        # than naming it, so a later tier is not a third edit to this stub.
+        "build_messages": lambda head, block, query, **kw: [],
         "active_persona_head": lambda: "",
         "build_sources_footer": lambda sources: "Sources:",
         "stream_answer": lambda messages, usage: _tokens(),
