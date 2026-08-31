@@ -27,7 +27,7 @@ which is the number R107 recorded as missing.
 
 The budget, stated so it can be checked: `tenant` appears on exactly four
 instruments -- `request_duration`, `answer_cost`, `quota_rejections` and
-`admission_rejections` -- of the nine defined here. (`pool_share_rejections`
+`admission_rejections` -- of the twelve defined here. (`pool_share_rejections`
 was the fifth until G-P10 retired the guard it counted: R117 measured it at
 zero because it could never fire, and a counter for a mechanism that does not
 exist is an operator reading a line that can only ever say 0.) At 5 tenants the worst case is 5 x (2 routes x 4 outcomes)
@@ -78,6 +78,9 @@ STAGES = (
 # though nothing on the live /chat path raises it yet (see metrics.py's
 # module report / plans/mitya-v2/05-impl/phase-1.md for why).
 REQUEST_OUTCOMES = ("ok", "error", "empty", "quota")
+# The cache's outcome set stays TWO values (v2 P6 step 7(b)). A memory-bearing
+# request is not a third outcome here: it is a different population, counted on
+# `mitya_cache_bypassed_total` -- see `record_cache_bypass`.
 CACHE_OUTCOMES = ("hit", "miss")
 # Why a request was not admitted (v2 P5 step 6, src/limits.py's AtCapacity):
 # "tenant" is the noisy neighbour held at its own cap, "total" is somebody else
@@ -307,7 +310,19 @@ def configure_metrics():
         "mitya_quota_rejections_total", description="QuotaExhausted rejections (src/limits.py)",
     )
     _instruments["cache_lookups"] = meter.create_counter(
-        "mitya_cache_lookups_total", description="Answer cache lookups, by hit/miss",
+        "mitya_cache_lookups_total",
+        description=(
+            "Answer cache lookups over the MEMORY-FREE population only, by hit/miss "
+            "(v2 P6 step 7(b), G-P12(b) denominator discipline)"
+        ),
+    )
+    _instruments["cache_bypassed"] = meter.create_counter(
+        "mitya_cache_bypassed_total",
+        description=(
+            "Memory-bearing requests that bypassed the answer cache entirely "
+            "(v2 P6 step 7(b), G-P12(b)). A SEPARATE POPULATION from "
+            "mitya_cache_lookups_total -- never a term in its denominator"
+        ),
     )
     _instruments["empty_completions"] = meter.create_counter(
         "mitya_empty_completions_total", description="EMPTY_RETRIES exhausted -- no token ever arrived",
@@ -430,7 +445,33 @@ def record_memory_write_failure(stage: str) -> None:
 
 
 def record_cache_lookup(route: str, outcome: str) -> None:
+    """A lookup against the cache's ONE remaining population: memory-free
+    requests. `outcome` stays the closed set `CACHE_OUTCOMES` -- "bypassed" is
+    deliberately NOT a third value here (see `record_cache_bypass`)."""
     _instruments.get("cache_lookups", _NULL).add(1, {"route": route, "outcome": outcome})
+
+
+def record_cache_bypass(route: str) -> None:
+    """A memory-bearing request that never consulted the cache (step 7(b)).
+
+    **A separate instrument, not a third `outcome` on `cache_lookups`, and that
+    is the whole mechanism.** CP-6c chose outcome (b) -- no caching for
+    memory-bearing requests -- so the cache now serves two populations, and its
+    condition was that the split be reported so a pooled hit rate is never
+    published across them. As a third outcome value, `sum(rate(
+    mitya_cache_lookups_total[5m]))` -- the obvious denominator, and the one
+    already written into `ops/grafana/dashboards/mitya-red-spend.json` -- would
+    silently start including bypasses, and the published hit rate would sag as
+    memory adoption grew while nothing about the cache had degraded. Under two
+    metric names that sum cannot be written by accident; pooling now requires
+    naming both series, which is a deliberate act a reviewer can see.
+
+    `route` only: no `tenant` (memory-bearing is per-tenant, and P5's budget
+    puts tenant on four instruments, R113/R107 -- this is not one of them), and
+    no per-tier or per-session label, which is how an unbounded label gets
+    minted. Two series, total.
+    """
+    _instruments.get("cache_bypassed", _NULL).add(1, {"route": route})
 
 
 def record_empty_completion(route: str) -> None:

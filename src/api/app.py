@@ -73,6 +73,7 @@ from src.metrics import (
     StageTimer,
     configure_metrics,
     record_answer_cost,
+    record_cache_bypass,
     record_cache_lookup,
     record_empty_completion,
     record_request_duration,
@@ -706,13 +707,26 @@ async def chat(
             span.set_attribute("cache.hit", cached is not None)
             span.set_attribute("cache.bypassed_memory", memory_bearing)
             set_cost(span)
-        if not memory_bearing:
+        if memory_bearing:
+            # v2 P6 step 7(b): THE OTHER HALF OF THE SPLIT, counted.
+            #
+            # Batch A already kept bypasses out of the hit-rate denominator
+            # (below). What was missing is the bypassed population's own
+            # number: with only a per-request span attribute, the served share
+            # was unknowable in aggregate, and a hit rate over a shrinking
+            # population reads exactly like a healthy one. As memory adoption
+            # grows this counter is what says "the cache serves less traffic",
+            # which is a different fact from "the cache hits less often" --
+            # and the two are indistinguishable from the lookup counter alone.
+            record_cache_bypass(route_name)
+        else:
             # Denominator discipline (`decisions-p6.md` G-P12(b)): hit rate is
             # reported over the memory-free population ONLY, never pooled. A
             # bypassed request counted as a miss would silently deflate the hit
-            # rate of the only population the cache still serves. It is visible
-            # on the span above instead, which is where a per-request fact
-            # belongs.
+            # rate of the only population the cache still serves. The bypass is
+            # counted on its own instrument above, under its own metric name,
+            # so no PromQL denominator over `mitya_cache_lookups_total` can
+            # pick it up by accident.
             record_cache_lookup(route_name, "hit" if cached is not None else "miss")
 
         # --- degradation ladder (charter V; policy written at P2 step 10, wired
@@ -740,7 +754,9 @@ async def chat(
 
         if cached is not None:
             logger.info(
-                "chat: query=%r filters=%s session_id=%s cache_hit=true", body.query, filters, body.session_id,
+                "chat: query=%r filters=%s session_id=%s cache_hit=true "
+                "cache_population=memory_free",
+                body.query, filters, body.session_id,
             )
 
             cached_outcome = ["error"]
@@ -1189,10 +1205,18 @@ async def chat(
             })
             logger.info(
                 "chat: query=%r route=%s filters=%s entities=%s chunk_ids=%s "
-                "cache_hit=false ttft_ms=%s total_ms=%s filter_relaxed=%s no_context=%s "
+                "cache_hit=false cache_population=%s ttft_ms=%s total_ms=%s "
+                "filter_relaxed=%s no_context=%s "
                 "prompt_tokens=%s completion_tokens=%s cost_usd=%s cost_metered=%s session_id=%s",
                 body.query, route_name, filters, resolved_entities,
-                [p.id for p in points], ttft_ms, total_ms, filter_relaxed, no_context,
+                [p.id for p in points],
+                # Step 7(b): which POPULATION this request belongs to, on the
+                # line that already carries `cache_hit`. Counting `cache_hit=false`
+                # lines is the log-side way to compute a hit rate, and without
+                # this field that count silently pools bypassed requests with
+                # real misses -- the same defect the two metric names prevent.
+                "memory_bearing" if memory_bearing else "memory_free",
+                ttft_ms, total_ms, filter_relaxed, no_context,
                 usage.get("prompt_tokens"), usage.get("completion_tokens"),
                 cost.usd, cost.metered, body.session_id,
             )

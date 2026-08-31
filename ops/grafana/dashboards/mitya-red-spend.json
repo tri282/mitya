@@ -291,8 +291,8 @@
     },
     {
       "type": "timeseries",
-      "title": "Cache hit ratio by route",
-      "description": "A5's saving claim is measured here. A hit generates nothing, so it bills nothing -- this is cost avoided, and it becomes a dollar figure the moment P2 meters anything. Same `or ... * 0` as the error panel: with zero hits the numerator series is absent entirely and the panel would read \"No data\" rather than 0%.",
+      "title": "Cache hit ratio by route (memory-free population only)",
+      "description": "A5's saving claim is measured here. A hit generates nothing, so it bills nothing -- this is cost avoided, and it becomes a dollar figure the moment P2 meters anything. Same `or ... * 0` as the error panel: with zero hits the numerator series is absent entirely and the panel would read \"No data\" rather than 0%. **v2 P6 step 7(b), G-P12(b): this ratio is over the MEMORY-FREE population only.** Memory-bearing requests bypass the cache entirely and are counted on `mitya_cache_bypassed_total`, a separate metric name, so they can never enter this denominator by accident. Read it beside \"Memory-bearing bypass share\": a rising bypass share with a flat ratio is adoption, not degradation, and the two are never pooled.",
       "datasource": {
         "type": "prometheus",
         "uid": "mitya-prometheus"
@@ -315,6 +315,36 @@
         {
           "refId": "A",
           "expr": "(sum by (route) (rate(mitya_cache_lookups_total{outcome=\"hit\"}[5m])) or sum by (route) (rate(mitya_cache_lookups_total[5m])) * 0) / clamp_min(sum by (route) (rate(mitya_cache_lookups_total[5m])), 1e-9)",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory-bearing bypass share by route",
+      "description": "The other population (v2 P6 step 7(b)). Share of /chat requests that carried memory and therefore never consulted the cache. This is the ADOPTION curve: as it rises the cache serves less traffic, which is a different fact from the cache hitting less often. Pooling the two -- putting bypasses in the hit-rate denominator -- would publish adoption as cache degradation.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mitya-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 41
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum by (route) (rate(mitya_cache_bypassed_total[5m])) or sum by (route) (rate(mitya_cache_lookups_total[5m])) * 0) / clamp_min(sum by (route) (rate(mitya_cache_bypassed_total[5m])) + sum by (route) (rate(mitya_cache_lookups_total[5m])), 1e-9)",
           "legendFormat": "{{route}}"
         }
       ]
