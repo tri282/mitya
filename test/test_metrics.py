@@ -41,6 +41,7 @@ from src.metrics import (
     configure_metrics,
     record_answer_cost,
     record_admission_rejection,
+    record_cache_bypass,
     record_cache_lookup,
     record_empty_completion,
     record_request_duration,
@@ -78,6 +79,7 @@ def _emit_one_of_everything() -> None:
     record_unmetered_answer("local-q4km")
     record_unpriced_answer("some/unknown-model")
     record_cache_lookup("DEFAULT", "hit")
+    record_cache_bypass("DEFAULT")
     record_empty_completion("STRUCTURAL")
     record_quota_rejection("local-q4km", "tenant-a")
     record_admission_rejection("tenant-a", "tenant")
@@ -100,10 +102,35 @@ def test_every_instrument_appears() -> None:
         "mitya_request_duration_seconds", "mitya_ttft_seconds",
         "mitya_stage_duration_seconds", "mitya_answer_cost_usd",
         "mitya_unmetered_answers_total", "mitya_unpriced_answers_total",
-        "mitya_cache_lookups_total", "mitya_empty_completions_total",
+        "mitya_cache_lookups_total", "mitya_cache_bypassed_total",
+        "mitya_empty_completions_total",
         "mitya_quota_rejections_total", "mitya_admission_rejections_total",
     ):
         assert name in lines, f"{name} missing from the scrape"
+
+
+def test_the_bypassed_population_cannot_enter_the_hit_rate_denominator() -> None:
+    """v2 P6 step 7(b), G-P12(b)'s denominator discipline, enforced by SHAPE.
+
+    CP-6c chose "no caching for memory-bearing requests", so the cache serves
+    two populations. They are counted on two metric NAMES, not on two values of
+    one `outcome` label, and that is the mechanism: the obvious denominator --
+    `sum(rate(mitya_cache_lookups_total[5m]))`, the one already written into
+    `ops/grafana/dashboards/mitya-red-spend.json` -- cannot pick up a bypass by
+    accident. As memory adoption grows, a pooled rate would sag and read as
+    cache degradation while nothing about the cache had changed.
+    """
+    _emit_one_of_everything()
+    lookups = [ln for ln in _scrape() if ln.startswith("mitya_cache_lookups_total")]
+    assert lookups, "no cache lookup series -- the assertion below would be vacuous"
+    for line in lookups:
+        assert any(f'outcome="{o}"' in line for o in CACHE_OUTCOMES), (
+            f"a third cache outcome reached the hit-rate denominator: {line}"
+        )
+    assert any(ln.startswith("mitya_cache_bypassed_total") for ln in _scrape()), (
+        "the bypassed population is not counted anywhere -- the split is invisible "
+        "in aggregate and only the hit rate would ever be published"
+    )
 
 
 def _tenant_offenders(lines: list[str]) -> list[str]:
