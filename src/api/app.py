@@ -1,4 +1,4 @@
-"""FastAPI app: lifespan-managed retrieval/generation clients, Semaphore(1), request handlers.
+"""FastAPI app: lifespan-managed retrieval/generation clients, retrieval lock, request handlers.
 
 Composes P4 (retrieval) and P5 (generation) behind a single online path
 (design §IV, rulings R4/R15/R22). Everything expensive -- embedder, BM25,
@@ -7,16 +7,17 @@ constructed exactly once in `lifespan()` and hung off `app.state`; endpoints
 only ever read `request.app.state`, never construct these themselves (design
 §IV.3: "never lazily per query").
 
-`asyncio.Semaphore(1)` serializes retrieval+generation end to end, including
-the streamed token phase -- llama-server runs with `--parallel 1` and the
-fastembed/FlashRank models are not re-entrant, so a second request must queue
-rather than interleave. The semaphore is therefore acquired in `POST /chat`
-before any pipeline work and released only in the `finally` of the SSE
-generator (or explicitly on every early-exit branch before a 4xx/5xx is
-raised) -- acquiring/releasing it as a `with` block scoped to the endpoint
-function would release it as soon as the endpoint *returns* a
-`StreamingResponse`, before the body is actually streamed, which would defeat
-the point.
+`asyncio.BoundedSemaphore(1)` serializes the CPU-bound retrieval half of a
+request -- route, cache lookup, readiness/ladder, entities, retrieve, rerank,
+build_context -- and nothing else. It is taken in `POST /chat` as an
+`async with` scoped to exactly that segment and released before
+`build_messages`, so generation, the SSE stream, and the client's consumption
+of that stream all run OUTSIDE it (D7, P4 step 9(b)). Generation left the box
+with the hosted gateway, so `--parallel 1` is no longer a constraint on this
+path; what the lock still covers is the non-re-entrant fastembed/FlashRank
+models and the local-mode Qdrant client. Bounded rather than plain because a
+stray second release is a silent capacity leak in `asyncio.Semaphore` and a
+loud ValueError here.
 
 Errors are mapped to HTTP status codes *before* the SSE stream opens wherever
 possible (design §IV.2: never a hung stream) by eagerly pulling the first
@@ -162,7 +163,7 @@ async def lifespan(app: FastAPI):
     with open(Config.STRUCTURE_PATH, encoding="utf-8") as f:
         app.state.structure = json.load(f)
     app.state.cache = AnswerCache()
-    app.state.sem = asyncio.Semaphore(1)
+    app.state.sem = asyncio.BoundedSemaphore(1)
 
     count = app.state.qdrant.count(Config.QDRANT_COLLECTION).count
     if count == 0:
@@ -375,208 +376,222 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
     root_span.set_attribute("config_version", config_version)
     root_span.set_attribute("corpus_version", corpus_version)
 
-    await state.sem.acquire()
+    # D7 (P4 step 9(b)): the lock is scoped to route -> cache -> ladder ->
+    # entities -> retrieve -> rerank -> build_context, and is gone before
+    # `build_messages` -- generation and the SSE stream run outside it. Every
+    # exit from this block releases exactly once, via the context manager:
+    # the cache-hit `return`, the ladder/retrieval raises, and falling off the
+    # end into generation.
+    # ponytail: what makes retrieval safe today is the single-threaded event
+    # loop, not this semaphore -- the retrieval stages never await. The
+    # semaphore is what keeps it safe if retrieval is ever moved to a thread
+    # (`asyncio.to_thread`, an executor) or a second uvicorn worker, and it is
+    # a real exclusion across the one await in here (`_dependency_status`).
+    async with state.sem:
 
-    # --- route (pure function, zero latency -- src/rag/router.py:10) then
-    # cache check (inside the semaphore, per design §III.4/§III.6) ---
-    # Route runs first so the cache key (P1 step 4/5c) can include it; a route
-    # slice is meaningless without this order, since at lookup time the route
-    # would otherwise still be unknown.
-    # Timed by hand rather than with StageTimer: `route` is the one stage whose
-    # own label value does not exist until the block has finished running.
-    _t_route = time.monotonic()
-    with tracer.start_as_current_span(STAGE_ROUTE) as span:
-        route_name, scope = route(body.query, filters, state.structure, state.summaries)
-        span.set_attribute("route.name", route_name)
-        span.set_attribute("route.scope_resolved", scope is not None)
-        set_cost(span)
-    record_stage_duration(time.monotonic() - _t_route, route_name, STAGE_ROUTE)
+        # --- route (pure function, zero latency -- src/rag/router.py:10) then
+        # cache check (inside the semaphore, per design §III.4/§III.6) ---
+        # Route runs first so the cache key (P1 step 4/5c) can include it; a route
+        # slice is meaningless without this order, since at lookup time the route
+        # would otherwise still be unknown.
+        # Timed by hand rather than with StageTimer: `route` is the one stage whose
+        # own label value does not exist until the block has finished running.
+        _t_route = time.monotonic()
+        with tracer.start_as_current_span(STAGE_ROUTE) as span:
+            route_name, scope = route(body.query, filters, state.structure, state.summaries)
+            span.set_attribute("route.name", route_name)
+            span.set_attribute("route.scope_resolved", scope is not None)
+            set_cost(span)
+        record_stage_duration(time.monotonic() - _t_route, route_name, STAGE_ROUTE)
 
-    def _abort() -> None:
-        """Release the semaphore and record the request as an error.
+        def _abort() -> None:
+            """Record the request as an error on a pre-stream exit.
 
-        Every pre-generation exit goes through here rather than calling
-        `state.sem.release()` directly, because the request-duration histogram
-        is what drives BOTH RED panels -- the rate and the error ratio. A path
-        that releases without recording is invisible to both: measured live at
-        P1 step 7, a 503 from an unreachable llama-server recorded all six
-        stage durations and no request at all, so the error ratio read 0.000
-        during a total outage. One helper, so there is one place that can be
-        got wrong instead of four.
-        """
-        record_request_duration(time.monotonic() - t_start, route_name, "error")
-        state.sem.release()
-    # Root attribute is the slice key for a latency/cost percentile (P1 step
-    # 4) -- the stage span above keeps its own route.name/scope_resolved
-    # detail, this is the per-request dimension.
-    root_span.set_attribute("route", route_name)
+            Records ONLY -- it does not touch the semaphore. The lock is released
+            by the `async with` above, on every exit from the critical section,
+            this raise included (D7). This helper exists because the
+            request-duration histogram is what drives BOTH RED panels -- the rate
+            and the error ratio. A path that exits without recording is invisible
+            to both: measured live at P1 step 7, a 503 from an unreachable
+            llama-server recorded all six stage durations and no request at all,
+            so the error ratio read 0.000 during a total outage. One helper, so
+            there is one place that can be got wrong instead of four.
 
-    with tracer.start_as_current_span(STAGE_CACHE) as span, StageTimer(route_name, STAGE_CACHE):
-        cached = state.cache.get(body.query, filters, route_name, config_version, corpus_version)
-        span.set_attribute("cache.hit", cached is not None)
-        set_cost(span)
-    record_cache_lookup(route_name, "hit" if cached is not None else "miss")
+            Called from BOTH sides of the release point -- the ladder and
+            retrieval exits inside the lock, the generation-priming exits after it
+            -- which is exactly why it must not release.
+            """
+            record_request_duration(time.monotonic() - t_start, route_name, "error")
+        # Root attribute is the slice key for a latency/cost percentile (P1 step
+        # 4) -- the stage span above keeps its own route.name/scope_resolved
+        # detail, this is the per-request dimension.
+        root_span.set_attribute("route", route_name)
 
-    # --- degradation ladder (charter V; policy written at P2 step 10, wired
-    # here by P4 Batch A0 item 2) ---
-    # Readiness comes from the SAME bridge `/ready` reports, never a second
-    # health notion invented for the request path -- that duplication is what
-    # R89 cost. In the hosted shape this costs no network at all: the
-    # generation check is a config read (`credential_status()`), and only a
-    # deployment where llama-server is what serves pays for a probe here.
-    #
-    # `next_rung()` returns PRIMARY whenever generation is available, cache hit
-    # or not: `rung` is which TIER of service this deployment is operating at,
-    # and `cache_hit` is the orthogonal fact about what produced the bytes --
-    # the same orthogonality the meta event already documents for `route_name`.
-    # A cache hit is therefore still served exactly as before; the ladder only
-    # changes what happens when generation is NOT available.
-    _, dependency_result = await _dependency_status(state)
-    readiness = readiness_from_status(dependency_result, cache_available=state.cache.enabled)
-    rung = next_rung(readiness, cache_hit=cached is not None)
-    # R93: the exception paths below emit no `meta` event, so a failed request
-    # had no served-rung field at all. One header, set on every /chat error
-    # exit, is the machine-readable answer for those paths; the streaming paths
-    # carry `rung` inside `meta`.
-    rung_header = {"X-Mitya-Rung": rung.value}
+        with tracer.start_as_current_span(STAGE_CACHE) as span, StageTimer(route_name, STAGE_CACHE):
+            cached = state.cache.get(body.query, filters, route_name, config_version, corpus_version)
+            span.set_attribute("cache.hit", cached is not None)
+            set_cost(span)
+        record_cache_lookup(route_name, "hit" if cached is not None else "miss")
 
-    if cached is not None:
-        logger.info(
-            "chat: query=%r filters=%s session_id=%s cache_hit=true", body.query, filters, body.session_id,
-        )
+        # --- degradation ladder (charter V; policy written at P2 step 10, wired
+        # here by P4 Batch A0 item 2) ---
+        # Readiness comes from the SAME bridge `/ready` reports, never a second
+        # health notion invented for the request path -- that duplication is what
+        # R89 cost. In the hosted shape this costs no network at all: the
+        # generation check is a config read (`credential_status()`), and only a
+        # deployment where llama-server is what serves pays for a probe here.
+        #
+        # `next_rung()` returns PRIMARY whenever generation is available, cache hit
+        # or not: `rung` is which TIER of service this deployment is operating at,
+        # and `cache_hit` is the orthogonal fact about what produced the bytes --
+        # the same orthogonality the meta event already documents for `route_name`.
+        # A cache hit is therefore still served exactly as before; the ladder only
+        # changes what happens when generation is NOT available.
+        _, dependency_result = await _dependency_status(state)
+        readiness = readiness_from_status(dependency_result, cache_available=state.cache.enabled)
+        rung = next_rung(readiness, cache_hit=cached is not None)
+        # R93: the exception paths below emit no `meta` event, so a failed request
+        # had no served-rung field at all. One header, set on every /chat error
+        # exit, is the machine-readable answer for those paths; the streaming paths
+        # carry `rung` inside `meta`.
+        rung_header = {"X-Mitya-Rung": rung.value}
 
-        cached_outcome = ["error"]
-
-        async def cached_stream():
-            try:
-                yield _sse("token", {"text": cached["answer"]})
-                yield _sse("sources", {"sources": cached["sources"], "footer": cached["footer"]})
-                yield _sse("meta", {
-                    "request_id": current_request_id(),
-                    "tenant": current_tenant(),
-                    "config_version": config_version,
-                    "corpus_version": corpus_version,
-                    # The real route, not a "CACHE" sentinel (P1 5c) --
-                    # route and cache_hit are orthogonal dimensions, and
-                    # cache_hit already says the second one. This is what
-                    # makes cache hits poolable with misses per route.
-                    "route_name": route_name,
-                    "chunk_ids": [],
-                    "ttft_ms": None,
-                    "total_ms": int((time.monotonic() - t_start) * 1000),
-                    "filter_relaxed": False,
-                    "no_context": not cached["sources"],
-                    "cache_hit": True,
-                    # Ladder tier this request was served at (P4 Batch A0).
-                    "rung": rung.value,
-                    # Producing arm (v2 P2 step 9, R51): under per-request
-                    # routing one config_version can serve more than one arm,
-                    # so config_version alone cannot say which arm this hit
-                    # replays -- the value has to carry it.
-                    "model": cached["model"],
-                    # A cache hit generates nothing, so it bills nothing. Not
-                    # a placeholder: this is what makes A5's saving claim
-                    # measurable as cost avoided the moment P2 meters
-                    # anything, with no further instrumentation.
-                    "cost_usd": FREE.usd,
-                    "cost_metered": FREE.metered,
-                })
-                yield _sse("done", {})
-                cached_outcome[0] = "ok"
-            finally:
-                # In the `finally`, and with the outcome tracked in a cell, for
-                # the same reason cost is stamped there on the generate path: a
-                # client that disconnects mid-stream never reaches the line
-                # above, but it did consume a request, and a duration histogram
-                # that silently drops those measures only the happy path.
-                record_request_duration(
-                    time.monotonic() - t_start, route_name, cached_outcome[0],
-                )
-                state.sem.release()
-
-        return StreamingResponse(cached_stream(), media_type="text/event-stream")
-
-    if rung is Rung.UNAVAILABLE:
-        # The ladder's bottom rung: generation is down, no cached answer for
-        # this query, and retrieval is down too -- there is nothing left to
-        # serve. Raised BEFORE retrieval rather than letting retrieval fail on
-        # its own, because a 503 that says "the ladder found no rung" and a 500
-        # from a broken Qdrant call are different operator facts.
-        logger.warning(
-            "chat: rung=%s query=%r -- no rung can serve this request (%s)",
-            rung.value, body.query, dependency_result.get("generation"),
-        )
-        _abort()
-        raise HTTPException(
-            status_code=503,
-            detail="serving unavailable: no degradation rung can serve this request",
-            headers=rung_header,
-        )
-
-    # --- resolve/expand -> retrieve -> rerank -> build_context (route already
-    # resolved above, ahead of the cache check) ---
-    try:
-        active_book = filters.get("book") if filters else None
-        with tracer.start_as_current_span(STAGE_ENTITIES) as span, StageTimer(route_name, STAGE_ENTITIES):
-            expanded_query, resolved_entities = state.entities.resolve(
-                body.query, active_book=active_book
+        if cached is not None:
+            logger.info(
+                "chat: query=%r filters=%s session_id=%s cache_hit=true", body.query, filters, body.session_id,
             )
-            span.set_attribute("entities.resolved_count", len(resolved_entities))
-            set_cost(span)
 
-        filter_relaxed = False
-        with tracer.start_as_current_span(STAGE_RETRIEVE) as span, StageTimer(route_name, STAGE_RETRIEVE):
-            span.set_attribute("retrieve.route", route_name)
-            if route_name == "STRUCTURAL" and scope is not None:
-                # Hard chapter filter: no BM25 leg and no rerank, which is why
-                # this route reaches first token ~45% faster (R30).
-                points = retrieve_structural_excerpts(
-                    state.qdrant, state.embedder, expanded_query,
-                    scope["book"], scope["part"], scope["chapter"],
-                )
-            else:
-                hard_filter = build_hard_filter(filters)
-                points = retrieve(
-                    state.qdrant, state.embedder, state.bm25, expanded_query, hard_filter
-                )
-                if not points and hard_filter is not None:
-                    # Fallback (design §IV.3): a hard filter that matches zero
-                    # chunks retries once unfiltered rather than dead-ending.
-                    filter_relaxed = True
-                    logger.info(
-                        "chat: filter_relaxed=true query=%r filters=%s", body.query, filters,
-                    )
-                    points = retrieve(
-                        state.qdrant, state.embedder, state.bm25, expanded_query, None
-                    )
-            span.set_attribute("retrieve.points", len(points))
-            span.set_attribute("retrieve.filter_relaxed", filter_relaxed)
-            set_cost(span)
+            cached_outcome = ["error"]
 
-        if not (route_name == "STRUCTURAL" and scope is not None):
-            with tracer.start_as_current_span(STAGE_RERANK) as span, StageTimer(route_name, STAGE_RERANK):
-                span.set_attribute("rerank.points_in", len(points))
-                points = rerank(body.query, points, state.ranker)
-                span.set_attribute("rerank.points_out", len(points))
+            async def cached_stream():
+                try:
+                    yield _sse("token", {"text": cached["answer"]})
+                    yield _sse("sources", {"sources": cached["sources"], "footer": cached["footer"]})
+                    yield _sse("meta", {
+                        "request_id": current_request_id(),
+                        "tenant": current_tenant(),
+                        "config_version": config_version,
+                        "corpus_version": corpus_version,
+                        # The real route, not a "CACHE" sentinel (P1 5c) --
+                        # route and cache_hit are orthogonal dimensions, and
+                        # cache_hit already says the second one. This is what
+                        # makes cache hits poolable with misses per route.
+                        "route_name": route_name,
+                        "chunk_ids": [],
+                        "ttft_ms": None,
+                        "total_ms": int((time.monotonic() - t_start) * 1000),
+                        "filter_relaxed": False,
+                        "no_context": not cached["sources"],
+                        "cache_hit": True,
+                        # Ladder tier this request was served at (P4 Batch A0).
+                        "rung": rung.value,
+                        # Producing arm (v2 P2 step 9, R51): under per-request
+                        # routing one config_version can serve more than one arm,
+                        # so config_version alone cannot say which arm this hit
+                        # replays -- the value has to carry it.
+                        "model": cached["model"],
+                        # A cache hit generates nothing, so it bills nothing. Not
+                        # a placeholder: this is what makes A5's saving claim
+                        # measurable as cost avoided the moment P2 meters
+                        # anything, with no further instrumentation.
+                        "cost_usd": FREE.usd,
+                        "cost_metered": FREE.metered,
+                    })
+                    yield _sse("done", {})
+                    cached_outcome[0] = "ok"
+                finally:
+                    # In the `finally`, and with the outcome tracked in a cell, for
+                    # the same reason cost is stamped there on the generate path: a
+                    # client that disconnects mid-stream never reaches the line
+                    # above, but it did consume a request, and a duration histogram
+                    # that silently drops those measures only the happy path.
+                    record_request_duration(
+                        time.monotonic() - t_start, route_name, cached_outcome[0],
+                    )
+
+            return StreamingResponse(cached_stream(), media_type="text/event-stream")
+
+        if rung is Rung.UNAVAILABLE:
+            # The ladder's bottom rung: generation is down, no cached answer for
+            # this query, and retrieval is down too -- there is nothing left to
+            # serve. Raised BEFORE retrieval rather than letting retrieval fail on
+            # its own, because a 503 that says "the ladder found no rung" and a 500
+            # from a broken Qdrant call are different operator facts.
+            logger.warning(
+                "chat: rung=%s query=%r -- no rung can serve this request (%s)",
+                rung.value, body.query, dependency_result.get("generation"),
+            )
+            _abort()
+            raise HTTPException(
+                status_code=503,
+                detail="serving unavailable: no degradation rung can serve this request",
+                headers=rung_header,
+            )
+
+        # --- resolve/expand -> retrieve -> rerank -> build_context (route already
+        # resolved above, ahead of the cache check) ---
+        try:
+            active_book = filters.get("book") if filters else None
+            with tracer.start_as_current_span(STAGE_ENTITIES) as span, StageTimer(route_name, STAGE_ENTITIES):
+                expanded_query, resolved_entities = state.entities.resolve(
+                    body.query, active_book=active_book
+                )
+                span.set_attribute("entities.resolved_count", len(resolved_entities))
                 set_cost(span)
 
-        with tracer.start_as_current_span(STAGE_CONTEXT) as span, StageTimer(route_name, STAGE_CONTEXT):
-            passages_block, sources = build_context(route_name, points, state.summaries, scope)
-            no_context = not sources
-            span.set_attribute("context.sources", len(sources))
-            span.set_attribute("context.no_context", no_context)
-            set_cost(span)
-        if no_context:
-            logger.info("chat: no_context=true query=%r", body.query)
-    except ValueError as exc:
-        # Unmapped book title / non-integral part-chapter filter -- reject
-        # loudly (matches Config.resolve_book_title()'s own contract) rather
-        # than let it surface as a 500.
-        _abort()
-        raise HTTPException(status_code=400, detail=str(exc), headers=rung_header) from exc
-    except Exception:
-        _abort()
-        raise
+            filter_relaxed = False
+            with tracer.start_as_current_span(STAGE_RETRIEVE) as span, StageTimer(route_name, STAGE_RETRIEVE):
+                span.set_attribute("retrieve.route", route_name)
+                if route_name == "STRUCTURAL" and scope is not None:
+                    # Hard chapter filter: no BM25 leg and no rerank, which is why
+                    # this route reaches first token ~45% faster (R30).
+                    points = retrieve_structural_excerpts(
+                        state.qdrant, state.embedder, expanded_query,
+                        scope["book"], scope["part"], scope["chapter"],
+                    )
+                else:
+                    hard_filter = build_hard_filter(filters)
+                    points = retrieve(
+                        state.qdrant, state.embedder, state.bm25, expanded_query, hard_filter
+                    )
+                    if not points and hard_filter is not None:
+                        # Fallback (design §IV.3): a hard filter that matches zero
+                        # chunks retries once unfiltered rather than dead-ending.
+                        filter_relaxed = True
+                        logger.info(
+                            "chat: filter_relaxed=true query=%r filters=%s", body.query, filters,
+                        )
+                        points = retrieve(
+                            state.qdrant, state.embedder, state.bm25, expanded_query, None
+                        )
+                span.set_attribute("retrieve.points", len(points))
+                span.set_attribute("retrieve.filter_relaxed", filter_relaxed)
+                set_cost(span)
+
+            if not (route_name == "STRUCTURAL" and scope is not None):
+                with tracer.start_as_current_span(STAGE_RERANK) as span, StageTimer(route_name, STAGE_RERANK):
+                    span.set_attribute("rerank.points_in", len(points))
+                    points = rerank(body.query, points, state.ranker)
+                    span.set_attribute("rerank.points_out", len(points))
+                    set_cost(span)
+
+            with tracer.start_as_current_span(STAGE_CONTEXT) as span, StageTimer(route_name, STAGE_CONTEXT):
+                passages_block, sources = build_context(route_name, points, state.summaries, scope)
+                no_context = not sources
+                span.set_attribute("context.sources", len(sources))
+                span.set_attribute("context.no_context", no_context)
+                set_cost(span)
+            if no_context:
+                logger.info("chat: no_context=true query=%r", body.query)
+        except ValueError as exc:
+            # Unmapped book title / non-integral part-chapter filter -- reject
+            # loudly (matches Config.resolve_book_title()'s own contract) rather
+            # than let it surface as a 500.
+            _abort()
+            raise HTTPException(status_code=400, detail=str(exc), headers=rung_header) from exc
+        except Exception:
+            _abort()
+            raise
 
     if rung is Rung.RETRIEVAL_ONLY:
         # Generation is down and this query has no cached answer, but retrieval
@@ -628,7 +643,6 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
                 record_request_duration(
                     time.monotonic() - t_start, route_name, retrieval_only_outcome[0],
                 )
-                state.sem.release()
 
         return StreamingResponse(retrieval_only_stream(), media_type="text/event-stream")
 
@@ -860,7 +874,6 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
             record_stage_duration(time.monotonic() - _t_stream, route_name, STAGE_GENERATE_STREAM)
             record_request_duration(time.monotonic() - t_start, route_name, stream_outcome[0])
             stream_span.end()
-            state.sem.release()
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

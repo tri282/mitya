@@ -1,0 +1,579 @@
+{
+  "provenance": {
+    "generation": {
+      "model": "models/gemini-3.5-flash-lite",
+      "provider": "google",
+      "status": "ok"
+    },
+    "llama_server": "not serving generation (provider=google)",
+    "qdrant": {
+      "collection": "dostoevsky",
+      "count": 3284
+    },
+    "artifacts": {
+      "entities_loaded": 256,
+      "summaries_loaded": 231,
+      "structure_loaded": 5
+    },
+    "status": "ready",
+    "readiness": {
+      "generation_available": true,
+      "retrieval_available": true,
+      "cache_available": false,
+      "degraded": false
+    }
+  },
+  "levels": [
+    1,
+    2,
+    4
+  ],
+  "requests_per_level": 5,
+  "client_timeout_s": 120.0,
+  "census": {
+    "1": {
+      "n": 5,
+      "status_codes": {
+        "200": 5
+      },
+      "no_response": 0
+    },
+    "2": {
+      "n": 5,
+      "status_codes": {
+        "200": 5
+      },
+      "no_response": 0
+    },
+    "4": {
+      "n": 5,
+      "status_codes": {
+        "200": 5
+      },
+      "no_response": 0
+    }
+  },
+  "curve": {
+    "curve": {
+      "1": {
+        "rps": 0.15648119934854776,
+        "n_requests": 5,
+        "total_ms": {
+          "DEFAULT": {
+            "p50": 6456.284396001138,
+            "p95": 6959.904819999792,
+            "p99": 6959.904819999792
+          }
+        },
+        "ttft_ms": {
+          "DEFAULT": {
+            "p50": 3467.8450290011824,
+            "p95": 3540.256321000925,
+            "p99": 3540.256321000925
+          }
+        }
+      },
+      "2": {
+        "rps": 0.22155860863691856,
+        "n_requests": 5,
+        "total_ms": {
+          "DEFAULT": {
+            "p50": 8394.866799000738,
+            "p95": 10240.746391998982,
+            "p99": 10240.746391998982
+          }
+        },
+        "ttft_ms": {
+          "DEFAULT": {
+            "p50": 5318.684730002133,
+            "p95": 5542.595850998623,
+            "p99": 5542.595850998623
+          }
+        }
+      },
+      "4": {
+        "rps": 0.2742817215764412,
+        "n_requests": 5,
+        "total_ms": {
+          "DEFAULT": {
+            "p50": 14184.647264999512,
+            "p95": 14185.486251000839,
+            "p99": 14185.486251000839
+          }
+        },
+        "ttft_ms": {
+          "DEFAULT": {
+            "p50": 9840.820932000497,
+            "p95": 9912.761178999062,
+            "p99": 9912.761178999062
+          }
+        }
+      }
+    },
+    "knee_concurrency": 4
+  },
+  "saturation": {
+    "1": {
+      "n": 5,
+      "concurrency": 1,
+      "wait_ms": {
+        "p50": 0.0,
+        "p95": 503.6204239986546,
+        "p99": 503.6204239986546
+      },
+      "local_429_rate": 0.0,
+      "provider_502_rate": 0.0,
+      "total_ms_p50": 6456.284396001138,
+      "total_ms_p99": 6959.904819999792,
+      "p99_degrades_without_error": false,
+      "queue_depth": "unobservable: src/metrics.py defines nine instruments (four histograms, five counters) and zero gauges (R90 gap 3) -- a waiting request appears only as latency after it finishes, so queue depth cannot be read from outside the process. Reported as this label, never guessed and never silently omitted."
+    },
+    "2": {
+      "n": 5,
+      "concurrency": 2,
+      "wait_ms": {
+        "p50": 1938.5824029996002,
+        "p95": 3784.4619959978445,
+        "p99": 3784.4619959978445
+      },
+      "local_429_rate": 0.0,
+      "provider_502_rate": 0.0,
+      "total_ms_p50": 8394.866799000738,
+      "total_ms_p99": 10240.746391998982,
+      "p99_degrades_without_error": false,
+      "queue_depth": "unobservable: src/metrics.py defines nine instruments (four histograms, five counters) and zero gauges (R90 gap 3) -- a waiting request appears only as latency after it finishes, so queue depth cannot be read from outside the process. Reported as this label, never guessed and never silently omitted."
+    },
+    "4": {
+      "n": 5,
+      "concurrency": 4,
+      "wait_ms": {
+        "p50": 7728.362868998374,
+        "p95": 7729.201854999701,
+        "p99": 7729.201854999701
+      },
+      "local_429_rate": 0.0,
+      "provider_502_rate": 0.0,
+      "total_ms_p50": 14184.647264999512,
+      "total_ms_p99": 14185.486251000839,
+      "p99_degrades_without_error": false,
+      "queue_depth": "unobservable: src/metrics.py defines nine instruments (four histograms, five counters) and zero gauges (R90 gap 3) -- a waiting request appears only as latency after it finishes, so queue depth cannot be read from outside the process. Reported as this label, never guessed and never silently omitted."
+    }
+  },
+  "corruption": {
+    "queries_checked": 4,
+    "divergent": {}
+  },
+  "records": {
+    "1": [
+      {
+        "row_id": null,
+        "concurrency": 1,
+        "query": "\"And remember the condition: if you wear these out, you will have another suit for nothing! They only do business on that system at Fedyaev’s; if you’ve bought a thing once, you are satisfied for life, for you will never go there again of your own free will. You see that they are a bit worn, but they’ll last a couple of months, for it’s foreign work and foreign leather; the secretary of the English Embassy sold them last week--he had only worn them six days, but he was very short of cash.\"\n\nwho is being described here and why does it matter?",
+        "status_code": 200,
+        "ttft_ms": 3467.8450290011824,
+        "total_ms": 6214.932590999524,
+        "route": "DEFAULT",
+        "cache_hit": false,
+        "cost_usd": 0.0016033,
+        "cost_metered": false,
+        "model": "models/gemini-3.5-flash-lite",
+        "no_context": false,
+        "filter_relaxed": false,
+        "chunk_ids": [
+          165,
+          166,
+          164
+        ],
+        "terminal_event": null,
+        "fault_phase": null,
+        "error_detail": null,
+        "answer_chars": 1984,
+        "answer_tail": "d boots and cheerful chatter over cast-off trousers, the whole tragicomic tragi-comedy of our Russian life is laid bare.",
+        "request_id": "cca70c3b738795e08cf3a9b7f019a5aa",
+        "rung": "primary_model"
+      },
+      {
+        "row_id": null,
+        "concurrency": 1,
+        "query": "why does that matter later on?",
+        "status_code": 200,
+        "ttft_ms": 3256.9831519977015,
+        "total_ms": 6471.756319999258,
+        "route": "DEFAULT",
+        "cache_hit": false,
+        "cost_usd": 0.0019088,
+        "cost_metered": false,
+        "model": "models/gemini-3.5-flash-lite",
+        "no_context": false,
+        "filter_relaxed": false,
+        "chunk_ids": [
+          511,
+          2221,
+          2687
+        ],
+        "terminal_event": null,
+        "fault_phase": null,
+        "error_detail": null,
+        "answer_chars": 2606,
+        "answer_tail": " law, but by the relentless memory of our own tormented hearts, which will not let us rest, even when the grave is near.",
+        "request_id": "994d64e630fcb28573ebeaedb621ae62",
+        "rung": "primary_model"
+      },
+      {
+        "row_id": null,
+        "concurrency": 1,
+        "query": "\"Of course a great deal of that, too, was superficial and an assumption of cynicism; of course there were glimpses of youth and freshness even in their depravity; but even that freshness was not attractive, and showed itself in a certain rakishness. I hated them horribly, though perhaps I was worse than any of them.\"\n\nwhat does this mean?",
+        "status_code": 200,
+        "ttft_ms": 3523.2185480017506,
+        "total_ms": 6456.284396001138,
+        "route": "DEFAULT",
+        "cache_hit": false,
+        "cost_usd": 0.0017534,
+        "cost_metered": false,
+        "model": "models/gemini-3.5-flash-lite",
+        "no_context": false,
+        "filter_relaxed": false,
+        "chunk_ids": [
+          3210,
+          3209,
+          679
+        ],
+        "terminal_event": null,
+        "fault_phase": null,
+        "error_detail": null,
+        "answer_chars": 2227,
+        "answer_tail": "judge others so harshly precisely because we recognize our own wretchedness mirrored and magnified in their distortions.",
+        "request_id": "98e6c006cf5ae2b176346cc2f84cf8a0",
+        "rung": "primary_model"
+      },
+      {
+        "row_id": null,
+        "concurrency": 1,
+        "query": "why does that matter later on?",
+        "status_code": 200,
+        "ttft_ms": 3407.506490999367,
+        "total_ms": 5844.84407799755,
+        "route": "DEFAULT",
+        "cache_hit": false,
+        "cost_usd": 0.0014338,
+        "cost_metered": false,
+        "model": "models/gemini-3.5-flash-lite",
+        "no_context": false,
+        "filter_relaxed": false,
+        "chunk_ids": [
+          511,
+          2221,
+          2687
+        ],
+        "terminal_event": null,
+        "fault_phase": null,
+        "error_detail": null,
+        "answer_chars": 1727,
+        "answer_tail": "ternally within the chambers of the spirit. That is why it matters later on. Because *later on*, you must face yourself.",
+        "request_id": "7154e788e92604ecb7dff676290970ed",
+        "rung": "primary_model"
+      },
+      {
+        "row_id": null,
+        "concurrency": 1,
+        "query": "\"Till now we’ve been talking of things that don’t matter, about this trial, but I haven’t said a word to you about the chief thing. Yes, the trial is to‐morrow; but it wasn’t the trial I meant, when I said it was all over with me. Why do you look at me so critically?” “What do you mean, Mitya?” “Ideas, ideas, that’s all!\"\n\nwhat is this about?",
+        "status_code": 200,
+        "ttft_ms": 3540.256321000925,
+        "total_ms": 6959.904819999792,
+        "route": "DEFAULT",
+        "cache_hit": false,
+        "cost_usd": 0.001854,
+        "cost_metered": false,
+        "model": "models/gemini-3.5-flash-lite",
+        "no_context": false,
+        "filter_relaxed": false,
+        "chunk_ids": [
+          1577,
+          1576,
+          1592
+        ],
+        "terminal_event": null,
+        "fault_phase": null,
+        "error_detail": null,
+        "answer_chars": 2395,
+        "answer_tail": "gling to be born within his ruined shell. That is what it is about. It is about the catastrophic depth of a human being.",
+        "request_id": "94c45a3602097b623cf1630dc1140f3f",
+        "rung": "primary_model"
+      }
+    ],
+    "2": [
+      {
+        "row_id": null,
+        "concurrency": 2,
+        "query": "\"And remember the condition: if you wear these out, you will have another suit for nothing! They only do business on that system at Fedyaev’s; if you’ve bought a thing once, you are satisfied for life, for you will never go there again of your own free will. You see that they are a bit worn, but they’ll last a couple of months, for it’s foreign work and foreign leather; the secretary of the English Embassy sold them last week--he had only worn them six days, but he was very short of cash.\"\n\nwho is being described here and why does it matter?",
+        "status_code": 200,
+        "ttft_ms": 5542.595850998623,
+        "total_ms": 8054.698495001503,
+        "route": "DEFAULT",
+        "cache_hit": false,
+        "cost_usd": 0.0016007999999999999,
+        "cost_metered": false,
+        "model": "models/gemini-3.5-flash-lite",
+        "no_context": false,
+        "filter_relaxed": false,
+        "chunk_ids": [
+          165,
+          166,
+          164
+        ],
+        "terminal_event": null,
+        "fault_phase": null,
+        "error_detail": null,
+        "answer_chars": 2031,
+        "answer_tail": "e tragedy lies: in the agonizing gap between our monstrous pride and our pitiful, laughable, utterly helpless condition.",
+        "request_id": "0c089b9e0eb424f03d719e64c971533a",
+        "rung": "primary_model"
+      },
+      {
+        "row_id": null,
+        "concurrency": 2,
+        "query": "why does that matter later on?",
+        "status_code": 200,
+        "ttft_ms": 5364.157929998328,
+        "total_ms": 10240.746391998982,
+        "route": "DEFAULT",
+        "cache_hit": false,
+        "cost_usd": 0.0017037999999999999,
+        "cost_metered": false,
+        "model": "models/gemini-3.5-flash-lite",
+        "no_context": false,
+        "filter_relaxed": false,
+        "chunk_ids": [
+          511,
+          2221,
+          2687
+        ],
+        "terminal_event": null,
+        "fault_phase": null,
+        "error_detail": null,
+        "answer_chars": 2265,
+        "answer_tail": " one day be dragged into the light, even if that light shines only in the terrifying solitude of one's own ruined heart.",
+        "request_id": "d94a0c1f1494c068d1198f4e40416f0a",
+        "rung": "primary_model"
+      },
+      {
+        "row_id": null,
+        "concurrency": 2,
+        "query": "\"Of course a great deal of that, too, was superficial and an assumption of cynicism; of course there were glimpses of youth and freshness even in their depravity; but even that freshness was not attractive, and showed itself in a certain rakishness. I hated them horribly, though perhaps I was worse than any of them.\"\n\nwhat does this mean?",
+        "status_code": 200,
+        "ttft_ms": 5318.684730002133,
+        "total_ms": 8394.866799000738,
+        "route": "DEFAULT",
+        "cache_hit": false,
+        "cost_usd": 0.0018059,
+        "cost_metered": false,
+        "model": "models/gemini-3.5-flash-lite",
+        "no_context": false,
+        "filter_relaxed": false,
+        "chunk_ids": [
+          3210,
+          3209,
+          679
+        ],
+        "terminal_event": null,
+        "fault_phase": null,
+        "error_detail": null,
+        "answer_chars": 2460,
+        "answer_tail": "finite, irredeemable ugliness. We judge the world fiercely, all the while knowing we are the chief criminals at the bar.",
+        "request_id": "0b28dee579496898e55dd36d451af8bf",
+        "rung": "primary_model"
+      },
+      {
+        "row_id": null,
+        "concurrency": 2,
+        "query": "why does that matter later on?",
+        "status_code": 200,
+        "ttft_ms": 3276.675910998165,
+        "total_ms": 8570.330173999537,
+        "route": "DEFAULT",
+        "cache_hit": false,
+        "cost_usd": 0.0019288,
+        "cost_metered": false,
+        "model": "models/gemini-3.5-flash-lite",
+        "no_context": false,
+        "filter_relaxed": false,
+        "chunk_ids": [
+          511,
+          2221,
+          2687
+        ],
+        "terminal_event": null,
+        "fault_phase": null,
+        "error_detail": null,
+        "answer_chars": 2686,
+        "answer_tail": "mented conscience. We are chained to our consequences, my friend, and the later on is always more terrible than the now.",
+        "request_id": "4db37553db0397f9202897372cdf3477",
+        "rung": "primary_model"
+      },
+      {
+        "row_id": null,
+        "concurrency": 2,
+        "query": "\"Till now we’ve been talking of things that don’t matter, about this trial, but I haven’t said a word to you about the chief thing. Yes, the trial is to‐morrow; but it wasn’t the trial I meant, when I said it was all over with me. Why do you look at me so critically?” “What do you mean, Mitya?” “Ideas, ideas, that’s all!\"\n\nwhat is this about?",
+        "status_code": 200,
+        "ttft_ms": 3579.1668450001453,
+        "total_ms": 6101.274145999923,
+        "route": "DEFAULT",
+        "cache_hit": false,
+        "cost_usd": 0.0016665,
+        "cost_metered": false,
+        "model": "models/gemini-3.5-flash-lite",
+        "no_context": false,
+        "filter_relaxed": false,
+        "chunk_ids": [
+          1577,
+          1576,
+          1592
+        ],
+        "terminal_event": null,
+        "fault_phase": null,
+        "error_detail": null,
+        "answer_chars": 2057,
+        "answer_tail": "utiful, terrifying birth of the human spirit, wrestling with things too vast for it to bear, yet which it cannot escape.",
+        "request_id": "7d568a84d9fe98a1cf15222399d45890",
+        "rung": "primary_model"
+      }
+    ],
+    "4": [
+      {
+        "row_id": null,
+        "concurrency": 4,
+        "query": "\"And remember the condition: if you wear these out, you will have another suit for nothing! They only do business on that system at Fedyaev’s; if you’ve bought a thing once, you are satisfied for life, for you will never go there again of your own free will. You see that they are a bit worn, but they’ll last a couple of months, for it’s foreign work and foreign leather; the secretary of the English Embassy sold them last week--he had only worn them six days, but he was very short of cash.\"\n\nwho is being described here and why does it matter?",
+        "status_code": 200,
+        "ttft_ms": 9762.916904001031,
+        "total_ms": 11903.890606001369,
+        "route": "DEFAULT",
+        "cache_hit": false,
+        "cost_usd": 0.0013683,
+        "cost_metered": false,
+        "model": "models/gemini-3.5-flash-lite",
+        "no_context": false,
+        "filter_relaxed": false,
+        "chunk_ids": [
+          165,
+          166,
+          164
+        ],
+        "terminal_event": null,
+        "fault_phase": null,
+        "error_detail": null,
+        "answer_chars": 1570,
+        "answer_tail": "kest depths of existential torment, man remains a creature of flesh, blood, and ridiculous, heartbreaking vulnerability.",
+        "request_id": "37d95308dd4ce36fb4500d4aacffeae0",
+        "rung": "primary_model"
+      },
+      {
+        "row_id": null,
+        "concurrency": 4,
+        "query": "\"Of course a great deal of that, too, was superficial and an assumption of cynicism; of course there were glimpses of youth and freshness even in their depravity; but even that freshness was not attractive, and showed itself in a certain rakishness. I hated them horribly, though perhaps I was worse than any of them.\"\n\nwhat does this mean?",
+        "status_code": 200,
+        "ttft_ms": 9894.335532000696,
+        "total_ms": 14184.647264999512,
+        "route": "DEFAULT",
+        "cache_hit": false,
+        "cost_usd": 0.0020109,
+        "cost_metered": false,
+        "model": "models/gemini-3.5-flash-lite",
+        "no_context": false,
+        "filter_relaxed": false,
+        "chunk_ids": [
+          3210,
+          3209,
+          679
+        ],
+        "terminal_event": null,
+        "fault_phase": null,
+        "error_detail": null,
+        "answer_chars": 2724,
+        "answer_tail": "o has poisoned his own well, who lashes out at the world because he cannot bear the agonizing verdict of his own mirror.",
+        "request_id": "95133154b99acc79d012ebad41786fec",
+        "rung": "primary_model"
+      },
+      {
+        "row_id": null,
+        "concurrency": 4,
+        "query": "why does that matter later on?",
+        "status_code": 200,
+        "ttft_ms": 9912.761178999062,
+        "total_ms": 14184.821145001479,
+        "route": "DEFAULT",
+        "cache_hit": false,
+        "cost_usd": 0.0013737999999999999,
+        "cost_metered": false,
+        "model": "models/gemini-3.5-flash-lite",
+        "no_context": false,
+        "filter_relaxed": false,
+        "chunk_ids": [
+          511,
+          2221,
+          2687
+        ],
+        "terminal_event": null,
+        "fault_phase": null,
+        "error_detail": null,
+        "answer_chars": 1583,
+        "answer_tail": "ause *later on* is simply the moment when the truth, so long denied, catches up to us in the dark and refuses to let go.",
+        "request_id": "8defa045161ed466ac0d58c2dfc7cb24",
+        "rung": "primary_model"
+      },
+      {
+        "row_id": null,
+        "concurrency": 4,
+        "query": "why does that matter later on?",
+        "status_code": 200,
+        "ttft_ms": 9840.820932000497,
+        "total_ms": 14185.486251000839,
+        "route": "DEFAULT",
+        "cache_hit": false,
+        "cost_usd": 0.0015287999999999999,
+        "cost_metered": false,
+        "model": "models/gemini-3.5-flash-lite",
+        "no_context": false,
+        "filter_relaxed": false,
+        "chunk_ids": [
+          511,
+          2221,
+          2687
+        ],
+        "terminal_event": null,
+        "fault_phase": null,
+        "error_detail": null,
+        "answer_chars": 1847,
+        "answer_tail": "ery forgotten cruelty, every cowardly confession, and every unrepented sin rises up to demand its full, agonizing price.",
+        "request_id": "d15fab7b622623169faaa49618b19aa1",
+        "rung": "primary_model"
+      },
+      {
+        "row_id": null,
+        "concurrency": 4,
+        "query": "\"Till now we’ve been talking of things that don’t matter, about this trial, but I haven’t said a word to you about the chief thing. Yes, the trial is to‐morrow; but it wasn’t the trial I meant, when I said it was all over with me. Why do you look at me so critically?” “What do you mean, Mitya?” “Ideas, ideas, that’s all!\"\n\nwhat is this about?",
+        "status_code": 200,
+        "ttft_ms": 3514.353807000589,
+        "total_ms": 6316.591779999726,
+        "route": "DEFAULT",
+        "cache_hit": false,
+        "cost_usd": 0.001619,
+        "cost_metered": false,
+        "model": "models/gemini-3.5-flash-lite",
+        "no_context": false,
+        "filter_relaxed": false,
+        "chunk_ids": [
+          1577,
+          1576,
+          1592
+        ],
+        "terminal_event": null,
+        "fault_phase": null,
+        "error_detail": null,
+        "answer_chars": 1878,
+        "answer_tail": "rt. \n\nThat is what it is about. Not the trial. Never the trial. The ideas! Always the damned, sleepless, accursed ideas!",
+        "request_id": "345eaf9be2052a59f20e61508ba6bb54",
+        "rung": "primary_model"
+      }
+    ]
+  }
+}
