@@ -18,14 +18,26 @@ plane through the front door). `tenant` stays on spans and logs; it becomes a
 metric label at P5 once identity is authenticated and the tenant set is
 therefore bounded and known.
 
-STATUS at v2 P5 Batch A: the PRECONDITION is now met and the rule is
-deliberately NOT yet lifted. Identity is authenticated (D7) and the tenant set
-is bounded -- it is the `accounts` table, and only `scripts/seed_account.py`
-can add a row -- so `tenant` is now admissible as a metric label. Actually
-adding it is an instrumentation change with a cardinality budget attached, and
-this batch's scope is steps 1-3; it is recorded as owed in
-`plans/mitya-v2/05-impl/phase-5.md` rather than done here. Until then `tenant`
-remains a span/log dimension only.
+STATUS at v2 P5 Batch B: **the rule is now lifted, on four instruments, with a
+budget that is enforced rather than asserted.** Both halves of the precondition
+hold -- identity is authenticated (D7) and the tenant set is bounded to the
+`accounts` table, which only `scripts/seed_account.py` can add a row to -- and
+the owner has stated the maximum tenant count as **5** (`decisions-p5.md`),
+which is the number R107 recorded as missing.
+
+The budget, stated so it can be checked: `tenant` appears on exactly four
+instruments -- `request_duration`, `answer_cost`, `quota_rejections`,
+`pool_share_rejections` -- plus the new `admission_rejections`, five in all, of
+the ten defined here. At 5 tenants the worst case is 5 x (2 routes x 4 outcomes)
+= 40 histogram series on the largest of them; the rest are counters in the
+single digits. Trivial, which is the whole reason it is now allowed.
+
+It is enforced by `_tenant_key()`, not by trusting the account table: a value
+that fails the tenant shape collapses to "unknown", and once
+`Config.MAX_TENANT_LABELS` distinct values have been seen every further one
+collapses to "other". The unbounded-series memory-exhaustion path the original
+rule was written against is therefore closed by code even if the seeding
+discipline is not kept. Every OTHER instrument stays tenant-free.
 
 Every OTHER label is a closed set, enforced by routing every label value
 through one of the `_*_key()` helpers below rather than letting a call site
@@ -46,6 +58,7 @@ from src.observability import (
     STAGE_RERANK,
     STAGE_RETRIEVE,
     STAGE_ROUTE,
+    is_valid_tenant,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,8 +77,61 @@ STAGES = (
 # module report / plans/mitya-v2/05-impl/phase-1.md for why).
 REQUEST_OUTCOMES = ("ok", "error", "empty", "quota")
 CACHE_OUTCOMES = ("hit", "miss")
+# Why a request was not admitted (v2 P5 step 6, src/limits.py's AtCapacity):
+# "tenant" is the noisy neighbour held at its own cap, "total" is somebody else
+# losing a request because the deployment is full. Two labels because they are
+# the two halves of the starvation question.
+ADMISSION_REASONS = ("tenant", "total")
 
 UNKNOWN = "unknown"
+# Overflow bucket for the tenant label -- see _tenant_key(). Distinct from
+# UNKNOWN, which means "not a valid tenant id at all": "other" means "a real
+# tenant, past the cardinality budget", and collapsing the two would hide a
+# budget breach behind what looks like malformed input.
+OTHER = "other"
+
+# Tenant label values seen so far this process. Module-level and never pruned:
+# it IS the cardinality budget's accounting, and a prune would let the same
+# tenant re-enter the budget repeatedly.
+_seen_tenants: set[str] = set()
+
+
+def _tenant_key(tenant: str | None) -> str:
+    """The tenant label value, bounded (v2 P5, R107; see the module docstring).
+
+    Three outcomes, and the boundary is enforced here rather than assumed from
+    the accounts table:
+
+      * a valid, already-seen or within-budget tenant id -> itself;
+      * anything failing the tenant shape (or absent) -> "unknown";
+      * a valid id arriving after `Config.MAX_TENANT_LABELS` distinct ones have
+        been seen -> "other", logged once per breach so the budget being hit is
+        an operator-visible event and not a silent relabel.
+
+    `is_valid_tenant` is imported from src.observability so the shape has one
+    definition across logs, spans, account ids and now metric labels.
+    """
+    from src.config import Config
+
+    # isinstance before the shape check, not for tidiness: `chat()` takes its
+    # tenant through `Depends(require_tenant)`, and the offline tests that call
+    # it directly (test_chat_semaphore.py) get the unresolved `Depends` object
+    # in that parameter. A label helper that raises there would turn a metric
+    # into a request-path failure.
+    if not tenant or not isinstance(tenant, str) or not is_valid_tenant(tenant):
+        return UNKNOWN
+    if tenant in _seen_tenants:
+        return tenant
+    if len(_seen_tenants) >= Config.MAX_TENANT_LABELS:
+        logger.warning(
+            "metrics: tenant label budget of %d exhausted -- %r collapses to %r. "
+            "Either more accounts exist than this deployment claims to support, "
+            "or MAX_TENANT_LABELS needs raising deliberately.",
+            Config.MAX_TENANT_LABELS, tenant, OTHER,
+        )
+        return OTHER
+    _seen_tenants.add(tenant)
+    return tenant
 
 
 def _model_key(model: str) -> str:
@@ -244,6 +310,14 @@ def configure_metrics():
     _instruments["empty_completions"] = meter.create_counter(
         "mitya_empty_completions_total", description="EMPTY_RETRIES exhausted -- no token ever arrived",
     )
+    _instruments["pool_share_rejections"] = meter.create_counter(
+        "mitya_pool_share_rejections_total",
+        description="Rejections by the shared-pool fair-share guard (v2 P5, A12(1))",
+    )
+    _instruments["admission_rejections"] = meter.create_counter(
+        "mitya_admission_rejections_total",
+        description="Requests not admitted by the concurrency bound, by reason (v2 P5, A12(3))",
+    )
 
     logger.info("metrics: meter configured, %d instruments registered", len(_instruments))
     return meter
@@ -255,12 +329,19 @@ def configure_metrics():
 # takes only allowlisted label values -- callers pass raw strings for `route`/
 # `stage`/`outcome` because those already come from closed-set constants
 # (STAGE_*, route(), literal outcome strings); `model` always goes through
-# `_model_key()`/`_provider_key()` here so a caller can never accidentally
-# mint a new series by passing a raw id through.
+# `_model_key()`/`_provider_key()` here, and `tenant` always through
+# `_tenant_key()` (v2 P5), so a caller can never accidentally mint a new series
+# by passing a raw id through.
 
 
-def record_request_duration(seconds: float, route: str, outcome: str) -> None:
-    _instruments.get("request_duration", _NULL).record(seconds, {"route": route, "outcome": outcome})
+def record_request_duration(seconds: float, route: str, outcome: str, tenant: str | None = None) -> None:
+    """`tenant` defaults to None -> "unknown" so an unauthenticated or
+    pre-P5 call site still records a request rather than raising -- a request
+    that goes unrecorded is invisible to BOTH RED panels, which is the defect
+    P1 step 7 measured live."""
+    _instruments.get("request_duration", _NULL).record(
+        seconds, {"route": route, "outcome": outcome, "tenant": _tenant_key(tenant)},
+    )
 
 
 def record_ttft(seconds: float, route: str) -> None:
@@ -271,10 +352,13 @@ def record_stage_duration(seconds: float, route: str, stage: str) -> None:
     _instruments.get("stage_duration", _NULL).record(seconds, {"route": route, "stage": stage})
 
 
-def record_answer_cost(usd: float, model: str) -> None:
+def record_answer_cost(usd: float, model: str, tenant: str | None = None) -> None:
     """Only for a PRICED and METERED cost -- see module docstring / G5. Caller
     (src/api/app.py) must not call this for an unmetered or unpriced Cost."""
-    _instruments.get("answer_cost", _NULL).record(usd, {"provider": _provider_key(model), "model": _model_key(model)})
+    _instruments.get("answer_cost", _NULL).record(
+        usd,
+        {"provider": _provider_key(model), "model": _model_key(model), "tenant": _tenant_key(tenant)},
+    )
 
 
 def record_unmetered_answer(model: str) -> None:
@@ -294,13 +378,39 @@ def record_unpriced_answer(model: str) -> None:
     _instruments.get("unpriced_answers", _NULL).add(1, {"provider": _provider_key(model), "model": _model_key(model)})
 
 
-def record_quota_rejection(model: str) -> None:
+def record_quota_rejection(model: str, tenant: str | None = None) -> None:
     """QuotaExhausted (src/limits.py). No live call site on /chat as of P1 --
     QuotaExhausted is currently raised only by the offline teacher/judge path
     (src/rag/teacher.py), which never serves this process's /metrics. Defined
     now so P2's gateway quota check has an instrument to call into without a
     second metrics-module change."""
-    _instruments.get("quota_rejections", _NULL).add(1, {"provider": _provider_key(model), "model": _model_key(model)})
+    _instruments.get("quota_rejections", _NULL).add(
+        1,
+        {"provider": _provider_key(model), "model": _model_key(model), "tenant": _tenant_key(tenant)},
+    )
+
+
+def record_pool_share_rejection(tenant: str) -> None:
+    """The fair-share guard rejected a request (src/gateway/guard.py, A12(1)).
+
+    Its own counter rather than a second reason on `quota_rejections`, for the
+    reason guard.py already records for BudgetExceeded: "the pool is empty" and
+    "the pool is not empty but this share of it is not yours" are different
+    operator facts, and one series with no way to separate them is worse than
+    two."""
+    _instruments.get("pool_share_rejections", _NULL).add(1, {"tenant": _tenant_key(tenant)})
+
+
+def record_admission_rejection(tenant: str, reason: str) -> None:
+    """A request the concurrency bound did not admit (src/limits.py, A12(3)).
+
+    `reason` comes from `AtCapacity.reason` and is a closed set
+    (ADMISSION_REASONS). This is the instrument the starvation number is read
+    off: "tenant" counts the noisy neighbour being held back, "total" counts
+    what everyone else loses."""
+    _instruments.get("admission_rejections", _NULL).add(
+        1, {"tenant": _tenant_key(tenant), "reason": reason if reason in ADMISSION_REASONS else UNKNOWN},
+    )
 
 
 def record_cache_lookup(route: str, outcome: str) -> None:

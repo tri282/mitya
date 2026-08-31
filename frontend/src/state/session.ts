@@ -20,6 +20,8 @@ export interface Turn {
     | "complete"
     | "stream-error"
     | "error-400"
+    | "error-401"
+    | "error-429"
     | "error-503"
     | "error-504"
     | "interrupted"

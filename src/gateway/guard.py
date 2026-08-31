@@ -7,12 +7,32 @@ budget hard-capped before the provider call, never reconciled after" and
 failure." Both apply globally at P2 -- per-tenant enforcement is P5, once
 tenant identity is authenticated (phase-2-gateway.md's explicit deferral).
 
+**Amended at v2 P5 step 5 (charter A12(1)).** Per-tenant enforcement arrives
+here, but NOT in the shape phase-2-gateway.md deferred ("per-tenant budget").
+A12 supersedes it: the deployment is one instance, many tenants, ONE shared
+provider account -- so there are shared rate limits and one bill, and the
+failure mode is a noisy neighbour starving the shared pool, not one tenant
+reading another's budget. What P5 adds is therefore a **fair-share check on the
+shared pool**, enforced before the provider call like everything else in this
+module, and it EXTENDS the existing window rather than adding a second one.
+
+The unit question, stated because it is the one that could have made this
+control inert (R108's lesson). Charter II fixes USD as the *reporting* unit,
+and `src/pricing` supplies it. But the pool that actually starves at this
+project's arms is the provider QUOTA window, not a dollar ceiling: R48 already
+records that at the free tier there is no USD ceiling to breach (Google's
+rolling cap is literally $0), so a fairness rule denominated in dollars would
+divide zero by the tenant count on every request and never fire. Fairness is
+therefore enforced on the pool's own meter -- reserved tokens against
+`RateLimiter.tpm` -- and reported in USD, which the same window carries per
+tenant.
+
 Boundary: this wraps a `Provider.generate()` call; it is not itself a
 `Provider` and never appears on the `Provider` Protocol, so a real adapter
 (Batch C) and `FakeProvider` (Batch A) are both untouched by this module
-existing. `guarded_generate()` is the ONE place all three checks run, in the
-order charter IV requires -- request size, then budget, then spend rate --
-so a request that fails any of them never reaches `provider.generate()`
+existing. `guarded_generate()` is the ONE place all four checks run, in the
+order charter IV requires -- request size, then fair share, then budget, then
+spend rate -- so a request that fails any of them never reaches `provider.generate()`
 (Batch B's Verify assertion, checked against `FakeProvider.calls`).
 """
 
@@ -22,10 +42,11 @@ import logging
 import time
 from collections import deque
 
+from src.config import Config
 from src.gateway.contract import GenerationStream, Provider
 from src.limits import LimitError, QuotaExhausted, RateLimiter
 from src.limits import estimate_tokens as _estimate_tokens
-from src.metrics import record_quota_rejection
+from src.metrics import record_pool_share_rejection, record_quota_rejection
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +62,23 @@ class BudgetExceeded(LimitError):
     """This request's estimated cost would exceed the remaining budget."""
 
 
+class PoolShareExceeded(LimitError):
+    """This tenant is over its fair share of the SHARED provider pool while the
+    pool is under pressure (v2 P5 step 5, charter A12(1)).
+
+    Distinct from `QuotaExhausted` (the pool itself is empty) and from
+    `Degraded` (the deployment is spending too fast). This one says: there is
+    pool left, but it is not yours to take right now -- somebody else would be
+    starved. It carries `retry_after` because, unlike the other two, it is
+    exactly a back-off condition with a knowable end: the seconds until this
+    tenant's oldest window entry ages out.
+    """
+
+    def __init__(self, message: str, retry_after: int):
+        super().__init__(message, status=429)
+        self.retry_after = retry_after
+
+
 class Degraded(RuntimeError):
     """The spend-rate breaker has tripped. Not a failure (IV: "into degraded
     mode not failure") -- a caller catches this and walks the degradation
@@ -49,7 +87,9 @@ class Degraded(RuntimeError):
 
 
 class SpendRateBreaker:
-    """Sliding-window USD/minute cap (charter II's fixed spend-rate unit).
+    """The shared-pool window: a sliding-minute USD/minute cap (charter II's
+    fixed spend-rate unit) AND, since v2 P5, the per-tenant fair-share view of
+    the same window (charter A12(1)).
 
     Same window shape as `src.limits.RateLimiter` -- a sliding deque evicted
     on read -- but over a running dollar total rather than a request/token
@@ -57,15 +97,38 @@ class SpendRateBreaker:
     argument bent onto `RateLimiter`, whose `rpm`/`tpm`/`rpd` accounting does
     not describe "how many dollars in the last 60 seconds".
 
+    **Two policies, ONE window, deliberately.** The spend-rate breaker and the
+    fair-share check ask different questions of exactly the same minute of
+    history -- "how much has this deployment spent" and "how much of the pool
+    has this tenant taken". Giving the second its own deque would mean a second
+    copy of the eviction rule, which is the drift `src.limits.RateLimiter._try_reserve`
+    already documents having to avoid. Each entry therefore carries
+    `(timestamp, tenant, usd, tokens)`: `usd` answers the first question,
+    `tenant`/`tokens` the second.
+
     Reports whether a request WOULD trip the cap (`would_trip`); it does not
     raise by itself, so the caller decides what "degraded" means (step 10's
     ladder), matching charter IV's "into degraded mode, not failure".
+    `share_exceeded` is the same posture: it reports, `guarded_generate` raises.
     """
 
-    def __init__(self, max_usd_per_minute: float, clock=time.monotonic) -> None:
+    def __init__(
+        self,
+        max_usd_per_minute: float,
+        clock=time.monotonic,
+        fairness_pressure: float | None = None,
+    ) -> None:
         self.max_usd_per_minute = max_usd_per_minute
+        # Below this fraction of the pool there is spare capacity, so nobody is
+        # being starved and a heavy tenant is not costing anyone anything --
+        # rejecting it then would throw away throughput to enforce a fairness
+        # nobody needed. Fairness is a contention rule, not a quota.
+        self.fairness_pressure = (
+            Config.POOL_FAIRNESS_PRESSURE if fairness_pressure is None else fairness_pressure
+        )
         self._clock = clock
-        self._window: deque[tuple[float, float]] = deque()  # (timestamp, usd)
+        # (timestamp, tenant, usd, pool_tokens_reserved)
+        self._window: deque[tuple[float, str, float, int]] = deque()
 
     def _evict(self, now: float) -> None:
         while self._window and now - self._window[0][0] >= 60.0:
@@ -74,13 +137,61 @@ class SpendRateBreaker:
     def would_trip(self, projected_usd: float) -> bool:
         now = self._clock()
         self._evict(now)
-        spent = sum(usd for _, usd in self._window)
+        spent = sum(entry[2] for entry in self._window)
         return (spent + projected_usd) > self.max_usd_per_minute
 
-    def record(self, usd: float) -> None:
+    def share_exceeded(self, tenant: str, tokens: int, pool_tokens: int) -> bool:
+        """Would admitting this request take more than `tenant`'s fair share of
+        the shared pool, while the pool is under pressure?
+
+        Fair share is max-min by construction and needs no configured per-tenant
+        number: it is `pool_tokens / active_tenants`, where "active" means seen
+        in this window, plus the caller. One tenant alone therefore gets the
+        WHOLE pool (share = pool / 1) and is never rejected by this rule -- which
+        is the correct behaviour and the reason this is not a per-tenant cap.
+        Five tenants contending get a fifth each.
+
+        Returns False whenever the pool is below `fairness_pressure` of
+        capacity (spare pool, so no starvation to prevent) and whenever only
+        one tenant is active (nobody to be fair to -- see below).
+        """
+        if pool_tokens <= 0:
+            # No published pool for this model (an unpriced/unlimited local arm).
+            # There is nothing to divide, and inventing a denominator would make
+            # the rule look like it was enforcing something it is not.
+            return False
+        now = self._clock()
+        self._evict(now)
+        total = sum(entry[3] for entry in self._window)
+        if total + tokens <= pool_tokens * self.fairness_pressure:
+            return False
+        active = {entry[1] for entry in self._window} | {tenant}
+        if len(active) < 2:
+            # Nobody to be fair TO. A single tenant's fair share is the whole
+            # pool, so this rule can only ever restate "the pool is full" --
+            # which is the rate limiter's job, and duplicating it here would
+            # reject with the wrong reason and the wrong status code.
+            return False
+        fair_share = pool_tokens / len(active)
+        mine = sum(entry[3] for entry in self._window if entry[1] == tenant)
+        return (mine + tokens) > fair_share
+
+    def retry_after(self, tenant: str) -> int:
+        """Seconds until this tenant's oldest window entry ages out -- the
+        soonest its share can free up. Always >= 1, so a `Retry-After: 0` never
+        invites an immediate retry that would be rejected identically."""
+        now = self._clock()
+        self._evict(now)
+        mine = [entry[0] for entry in self._window if entry[1] == tenant]
+        if not mine:
+            return 1
+        return max(1, int(60.0 - (now - min(mine))) + 1)
+
+    def record(self, usd: float, tenant: str, tokens: int) -> None:
         """Only called once a call is actually made -- a rejected request
-        spent nothing and must not count against its own window."""
-        self._window.append((self._clock(), usd))
+        spent nothing, took none of the pool, and must not count against its
+        own window."""
+        self._window.append((self._clock(), tenant, usd, tokens))
 
 
 def _input_tokens(messages: list[dict]) -> int:
@@ -107,8 +218,9 @@ async def guarded_generate(
 ) -> GenerationStream:
     """Enforce spend safety, then delegate to `provider.generate()`.
 
-    Order, and the order IS charter IV's point: request-size limits, then
-    the per-model rate limiter (`RateLimiter.acquire_async` -- v2 P2 step 4's
+    Order, and the order IS charter IV's point: request-size limits, then the
+    shared-pool fair-share check (P5 step 5 -- ahead of the limiter on purpose;
+    see the comment at its call site), then the per-model rate limiter (`RateLimiter.acquire_async` -- v2 P2 step 4's
     stated reason it must be async: `time.sleep` inside this coroutine would
     block the event loop for every OTHER concurrent request), then the
     budget check, then the spend-rate breaker -- all before
@@ -125,7 +237,34 @@ async def guarded_generate(
             f"~{input_tokens} input tokens over the {max_input_tokens} limit"
         )
 
+    # Fair share of the SHARED pool (v2 P5 step 5, A12(1)), and it sits HERE --
+    # before the rate limiter, not after. `RateLimiter.acquire_async` SLEEPS
+    # until pool capacity frees; a tenant already over its share that is allowed
+    # to reach that await is exactly the noisy neighbour this check exists to
+    # stop, occupying the wait queue it is starving everyone else with. Rejecting
+    # first is what makes the difference visible as a 429 rather than as
+    # everyone else's latency.
+    #
+    # `limiter.tpm` IS the pool: one shared provider account means one published
+    # token window per quota scope (`src.limits.quota_scope`), which is the thing
+    # tenants actually contend for. No second capacity number is configured, so
+    # there is nothing here that can drift out of step with the real limit.
+    pool_tokens_reserved = input_tokens + max_output_tokens
     model = getattr(provider, "model", "unknown")
+    if breaker.share_exceeded(tenant, pool_tokens_reserved, limiter.tpm):
+        retry_after = breaker.retry_after(tenant)
+        record_pool_share_rejection(tenant)
+        logger.warning(
+            "gateway: fair-share guard rejected request (tenant=%s, tokens=%s, "
+            "pool_tpm=%s, retry_after=%ss) -- shared pool under pressure",
+            tenant, pool_tokens_reserved, limiter.tpm, retry_after,
+        )
+        raise PoolShareExceeded(
+            f"tenant {tenant} is over its fair share of the shared pool "
+            f"({pool_tokens_reserved} tokens against a {limiter.tpm} tokens/min pool)",
+            retry_after=retry_after,
+        )
+
     try:
         # Reserve input PLUS the completion ceiling, not input alone. Provider
         # TPM counts tokens in both directions, so reserving only the prompt
@@ -139,12 +278,12 @@ async def guarded_generate(
         # `_input_tokens` above stays input-only on purpose: that check is
         # about REQUEST SIZE (does this prompt fit at all), which is a
         # different question from how much quota the round trip consumes.
-        await limiter.acquire_async(input_tokens + max_output_tokens)
+        await limiter.acquire_async(pool_tokens_reserved)
     except QuotaExhausted:
         # First live call site for mitya_quota_rejections_total (Q13,
         # src/metrics.py) -- QuotaExhausted has existed since P1 5b with no
         # caller on the request path to raise it.
-        record_quota_rejection(model)
+        record_quota_rejection(model, tenant)
         raise
 
     if budget is not None and estimated_cost_usd > budget:
@@ -171,5 +310,8 @@ async def guarded_generate(
         raise Degraded("spend rate over the per-minute cap")
 
     stream = await provider.generate(messages, tier, tenant, budget)
-    breaker.record(estimated_cost_usd)
+    # One record, both policies: `estimated_cost_usd` feeds the spend-rate cap,
+    # `tenant`/`pool_tokens_reserved` feed the fair-share view of the same
+    # minute. See SpendRateBreaker's "two policies, one window" note.
+    breaker.record(estimated_cost_usd, tenant, pool_tokens_reserved)
     return stream

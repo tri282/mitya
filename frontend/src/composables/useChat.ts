@@ -3,6 +3,7 @@
 import { reactive, ref } from "vue"
 import { ChatHttpError, streamChat } from "../api/chatStream"
 import type { ChatFilters } from "../api/types"
+import { onUnauthenticated } from "../state/auth"
 import { scheduleSave, session, sessionId, type Turn } from "../state/session"
 import { repoll } from "./useHealth"
 
@@ -80,6 +81,20 @@ export function useChat() {
       } else if (e instanceof ChatHttpError) {
         turn.state = `error-${e.status}` as Turn["state"]
         turn.errorDetail = e.detail
+        // v2 P5 step 7: session expiry, including mid-stream. /chat requires a
+        // session (require_tenant), so a 401 here means the session died while
+        // the app was open -- expired TTL, or logged out in another tab. Drop
+        // to the login wall without reloading: the transcript is UI-only state
+        // and survives, so signing back in resumes where the reader was.
+        //
+        // "Mid-stream" is exact rather than approximate. The 401 arrives
+        // before the response body opens (chatStream throws on !res.ok), so
+        // this branch catches an expiry that lands between two turns AND one
+        // that lands on the request that was about to stream. An expiry that
+        // struck a stream already emitting tokens cannot change its committed
+        // 200 -- that surfaces as the `error` SSE event above, which is the
+        // pre-existing terminal-error path and needs nothing new.
+        if (e.status === 401) onUnauthenticated()
         // Re-poll health on the two signals that the backend state may have
         // changed (DECIDE C7) -- shares useHealth's singleton status so
         // HealthIndicator reflects it without a separate instance.

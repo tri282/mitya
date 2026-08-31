@@ -7,6 +7,14 @@ constructed exactly once in `lifespan()` and hung off `app.state`; endpoints
 only ever read `request.app.state`, never construct these themselves (design
 §IV.3: "never lazily per query").
 
+Two DIFFERENT bounds sit on the request path and are easy to confuse. The
+`asyncio.BoundedSemaphore(1)` described below is mutual exclusion over the
+non-re-entrant retrieval components. `src.limits.ConcurrencyMiddleware` (v2 P5
+step 6) is admission control: bounded in-flight requests per tenant and in
+total, held for the whole call including the SSE body, rejecting with 429
+rather than queueing. The first protects a data structure; the second is what
+stops the unbounded pile P4 measured (R99: 62 s p99, zero rejections).
+
 `asyncio.BoundedSemaphore(1)` serializes the CPU-bound retrieval half of a
 request -- route, cache lookup, readiness/ladder, entities, retrieve, rerank,
 build_context -- and nothing else. It is taken in `POST /chat` as an
@@ -53,6 +61,7 @@ from src.auth import (
 )
 from src.config import Config
 from src.db import init_schema
+from src.limits import ConcurrencyMiddleware, TenantConcurrency
 from src.config_artifact import (
     active_config_version,
     active_corpus_manifest,
@@ -91,7 +100,7 @@ from src.observability import (
 from src.pricing import FREE, Cost, cost_usd, is_metered, total_usd
 from src.rag.context import build_context
 from src.rag.entities import EntityMap
-from src.gateway.guard import BudgetExceeded, Degraded, RequestTooLarge
+from src.gateway.guard import BudgetExceeded, Degraded, PoolShareExceeded, RequestTooLarge
 from src.gateway.ladder import ContentRefused
 from src.gateway.retry import TransportError
 from src.limits import QuotaExhausted
@@ -260,6 +269,17 @@ tracer = configure_tracing(app)
 # cookie, and carried on `request.state.tenant` and the `tenant` ContextVar
 # for the rest of the request. The X-Tenant-ID header P1 read is ignored from
 # this point on -- see src/observability.py's TENANT_HEADER note.
+# v2 P5 step 6 (A12(3), D2): bounded per-tenant concurrency, which is also what
+# bounds the queue P4 measured as unbounded (R99). Added BEFORE
+# RequestIdMiddleware and therefore running INSIDE it -- Starlette runs the
+# last-added middleware outermost, and this one reads the tenant that one
+# resolves. Held for the whole call, SSE body included; see
+# src/limits.py's ConcurrencyMiddleware.
+app.state.admission = TenantConcurrency(
+    per_tenant=Config.CHAT_MAX_INFLIGHT_PER_TENANT,
+    total=Config.CHAT_MAX_INFLIGHT_TOTAL,
+)
+app.add_middleware(ConcurrencyMiddleware, gate=app.state.admission)
 app.add_middleware(RequestIdMiddleware, tenant_resolver=_resolve_tenant)
 # Second, independent reader on the same span/attribute data (P1 step 7,
 # R32) -- see src/metrics.py's module docstring for why this is not a second
@@ -607,7 +627,7 @@ async def chat(
             retrieval exits inside the lock, the generation-priming exits after it
             -- which is exactly why it must not release.
             """
-            record_request_duration(time.monotonic() - t_start, route_name, "error")
+            record_request_duration(time.monotonic() - t_start, route_name, "error", tenant)
         # Root attribute is the slice key for a latency/cost percentile (P1 step
         # 4) -- the stage span above keeps its own route.name/scope_resolved
         # detail, this is the per-request dimension.
@@ -692,7 +712,7 @@ async def chat(
                     # above, but it did consume a request, and a duration histogram
                     # that silently drops those measures only the happy path.
                     record_request_duration(
-                        time.monotonic() - t_start, route_name, cached_outcome[0],
+                        time.monotonic() - t_start, route_name, cached_outcome[0], tenant,
                     )
 
             return StreamingResponse(cached_stream(), media_type="text/event-stream")
@@ -827,7 +847,7 @@ async def chat(
                 # Same posture as the cache-hit stream: a client that
                 # disconnects mid-stream still consumed a request.
                 record_request_duration(
-                    time.monotonic() - t_start, route_name, retrieval_only_outcome[0],
+                    time.monotonic() - t_start, route_name, retrieval_only_outcome[0], tenant,
                 )
 
         return StreamingResponse(retrieval_only_stream(), media_type="text/event-stream")
@@ -900,6 +920,20 @@ async def chat(
         _abort()
         raise HTTPException(
             status_code=429, detail="provider quota exhausted", headers=rung_header,
+        ) from exc
+    except PoolShareExceeded as exc:
+        # 429 like QuotaExhausted, but a DIFFERENT fact and a different body
+        # (v2 P5 step 5, A12(1)): the shared pool is not empty -- this tenant is
+        # simply over its share of it while others contend. Carries Retry-After
+        # because, unlike an exhausted pool, the wait is knowable. Not 503: the
+        # deployment is healthy and is serving other tenants right now, so
+        # calling this an availability failure would be a false statement about
+        # the system.
+        _abort()
+        raise HTTPException(
+            status_code=429,
+            detail="over your share of the shared model pool",
+            headers={**rung_header, "Retry-After": str(exc.retry_after)},
         ) from exc
     except RequestTooLarge as exc:
         _abort()
@@ -1009,7 +1043,10 @@ async def chat(
             elif cost.usd is None:
                 record_unpriced_answer(_serving_model())
             else:
-                record_answer_cost(cost.usd, _serving_model())
+                # `tenant` here is what makes "share of the shared bill captured by
+                # the heaviest tenant" (A12(1)'s fairness number) readable off
+                # the operator plane rather than reconstructed from logs.
+                record_answer_cost(cost.usd, _serving_model(), tenant)
             stream_outcome[0] = "empty" if not answer else "ok"
 
             yield _sse("meta", {
@@ -1058,7 +1095,7 @@ async def chat(
                     stream_span.set_attribute(f"generate.{field}", usage[field])
             set_cost(stream_span, _generation_cost())
             record_stage_duration(time.monotonic() - _t_stream, route_name, STAGE_GENERATE_STREAM)
-            record_request_duration(time.monotonic() - t_start, route_name, stream_outcome[0])
+            record_request_duration(time.monotonic() - t_start, route_name, stream_outcome[0], tenant)
             stream_span.end()
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

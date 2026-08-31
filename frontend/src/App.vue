@@ -11,19 +11,34 @@
 // in-flight guarantee (design §II.4) between the composer and the transcript
 // retry path already wired below.
 
-import { ref } from "vue"
+import { onMounted, ref } from "vue"
 import type { ChatFilters } from "./api/types"
 import AppHeader from "./components/AppHeader.vue"
 import Composer from "./components/Composer.vue"
+import LoginView from "./components/LoginView.vue"
 import Transcript from "./components/Transcript.vue"
 import { useChat } from "./composables/useChat"
 import { useHealth } from "./composables/useHealth"
+import { checked, refresh, tenant } from "./state/auth"
 import type { Turn } from "./state/session"
 
 // Shared useHealth() singleton (Phase 5 note 3) -- triggers its onMounted
 // poll here; AppHeader's HealthIndicator (Phase 7) reads the same module-
 // level `status` ref via its own useHealth() call, no threading needed.
 useHealth()
+
+// v2 P5 step 7: the login wall (decisions-p5.md). One question asked once on
+// load -- "does the server accept me?" -- and re-answered by any 401 the app
+// later sees, including one mid-stream (useChat routes those to
+// state/auth.onUnauthenticated). Nothing here tracks an expiry clock; the
+// server's answer is the only authority.
+//
+// The three-state render (unknown / out / in) is not ceremony: rendering the
+// wall while `checked` is still false would flash a login form at an already
+// authenticated user on every reload.
+onMounted(() => {
+  void refresh()
+})
 
 // The single useChat() instance for the whole app (see note above).
 const { turns, isStreaming, send, stop } = useChat()
@@ -52,7 +67,10 @@ function onSubmit(payload: { query: string; filters: ChatFilters }): void {
 </script>
 
 <template>
-  <div class="app-shell">
+  <!-- Nothing at all until the session question has been answered once. -->
+  <div v-if="!checked" class="app-shell" />
+  <LoginView v-else-if="tenant === null" />
+  <div v-else class="app-shell">
     <AppHeader />
     <Transcript :turns="turns" @retry="onRetry" @example-select="onExampleSelect" />
     <Composer
