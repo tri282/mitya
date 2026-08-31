@@ -46,6 +46,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+_ANSWER_TAIL_CHARS = 120
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 # 30s covers a cold-cache generation (v1 baseline ~21.3s total, R0); 5s
 # connect covers a server that is simply not up yet.
@@ -74,6 +75,13 @@ class ChatResult:
     fault_phase: str | None  # "pre_first_token" | "post_first_token" | None (success)
     error_detail: str | None
     answer_chars: int
+    # The last few characters of the answer. Kept because CLAUDE.md's batch rule
+    # is "run 2-3 rows first and READ WHAT THEY PRODUCED -- not the exit code,
+    # the actual output": a run that completes cleanly and answers with an empty
+    # string or a refusal is indistinguishable from success by `answer_chars`
+    # alone. A tail, not the body -- the harness measures behaviour, and storing
+    # whole answers would make its records a second, unversioned eval set.
+    answer_tail: str | None
     request_id: str | None  # correlates back to the server's own logs/spans
     rung: str | None  # served Rung.value (Batch C step 8, R93/R94); None on transport failure
 
@@ -170,6 +178,7 @@ class HarnessClient:
                         no_context=None, filter_relaxed=None, chunk_ids=None, terminal_event=None,
                         fault_phase="pre_first_token",
                         error_detail=body.decode(errors="replace")[:500], answer_chars=0,
+                        answer_tail=None,
                         request_id=None,
                         # R93: every /chat error exit carries X-Mitya-Rung, since the
                         # exception paths emit no `meta` event to carry it instead.
@@ -185,6 +194,7 @@ class HarnessClient:
                 route=None, cache_hit=None, cost_usd=None, cost_metered=None, model=None,
                 no_context=None, filter_relaxed=None, chunk_ids=None, terminal_event=None,
                 fault_phase="pre_first_token", error_detail=str(exc), answer_chars=0,
+                answer_tail=None,
                 request_id=None,
                 # No response ever arrived, so no header either -- distinct from
                 # the pre_first_token-with-a-status-code case above, which reads
@@ -202,6 +212,8 @@ class HarnessClient:
         terminal_event: str | None = None
         error_detail: str | None = None
         answer_chars = 0
+        # A bounded ring of the most recent text, never the whole answer.
+        answer_tail = ""
 
         event_name: str | None = None
         data_lines: list[str] = []
@@ -216,7 +228,9 @@ class HarnessClient:
                 if event_name == "token":
                     if t_first_token is None:
                         t_first_token = time.monotonic()
-                    answer_chars += len(body.get("text", ""))
+                    chunk = body.get("text", "")
+                    answer_chars += len(chunk)
+                    answer_tail = (answer_tail + chunk)[-_ANSWER_TAIL_CHARS:]
                 elif event_name == "meta":
                     route = body.get("route_name")
                     cache_hit = body.get("cache_hit")
@@ -242,6 +256,6 @@ class HarnessClient:
             route=route, cache_hit=cache_hit, cost_usd=cost_usd, cost_metered=cost_metered,
             model=model, no_context=no_context, filter_relaxed=filter_relaxed,
             chunk_ids=chunk_ids, terminal_event=terminal_event, fault_phase=fault_phase,
-            error_detail=error_detail, answer_chars=answer_chars, request_id=request_id,
-            rung=rung,
+            error_detail=error_detail, answer_chars=answer_chars,
+            answer_tail=answer_tail or None, request_id=request_id, rung=rung,
         )

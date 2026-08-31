@@ -305,6 +305,11 @@ async def _dependency_status(state) -> tuple[bool, dict]:
     # Present ONLY when set, so a normal run's `/ready` body is unchanged.
     if Config.FAULT_INJECT:
         result["fault_injection"] = Config.FAULT_INJECT
+    # Same rule, and it matters more here: a run served entirely from fixtures
+    # must be identifiable from OUTSIDE, or a latency curve measured against the
+    # fake is indistinguishable from one measured against a provider.
+    if Config.FAKE_PROVIDER:
+        result["fake_provider"] = True
     return healthy, result
 
 

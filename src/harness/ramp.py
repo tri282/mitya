@@ -48,6 +48,7 @@ async def run_at_concurrency(
     *,
     base_url: str = DEFAULT_BASE_URL,
     transport: httpx.AsyncBaseTransport | None = None,
+    timeout: httpx.Timeout = DEFAULT_TIMEOUT,
 ) -> LevelResult:
     """Issue `n_requests` `/chat` calls with at most `concurrency` in flight
     at once, and record everything `HarnessClient.chat()` observed for each.
@@ -80,7 +81,7 @@ async def run_at_concurrency(
 
     wall_start = time.monotonic()
     async with HarnessClient(
-        base_url=base_url, timeout=DEFAULT_TIMEOUT, transport=transport, limits=limits,
+        base_url=base_url, timeout=timeout, transport=transport, limits=limits,
     ) as client:
         tasks = [asyncio.create_task(_one(client, next(query_cycle))) for _ in range(n_requests)]
         await asyncio.gather(*tasks)
@@ -101,6 +102,7 @@ async def sweep(
     *,
     base_url: str = DEFAULT_BASE_URL,
     transport: httpx.AsyncBaseTransport | None = None,
+    timeout: httpx.Timeout = DEFAULT_TIMEOUT,
 ) -> dict[int, LevelResult]:
     """Run `run_at_concurrency` at every level in `concurrencies`, in order.
 
@@ -113,6 +115,7 @@ async def sweep(
     for c in concurrencies:
         levels[c] = await run_at_concurrency(
             queries, c, requests_per_level, base_url=base_url, transport=transport,
+            timeout=timeout,
         )
     return levels
 
