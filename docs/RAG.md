@@ -310,6 +310,86 @@ The client must treat `meta` as optional and non-terminal for forward compatibil
 * **Missing chapter summary:** STRUCTURAL falls back to DEFAULT (logged).
 * **Models load once** at FastAPI lifespan startup (fastembed, FlashRank, entities, summaries, structure) — never lazily per query.
 
+#### The degradation ladder (v2 CP4, P4 Batch A0 + C-run)
+
+Charter §V's five rungs, as **wired and walked** rather than as written. `next_rung()`
+(`src/gateway/ladder.py`) is consulted per request by `/chat` and the served rung is reported in the
+`meta` SSE event and as an `X-Mitya-Rung` header on error exits, so a client can see which rung
+answered it without inferring.
+
+| rung | entered when | walked? |
+|---|---|---|
+| `primary_model` | generation configured and credentialed | **yes** |
+| `cheaper_model` | — | **unreachable by construction** |
+| `cached_answer` | generation unavailable **and** the query has a cached answer | **yes** |
+| `retrieval_only` | generation unavailable, retrieval up, no cached answer | **yes** |
+| `503` / `UNAVAILABLE` | retrieval down too | not walked |
+
+**Coverage: 3/5.** That fraction never appears without this caption:
+
+> `cheaper_model` is unreachable by construction: `Readiness` folds primary and cheaper into one
+> `generation_available` flag (`src/gateway/ladder.py`), and routing was closed as not-adopted
+> (R69), so there is no second generation arm to fall to. Maximum attainable coverage is 4/5.
+
+`content_refused` is wired (`app.py` pre-stream and mid-stream) and is an outcome of one attempt,
+**not a rung** — `next_rung()` never returns it, and it is reported outside the fraction.
+
+Two properties of the ladder are counter-intuitive and were both measured, not assumed:
+
+* **A cache hit does not enter `cached_answer`.** `next_rung()` returns `primary_model` whenever
+  generation is available, *regardless of `cache_hit`* — so on a healthy deployment a cache hit is a
+  primary-rung cache hit. The `cached_answer` rung requires generation to be **unavailable** as well.
+* **`generation_available` means "configured and credentialed", not "the provider is reachable"**
+  (P4 Batch A0). `credential_status()` is a config check, deliberately not a live probe: `/health`
+  is polled by the SPA and the serving model's `rpm` is small, so probing would spend the quota the
+  deployment exists to serve with. A provider **outage** therefore does not descend the ladder — it
+  surfaces as a 502 through `TransportError`. In practice the ladder descends on **misconfiguration**.
+
+**`retrieval_only` is an internal rung, not a product state (CP-4c).** Entered and observed, it
+serves an **HTTP 200 with an empty answer body and the retrieved `chunk_ids`** — retrieval succeeds,
+no prose is generated, and a client rendering only the answer text shows a blank success. Because a
+blank 200 is less legible than a failure, the decision is that ordinary callers get a **503** and the
+rung stays reachable for operators. That change is owed, not yet built; the SPA render was never
+observed, and if it is and the passages render legibly the decision is revisitable.
+
+#### Provider-fault taxonomy (v2 CP-4b, P4 step 7)
+
+Faults are injected **in the gateway** as a `FaultProvider` wrapping the vendor adapter below
+`guarded_generate()`, behind `Config.FAULT_INJECT` — a **deployment** field, off by default, never in
+the serving artifact's hash. Injecting at the client edge cannot reach in-band provider refusals;
+using a provider's own error behaviour would make the taxonomy a statement about one vendor rather
+than about the system, which is what the gateway exists to prevent.
+
+An injected fault is **faithful** iff the client observes the same status code, the same class
+(in-band provider error vs transport failure) and the same `Retry-After` presence as a genuine
+occurrence. Where no genuine occurrence is on record, the row is reported **fidelity unverified** and
+is excluded from the numerator **and** denominator both.
+
+**Of 8 injected rows, 1 has a genuine client signature; the other 7 are fidelity unverified.** The
+taxonomy is published as this table, never as a percentage — a `1/1` is not a rate.
+
+| class | injection point | faithful? | client observes |
+|---|---|---|---|
+| **429, absorbed** (n < `MAX_GENERATION_ATTEMPTS`) | gateway | **yes** (242 real occurrences) | **200**, `ttft_ms` inflated by the honoured wait |
+| 429, exhausting | gateway | unverified | 502 |
+| provider timeout | gateway | unverified | 502, identical to above |
+| in-band refusal | gateway | unverified | 422 |
+| budget exhaustion, app-side | spend-guard config | unverified | 503, no provider call |
+| budget exhaustion, provider-side | — | subsumed | wears the 429 signature exactly |
+| cold cache | corpus repeat rate | n/a — **a miss, not a fault** | 200, elevated TTFT |
+
+**A ceiling no injector design can raise:** five distinct causes — a 429, a connect failure, a read
+timeout, a 5xx, and an in-band provider `error` frame — all reach the client as the same opaque
+**502 `"provider unreachable"`**. So the honest claim after a fault run is *"injected X, the client
+saw the 502 X shares with four other causes"*, never *"the X-specific response"*. **503 is
+overloaded too** (`UNAVAILABLE`, the spend guard, a stale readiness read), and the exception paths
+carry no `meta` event, so there is no served-rung field to disambiguate with.
+
+**Measured, and the reason the one verified row matters:** an injected `429:1` carrying
+`retry_after=2.0` produced a 200 with TTFT **+2449 ms and +2416 ms** over the un-faulted baseline,
+inside the 2000-2500 ms jitter band `src/rag/generate.py` computes. That is the first end-to-end
+evidence in this project that a provider's own `Retry-After` is honoured on the serving path.
+
 ### 4. Logging
 
 Stdlib `logging` (no `print`), structured key-value per request: `query`, route, filters, resolved entities, `chunk_ids` (not chunk text), cache hit, `ttft_ms`, `total_ms`, fallback flags.
@@ -784,7 +864,25 @@ MDE being part of every claim — the number is the honesty mechanism, not a fix
 
 ## VIII. Out of Scope (v2+)
 
-Semantic cache; conversation memory / `interpretive_bias`; interpretive-restraint hedging metric; any ML query classification; Qdrant server deployment; multi-user concurrency.
+Semantic cache; conversation memory / `interpretive_bias`; interpretive-restraint hedging metric; any ML query classification; ~~Qdrant server deployment~~; ~~multi-user concurrency~~.
+
+> **"Multi-user concurrency" and "Qdrant server deployment" REVERSED at v2 CP4 (2026-08-30) — struck,
+> not deleted, because the reason each expired is the useful part.**
+>
+> **Multi-user concurrency** was out of scope because v1 served one user behind a global
+> `Semaphore(1)`, itself a 6GB-GPU artifact (`llama-server --parallel 1` plus non-re-entrant CPU
+> models). D3 makes the deployment multi-tenant and generation has left the box, so half that
+> justification is simply gone. P4 measured the rest: the lock was the wall, `knee_concurrency = 1`,
+> throughput flat from 1 to 16 concurrent clients. Narrowing it to retrieval and releasing before
+> generation moved the knee to **4** and raised throughput **1.74x** at concurrency 4. Concurrency is
+> now in scope and measured, not assumed.
+>
+> **Qdrant server deployment** was out of scope as a complexity the single-user design did not need.
+> It is now **deferred, not excluded** — and for a reason that is worth keeping: the local-mode lock
+> is an **OS file lock taken once per process**, so it constrains *offline eval running alongside
+> serving*, and **not** concurrent retrieval inside one server. Concurrent retrieval was never
+> blocked by it. Server mode answers concurrent *processes*, which is a P5 question, and it fires on
+> a measured trigger rather than a preference.
 
 ---
 
