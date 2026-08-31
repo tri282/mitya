@@ -42,6 +42,20 @@ from src.memory import SessionTurns  # noqa: E402
 from src.gateway.retry import TransportError  # noqa: E402
 from fastapi import HTTPException  # noqa: E402
 
+# P6 Batch C: /chat reads the profile store, and this file drives `chat()`
+# directly rather than through the app, so `lifespan()` -- the only caller of
+# `init_schema()` in the request path -- never runs. Same fix as
+# test_cache_isolation.py: own the schema instead of inheriting whatever
+# data/mitya.sqlite3 happens to hold, so the file passes on a fresh clone.
+import os  # noqa: E402
+import tempfile  # noqa: E402
+
+from src.config import Config  # noqa: E402
+from src.db import init_schema  # noqa: E402
+
+Config.DB_PATH = os.path.join(tempfile.mkdtemp(prefix="mitya-semaphore-db-"), "t.sqlite3")
+init_schema()
+
 
 class _StubCache:
     """`state.cache`: `enabled` is read by the ladder, `get` decides the path."""
@@ -128,7 +142,7 @@ async def _run(state, **overrides):
     monkeypatched: dict = {}
     _patch(monkeypatched, **overrides)
     try:
-        response = await chat(ChatRequest(query="Was Raskolnikov guilty?"), _request(state))
+        response = await chat(ChatRequest(query="Was Raskolnikov guilty?"), _request(state), tenant="tenant-a")
         at_return = state.sem._value
         async for _ in response.body_iterator:
             pass
@@ -144,7 +158,7 @@ async def _run_expecting(exc_type, state, **overrides):
     _patch(monkeypatched, **overrides)
     try:
         try:
-            await chat(ChatRequest(query="Was Raskolnikov guilty?"), _request(state))
+            await chat(ChatRequest(query="Was Raskolnikov guilty?"), _request(state), tenant="tenant-a")
         except exc_type:
             return state.sem._value
         raise AssertionError(f"expected {exc_type.__name__}, nothing was raised")

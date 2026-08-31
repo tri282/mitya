@@ -90,9 +90,90 @@ SCHEMA: tuple[str, ...] = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS login_attempts_scope_at_idx ON login_attempts(scope, at)",
+
+    # --- memory, the two PERSISTED tiers (v2 P6 step 2(b), CP-6a) ---
+    #
+    # There is deliberately NO TABLE FOR RECENT TURNS. CP-6a O-A confirmed
+    # option (i): recent turns live in process memory and die with the session
+    # (`src/memory.py`'s `SessionTurns`), because a table of verbatim turns IS
+    # persisted verbatim user text whatever its TTL, and charter IV forbids it.
+    # `test/test_memory.py`'s `test_nothing_in_this_module_can_persist_a_turn`
+    # is the tripwire that keeps it that way; it is unamended by this batch.
+    #
+    # NO `MIGRATIONS` ENTRY EITHER: these are new tables, not new columns.
+    #
+    # One table for both classes of profile row, with `kind` as its own column
+    # rather than a prefix parsed out of `key` (CP-6a O-C). Two tables would
+    # carry an identical column set and double every path that touches them --
+    # read, upsert, eviction, retention, purge, and the storage-growth row of
+    # step 10 -- for a divergence nobody has asked for.
+    #
+    # `confidence` is a COARSE ENUM and never a float (N-4): its source is a
+    # model's self-report, and R63 already found that class of signal unable to
+    # arbitrate. A float would imply a precision the source does not have.
+    #
+    # `permanent` is an EXEMPTION FLAG, not a large score (N-3): it skips the
+    # eviction scan outright. Modelled as high importance it would still lose
+    # once several facts are important; as a flag it always holds. It does NOT
+    # exempt a row from the retention window -- see `src/memory_store.py`.
+    #
+    # THERE IS NO STORED SCORE (N-5). The eviction weight is computed inside
+    # the eviction query from the stored primitives, so it cannot go stale and
+    # needs no refresh job. The weighting itself is marked provisional where it
+    # is written (A13's operator rider) -- nothing has chosen those weights.
+    #
+    # `writer_model` is NOT NULL on both tables (G-P14). The store is durable
+    # and the writer can change -- via a `summarizer_model` edit across days, or
+    # the deferred promotion ladder -- and two writers in one store with no
+    # writer column is R51's arm-contamination shape in a new location. Added
+    # now because a column added later is a MIGRATIONS entry plus a backfill of
+    # rows whose writer is unknowable.
+    #
+    # `ON DELETE CASCADE` from `accounts`, the sessions-table idiom above, so
+    # account deletion purges memory without a second code path.
+    """
+    CREATE TABLE IF NOT EXISTS memory_profile (
+        tenant_id      TEXT NOT NULL REFERENCES accounts(tenant_id) ON DELETE CASCADE,
+        kind           TEXT NOT NULL CHECK (kind IN ('fact', 'preference')),
+        key            TEXT NOT NULL,
+        value          TEXT NOT NULL,
+        importance     TEXT NOT NULL CHECK (importance IN ('high', 'medium', 'low')),
+        confidence     TEXT NOT NULL CHECK (confidence IN ('high', 'medium', 'low')),
+        permanent      INTEGER NOT NULL DEFAULT 0,
+        count          INTEGER NOT NULL DEFAULT 1,
+        first_seen     REAL NOT NULL,
+        last_confirmed REAL NOT NULL,
+        writer_model   TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, kind, key)
+    )
+    """,
+    # The typed episodic digest. NO FREE-TEXT COLUMN anywhere in this schema
+    # (CP-6a's correction to `cp-6a-input.md` §3): a session summary produced by
+    # a language model is free text, and free text can quote the user verbatim,
+    # so an episodic tier with a `summary TEXT` column is option (ii) wearing
+    # option (iii)'s name. `topics` is a bounded list of short normalized slugs
+    # and `chapters` a bounded list of {book, part, chapter} in the same shape
+    # as the corpus's own `targets` (R120); both are stored as a JSON array of
+    # those bounded values, which is a serialization of typed fields, not a
+    # place to put a paragraph. `src/memory_store.py` enforces the bounds --
+    # SQLite cannot.
+    """
+    CREATE TABLE IF NOT EXISTS memory_episodic (
+        tenant_id    TEXT NOT NULL REFERENCES accounts(tenant_id) ON DELETE CASCADE,
+        session_id   TEXT NOT NULL,
+        ended_at     REAL NOT NULL,
+        turn_count   INTEGER NOT NULL,
+        topics       TEXT NOT NULL,
+        chapters     TEXT NOT NULL,
+        writer_model TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, session_id)
+    )
+    """,
 )
 
-# `ALTER TABLE ... ADD COLUMN` statements, applied after SCHEMA. Empty today.
+# `ALTER TABLE ... ADD COLUMN` statements, applied after SCHEMA. STILL EMPTY at
+# v2 P6 Batch C: the two memory tables above are new tables, not new columns,
+# so they belong in SCHEMA and nothing belongs here (CP-6a, explicitly).
 # Re-running one raises OperationalError("duplicate column name: x"), which
 # `init_schema` swallows -- that is what makes this idempotent without a
 # version table.

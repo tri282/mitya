@@ -288,6 +288,44 @@ class ServingConfig(BaseModel):
     # the first person to tune one will conflate them if they share a name.
     memory_budget_tokens: int
 
+    # --- memory, the persisted tiers (v2 P6 Batch C, CP-6a) ---
+    # The summarizer / memory-writer arm. A SEPARATE field from
+    # `serving_model`, not a `tier` lookup: R123 measured that `tier` is read
+    # by zero model-selection sites, so "a cheap tier" was a phrase with no
+    # mechanism behind it. Two ids means two quota windows, because
+    # `quota_scope()` is (provider, model) (`src/limits.py:167-186`) -- which
+    # is what dissolves R121's rpd squeeze (472/500 of one window becomes
+    # 256/500 serving + 216/500 summarizer). The Google per-model bucket
+    # separation is `[inferred]`, measured on the wire on Groq only; if Google
+    # in fact shares one bucket across flash-lite variants the excess returns
+    # as 429s that the transport retry absorbs into latency, MOSTLY SILENTLY,
+    # and CP-6d's dry run is what watches for it.
+    summarizer_model: str
+    # The two STORE caps, enforced per `kind` so neither class can starve the
+    # other (CP-6a O-C). Distinct names from `memory_budget_tokens` on purpose
+    # (N-1): 10 + 20 = 30 rows cannot be injected into 306 tokens even once, so
+    # these bound STORAGE and that one bounds INJECTION. The first person to
+    # tune one will conflate them if they share a name.
+    memory_profile_max_facts: int
+    memory_profile_max_prefs: int
+    # Episodic digests kept per tenant, oldest evicted first.
+    memory_episodic_max_per_tenant: int
+    # Staleness window on `last_confirmed` / `ended_at`, in days. 90 is an
+    # `[estimate]` and is NEVER promoted to a measured figure: R122 measured
+    # that the frozen corpus carries no timestamp at all, so no time-boxed
+    # window of >= 5 minutes is crossed by any session and a window short enough
+    # to fire would be measuring harness pacing (the R116a instrument-tuned-to-
+    # its-own-result shape). This is a user-data posture (charter IV), chosen
+    # off-corpus and labelled so. Enforced LAZILY on the write path and at read,
+    # never by a job -- the `src/auth.py:252-256` `_prune_attempts` precedent.
+    memory_retention_days: int
+    # Hard ceiling on a stored `value`, in characters. This is the structural
+    # half of C-1: a length-bounded typed field has nowhere to put a paragraph.
+    # The honest bound, per CP-6a: it defeats paragraph-scale recovery BY
+    # CONSTRUCTION and does NOT defeat clause-scale recovery, which is what the
+    # adversarial `refusal`-family test covers instead.
+    memory_value_max_chars: int
+
     # routing. Moved off src/rag/router.py: config by another name, and a P7
     # search axis. Left there, P7 finds an un-versionable knob.
     summary_intent: tuple[str, ...]
@@ -389,6 +427,17 @@ class ServingConfig(BaseModel):
             # arm. Neither is claimed to be a good policy -- O4 is P7's.
             allocation_policy=os.getenv("ALLOCATION_POLICY", "passages_first"),
             memory_budget_tokens=int(os.getenv("MEMORY_BUDGET_TOKENS", "306")),
+            # Owner decision (G-P11), recorded not re-litigated. Its rate row
+            # exists (`_DEFAULT_MODEL_RATES` above, read 2026-08-31) -- without
+            # one every summarizer draw fires `unpriced_answers` and step 4's
+            # stated purpose, memory writes appearing in cost attribution, is
+            # defeated.
+            summarizer_model=os.getenv("SUMMARIZER_MODEL", "models/gemini-3.1-flash-lite"),
+            memory_profile_max_facts=int(os.getenv("MEMORY_PROFILE_MAX_FACTS", "10")),
+            memory_profile_max_prefs=int(os.getenv("MEMORY_PROFILE_MAX_PREFS", "20")),
+            memory_episodic_max_per_tenant=int(os.getenv("MEMORY_EPISODIC_MAX_PER_TENANT", "20")),
+            memory_retention_days=int(os.getenv("MEMORY_RETENTION_DAYS", "90")),
+            memory_value_max_chars=int(os.getenv("MEMORY_VALUE_MAX_CHARS", "80")),
             summary_intent=_DEFAULT_SUMMARY_INTENT,
             book_title_aliases=_DEFAULT_BOOK_TITLE_ALIASES,
             model_limits=_DEFAULT_MODEL_LIMITS,

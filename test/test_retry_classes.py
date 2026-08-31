@@ -67,21 +67,21 @@ class _patched:
 
     def __enter__(self):
         self._orig_for = gen._provider_for
-        self._orig_open = gen._open_stream
+        self._orig_open = gen.open_guarded_stream
         self._orig_q = Config.QUALITY_RETRY_MODELS
         self._orig_a = Config.MAX_GENERATION_ATTEMPTS
         gen._provider_for = lambda model: self.provider
         # Bypass the guard: this test is about retry accounting, not spend.
         async def _open(provider, messages, model):
             return await provider.generate(messages, "default", "test", None)
-        gen._open_stream = _open
+        gen.open_guarded_stream = _open
         Config.QUALITY_RETRY_MODELS = self.quality_models
         Config.MAX_GENERATION_ATTEMPTS = self.attempts
         return self
 
     def __exit__(self, *exc):
         gen._provider_for = self._orig_for
-        gen._open_stream = self._orig_open
+        gen.open_guarded_stream = self._orig_open
         Config.QUALITY_RETRY_MODELS = self._orig_q
         Config.MAX_GENERATION_ATTEMPTS = self._orig_a
 
