@@ -81,7 +81,15 @@ from src.metrics import (
     record_unmetered_answer,
     record_unpriced_answer,
 )
+from src.memory import (
+    AllocationInputs,
+    SessionTurns,
+    TIER_PASSAGES,
+    active_policy,
+    context_budget_tokens,
+)
 from src.observability import (
+    STAGE_ALLOCATE,
     STAGE_CACHE,
     STAGE_CONTEXT,
     STAGE_ENTITIES,
@@ -141,7 +149,14 @@ class ChatFilters(BaseModel):
 class ChatRequest(BaseModel):
     query: str
     filters: ChatFilters | None = None
-    session_id: str | None = None  # log-correlation only -- no conversation memory in v1
+    # v2 P6 step 2(a): promoted from "log-correlation only" to a REAL KEY. It
+    # selects the recent-turns transcript (`src/memory.py`'s `SessionTurns`),
+    # scoped by the authenticated tenant -- a client-supplied id alone would let
+    # one tenant read another's transcript, so the store keys on both.
+    # Still not a durable identifier: recent turns live in process memory and
+    # die with the process (cp-6a-input.md C-1 / O-A(i)); nothing here is
+    # written to SQLite, and CP-6a stays free to decide otherwise.
+    session_id: str | None = None
 
 
 @asynccontextmanager
@@ -152,7 +167,12 @@ async def lifespan(app: FastAPI):
     Config.validate_rag()
     # v2 P5 step 1 (C10): the one storage decision for the whole system.
     # CREATE TABLE IF NOT EXISTS at startup -- no ORM, no migration tool, no
-    # extra service. P6's memory tables append to src/db.py's SCHEMA.
+    # extra service.
+    #
+    # P6 Batch A adds NO table. The memory schema is CP-6a's to decide
+    # (`plans/mitya-v2/02-decide/cp-6a-input.md` §5) and writing it is the act
+    # that forecloses the alternatives; the recent-turns tier this batch ships
+    # is process memory by design and needs no storage at all.
     init_schema()
     # Fail loudly at startup, not on a user's first login. `cryptography`'s
     # Argon2id is OpenSSL's, and OpenSSL below 3.2 raises UnsupportedAlgorithm
@@ -204,6 +224,13 @@ async def lifespan(app: FastAPI):
     with open(Config.STRUCTURE_PATH, encoding="utf-8") as f:
         app.state.structure = json.load(f)
     app.state.cache = AnswerCache()
+    # v2 P6 step 2(a): the recent-turns tier. Hung off app.state like every
+    # other expensive-or-shared object (design IV.3), and for one extra reason:
+    # it is PROCESS state with no durable backing, so it must be one object per
+    # process rather than constructed per request -- a per-request store would
+    # be permanently empty and every session would look like turn 1, which
+    # would pass every test that only asserts nothing leaked (R115's shape).
+    app.state.turns = SessionTurns()
     app.state.sem = asyncio.BoundedSemaphore(1)
 
     count = app.state.qdrant.count(Config.QDRANT_COLLECTION).count
@@ -636,11 +663,44 @@ async def chat(
         # detail, this is the per-request dimension.
         root_span.set_attribute("route", route_name)
 
+        # v2 P6 step 7(a), G-P12(b): THE BYPASS. A memory-bearing request does
+        # not read and does not write the answer cache.
+        #
+        # This is a PREDICATE, not a key component -- `AnswerCache._key` gains
+        # no `tenant` and no memory fingerprint, and that is the decision, not
+        # an omission. R126 measured a correct memory component taking hit rate
+        # to 0.000; the only fingerprint that recovered anything (0.157)
+        # recovered it BY COLLIDING differing memory states, which is the leak
+        # the key was for. So the cached population is memory-free, and a
+        # memory-free population under a shared corpus is tenant-invariant
+        # (A12(2), C9 CLOSED). Step 7's "extend the cache key with memory
+        # state" is retired as written-in-error, per `decisions-p6.md`.
+        #
+        # Deliberately keyed on WHETHER TURNS EXIST, not on what the active
+        # policy did with them: `passages_only` produces a memory-free plan
+        # from a memory-bearing session, and letting that back into the cache
+        # would make the cached population differ per policy -- two policies'
+        # answers pooled under one arm, which is R51's defect in a new place.
+        # One predicate, evaluated once, policy-independent.
+        recent_turns = state.turns.recent(tenant, body.session_id)
+        memory_bearing = bool(recent_turns)
+
         with tracer.start_as_current_span(STAGE_CACHE) as span, StageTimer(route_name, STAGE_CACHE):
-            cached = state.cache.get(body.query, filters, route_name, config_version, corpus_version)
+            cached = (
+                None if memory_bearing
+                else state.cache.get(body.query, filters, route_name, config_version, corpus_version)
+            )
             span.set_attribute("cache.hit", cached is not None)
+            span.set_attribute("cache.bypassed_memory", memory_bearing)
             set_cost(span)
-        record_cache_lookup(route_name, "hit" if cached is not None else "miss")
+        if not memory_bearing:
+            # Denominator discipline (`decisions-p6.md` G-P12(b)): hit rate is
+            # reported over the memory-free population ONLY, never pooled. A
+            # bypassed request counted as a miss would silently deflate the hit
+            # rate of the only population the cache still serves. It is visible
+            # on the span above instead, which is where a per-request fact
+            # belongs.
+            record_cache_lookup(route_name, "hit" if cached is not None else "miss")
 
         # --- degradation ladder (charter V; policy written at P2 step 10, wired
         # here by P4 Batch A0 item 2) ---
@@ -707,6 +767,12 @@ async def chat(
                         "cost_metered": FREE.metered,
                     })
                     yield _sse("done", {})
+                    # A cache hit is only reachable on a memory-FREE request
+                    # (the bypass above), i.e. turn 1 of a session. It still
+                    # produced an answer, so it still becomes turn 1 of the
+                    # transcript -- otherwise turn 2 would open with a hole
+                    # exactly where the anaphoric follow-up points.
+                    state.turns.append(tenant, body.session_id, body.query, cached["answer"])
                     cached_outcome[0] = "ok"
                 finally:
                     # In the `finally`, and with the outcome tracked in a cell, for
@@ -855,7 +921,35 @@ async def chat(
 
         return StreamingResponse(retrieval_only_stream(), media_type="text/event-stream")
 
-    messages = build_messages(active_persona_head(), passages_block, body.query)
+    # v2 P6 steps 1 + 3: allocate, then compose. Outside the retrieval lock
+    # (it is pure CPU over strings already in hand) and after the ladder's
+    # retrieval-only exit, which serves no prompt at all.
+    #
+    # The policy comes from `Config.ALLOCATION_POLICY` through the versioned
+    # artifact -- no call site here names a policy class, which is what makes
+    # swapping one a config change and nothing else.
+    with tracer.start_as_current_span(STAGE_ALLOCATE) as span, StageTimer(route_name, STAGE_ALLOCATE):
+        plan = active_policy().allocate(AllocationInputs(
+            tenant=tenant,
+            session_id=body.session_id,
+            query=body.query,
+            budget_tokens=context_budget_tokens(),
+            passages_block=passages_block,
+            recent_turns=recent_turns,
+        ))
+        # Per-block tokens and provenance onto the span -- P1's spine, through
+        # the mechanism P1 already defines. Provenance is the point of step 1:
+        # a bad answer has to be traceable to the block that caused it.
+        for _attr, _value in plan.attributes().items():
+            span.set_attribute(_attr, _value)
+        set_cost(span)
+
+    messages = build_messages(
+        active_persona_head(),
+        plan.text_for(TIER_PASSAGES),
+        body.query,
+        memory_block=plan.memory_block(),
+    )
     # Filled in place as the stream runs, summed across every EMPTY_RETRIES
     # attempt. Stays empty if llama-server reports no usage, which is what
     # makes the request UNPRICED rather than estimated (P1 step 3).
@@ -997,15 +1091,27 @@ async def chat(
             footer = "" if no_context else build_sources_footer(sources)
             yield _sse("sources", {"sources": sources, "footer": footer})
 
-            if answer:
+            if answer and not memory_bearing:
                 # Config.SERVING_MODEL is the producing arm (v2 P2 step 9,
                 # R51) -- the only one there is until Batch D's routing picks
                 # per-request between more than one. Storing it now is what
                 # lets a hit under per-request routing say which arm answered.
+                #
+                # `not memory_bearing` is the WRITE half of the bypass, and it
+                # is the half that actually isolates: a memory-bearing answer
+                # stored under a memory-free key would be served to a different
+                # tenant asking the same question. Skipping only the read would
+                # look identical from outside until the day it leaked.
                 state.cache.set(
                     body.query, filters, route_name, config_version, corpus_version,
                     answer, sources, footer, _serving_model(),
                 )
+            if answer:
+                # In-band, post-answer (G-P13's placement). Free here -- a dict
+                # write, not a provider call -- so the admission slot is held
+                # no measurably longer. The summarizer write that G-P13 was
+                # actually about is Batch C's.
+                state.turns.append(tenant, body.session_id, body.query, answer)
 
             total_ms = int((time.monotonic() - t_start) * 1000)
             ttft_ms = int((t_first_token - t_start) * 1000) if t_first_token is not None else None
@@ -1058,6 +1164,13 @@ async def chat(
                 # meta event carries, so the frontend/attribution reader does
                 # not need a different lookup per cache_hit value.
                 "model": _serving_model(),
+                # The context plan the SERVER actually served, verbatim from
+                # the same object the span was stamped from. Batch B's driver
+                # must record the served plan rather than recompute one
+                # client-side -- a client-recomputed plan agrees with the
+                # server right up until the moment it matters, and looks
+                # identical to success while disagreeing (R97).
+                "context_plan": plan.attributes(),
             })
             logger.info(
                 "chat: query=%r route=%s filters=%s entities=%s chunk_ids=%s "

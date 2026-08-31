@@ -88,6 +88,7 @@ def build_messages(
     passages_block: str,
     question: str,
     mode: str | None = None,
+    memory_block: str = "",
 ) -> list[dict]:
     """Compose the chat messages sent to llama-server.
 
@@ -107,6 +108,23 @@ def build_messages(
       judges A vs B on persona retention + groundedness; the loser gets
       deleted from this file once a human has read the transcripts (see
       plans/mitya-rag/05-impl/phase-7.md), not decided here.
+
+    `memory_block` (v2 P6 step 2(a)) is the allocator's memory tiers, already
+    rendered and already fenced by `src/memory.py` -- this function does not
+    frame it, because the fence is a security property and it must live in one
+    place, beside the store that produces it. Empty string when the request is
+    memory-free, which is every turn-1 and every sessionless request; the
+    default keeps every pre-P6 caller (`scripts/eval_quality.py`,
+    `test/test_no_rag_arm.py`) unchanged.
+
+    **Placement: after the passages, at the tail of the system message.** Two
+    reasons, one of which is not settled here. The settled one is that context
+    never enters the user turn under composition A (R19) and memory is context.
+    The unsettled one is R52/CP-6d's ordering question -- the transcript is the
+    part that changes every turn, so putting it last keeps the longest possible
+    byte-identical prefix, but whether that prefix ever reaches a provider
+    minimum is R124's unrun measurement. This is the order that does not
+    foreclose it, not a claim that reuse was achieved.
     """
     mode = mode or Config.PROMPT_COMPOSITION
     if mode == "B":
@@ -116,6 +134,7 @@ def build_messages(
             "inform your answer, but never mention passages, sources, or "
             "quotations:\n\n"
             + passages_block
+            + ("\n\n" + memory_block if memory_block else "")
             + "\n\n"
             + question
         )
@@ -132,6 +151,8 @@ def build_messages(
           "inform your answer, but never mention passages, sources, or quotations:\n\n"
         + passages_block
     )
+    if memory_block:
+        system += "\n\n" + memory_block
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": question},
