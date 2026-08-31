@@ -1,0 +1,58 @@
+{
+  "mode": "walk",
+  "provenance": {
+    "generation": {
+      "model": "models/gemini-3.5-flash-lite",
+      "provider": "google",
+      "status": "GOOGLE_API_KEY is not set"
+    },
+    "llama_server": "not serving generation (provider=google)",
+    "qdrant": {
+      "collection": "dostoevsky",
+      "count": 3284
+    },
+    "artifacts": {
+      "entities_loaded": 256,
+      "summaries_loaded": 231,
+      "structure_loaded": 5
+    },
+    "status": "not_ready",
+    "readiness": {
+      "generation_available": false,
+      "retrieval_available": true,
+      "cache_available": true,
+      "degraded": false
+    }
+  },
+  "warm_query": "What is Raskolnikov struggling with in Crime and Punishment?",
+  "cold_query": "What does Zosima teach about active love in The Brothers Karamazov?",
+  "rows": [
+    {
+      "label": "walk/warmed query",
+      "status_code": 200,
+      "rung": "cached_answer",
+      "cache_hit": true,
+      "route": "DEFAULT",
+      "cost_usd": 0.0,
+      "ttft_ms": 7.19981799920788,
+      "total_ms": 7.382574000075692,
+      "answer_chars": 2661,
+      "answer_tail": "It is the eternal struggle between the arrogance of human reason and the quiet, inescapable voice of God and conscience."
+    },
+    {
+      "label": "walk/cold query",
+      "status_code": 200,
+      "rung": "cached_answer",
+      "cache_hit": true,
+      "route": "DEFAULT",
+      "cost_usd": 0.0,
+      "ttft_ms": 1.528058997791959,
+      "total_ms": 1.67256799977622,
+      "answer_chars": 2953,
+      "answer_tail": "key, my friend, the only thin thread leading us out of the underground of our own tormented egos into the eternal light."
+    }
+  ],
+  "unreached": [
+    "503 (UNAVAILABLE): needs retrieval down as well; not walked -- it would mean breaking the vector store on purpose"
+  ]
+}

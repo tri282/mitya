@@ -188,7 +188,21 @@ def _provider_for(model: str) -> Provider:
     request does -- the wrapping happens here rather than at the call site so
     nothing in `stream_answer()` has to know injection exists.
     """
-    provider = _resolve_adapter(model)
+    if Config.FAKE_PROVIDER:
+        # Before the fault wrap, so a fault-injection run can be exercised over
+        # the fake at zero spend; FaultProvider wraps whatever provider it is
+        # handed, which is what makes the two flags compose rather than collide.
+        from src.gateway.fake import FakeProvider
+
+        logger.warning(
+            "generation is running against the FAKE PROVIDER (MITYA_FAKE_PROVIDER set) "
+            "-- every answer in this process is a replayed fixture and no vendor call "
+            "is made. Latency and cost rows from this run measure the server, not a "
+            "provider. This must never be set on a run whose answers are meant to be real.",
+        )
+        provider: Provider = FakeProvider()
+    else:
+        provider = _resolve_adapter(model)
     if Config.FAULT_INJECT:
         from src.gateway.fault import FaultProvider, parse_fault_spec
 

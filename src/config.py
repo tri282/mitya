@@ -241,6 +241,18 @@ class Config(metaclass=_ConfigMeta):
     # `<class>:<attempts|*>` (e.g. `429:2`), parsed by `src/gateway/fault.py`.
     FAULT_INJECT = os.getenv("MITYA_FAULT_INJECT", "")
 
+    # Replace the vendor adapter with `src.gateway.fake.FakeProvider`. A
+    # DEPLOYMENT field, on the same split FAULT_INJECT sits on: it changes what
+    # the system does, not what a correct answer IS, so it never enters the
+    # serving artifact's hash (config_artifact.py's versioned/deployment rule).
+    #
+    # This exists because the P4 ramp measures the SERVER's concurrency -- the
+    # Semaphore(1), retrieval, the non-re-entrant local components -- and a real
+    # provider would only add its own latency to every point on that curve while
+    # spending quota to do it (R96). Off by default, and like FAULT_INJECT it
+    # must never be set on a run whose answers are meant to be real.
+    FAKE_PROVIDER = os.getenv("MITYA_FAKE_PROVIDER", "") not in ("", "0", "false", "False")
+
     # Models where a zero-token completion is re-drawn. Default EMPTY, i.e. off
     # everywhere, which is CP-γ's decision: 11a measured Google at 0 zero-token
     # completions over 200 draws and Groq at 1 over 150 (R70). The rule keeps
