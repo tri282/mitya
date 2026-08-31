@@ -46,7 +46,7 @@ from src.config import Config
 from src.gateway.contract import GenerationStream, Provider
 from src.limits import LimitError, QuotaExhausted, RateLimiter
 from src.limits import estimate_tokens as _estimate_tokens
-from src.metrics import record_pool_share_rejection, record_quota_rejection
+from src.metrics import record_quota_rejection
 
 logger = logging.getLogger(__name__)
 
@@ -60,23 +60,6 @@ class RequestTooLarge(LimitError):
 
 class BudgetExceeded(LimitError):
     """This request's estimated cost would exceed the remaining budget."""
-
-
-class PoolShareExceeded(LimitError):
-    """This tenant is over its fair share of the SHARED provider pool while the
-    pool is under pressure (v2 P5 step 5, charter A12(1)).
-
-    Distinct from `QuotaExhausted` (the pool itself is empty) and from
-    `Degraded` (the deployment is spending too fast). This one says: there is
-    pool left, but it is not yours to take right now -- somebody else would be
-    starved. It carries `retry_after` because, unlike the other two, it is
-    exactly a back-off condition with a knowable end: the seconds until this
-    tenant's oldest window entry ages out.
-    """
-
-    def __init__(self, message: str, retry_after: int):
-        super().__init__(message, status=429)
-        self.retry_after = retry_after
 
 
 class Degraded(RuntimeError):
@@ -109,7 +92,6 @@ class SpendRateBreaker:
     Reports whether a request WOULD trip the cap (`would_trip`); it does not
     raise by itself, so the caller decides what "degraded" means (step 10's
     ladder), matching charter IV's "into degraded mode, not failure".
-    `share_exceeded` is the same posture: it reports, `guarded_generate` raises.
     """
 
     def __init__(
@@ -139,53 +121,6 @@ class SpendRateBreaker:
         self._evict(now)
         spent = sum(entry[2] for entry in self._window)
         return (spent + projected_usd) > self.max_usd_per_minute
-
-    def share_exceeded(self, tenant: str, tokens: int, pool_tokens: int) -> bool:
-        """Would admitting this request take more than `tenant`'s fair share of
-        the shared pool, while the pool is under pressure?
-
-        Fair share is max-min by construction and needs no configured per-tenant
-        number: it is `pool_tokens / active_tenants`, where "active" means seen
-        in this window, plus the caller. One tenant alone therefore gets the
-        WHOLE pool (share = pool / 1) and is never rejected by this rule -- which
-        is the correct behaviour and the reason this is not a per-tenant cap.
-        Five tenants contending get a fifth each.
-
-        Returns False whenever the pool is below `fairness_pressure` of
-        capacity (spare pool, so no starvation to prevent) and whenever only
-        one tenant is active (nobody to be fair to -- see below).
-        """
-        if pool_tokens <= 0:
-            # No published pool for this model (an unpriced/unlimited local arm).
-            # There is nothing to divide, and inventing a denominator would make
-            # the rule look like it was enforcing something it is not.
-            return False
-        now = self._clock()
-        self._evict(now)
-        total = sum(entry[3] for entry in self._window)
-        if total + tokens <= pool_tokens * self.fairness_pressure:
-            return False
-        active = {entry[1] for entry in self._window} | {tenant}
-        if len(active) < 2:
-            # Nobody to be fair TO. A single tenant's fair share is the whole
-            # pool, so this rule can only ever restate "the pool is full" --
-            # which is the rate limiter's job, and duplicating it here would
-            # reject with the wrong reason and the wrong status code.
-            return False
-        fair_share = pool_tokens / len(active)
-        mine = sum(entry[3] for entry in self._window if entry[1] == tenant)
-        return (mine + tokens) > fair_share
-
-    def retry_after(self, tenant: str) -> int:
-        """Seconds until this tenant's oldest window entry ages out -- the
-        soonest its share can free up. Always >= 1, so a `Retry-After: 0` never
-        invites an immediate retry that would be rejected identically."""
-        now = self._clock()
-        self._evict(now)
-        mine = [entry[0] for entry in self._window if entry[1] == tenant]
-        if not mine:
-            return 1
-        return max(1, int(60.0 - (now - min(mine))) + 1)
 
     def record(self, usd: float, tenant: str, tokens: int) -> None:
         """Only called once a call is actually made -- a rejected request
@@ -237,33 +172,16 @@ async def guarded_generate(
             f"~{input_tokens} input tokens over the {max_input_tokens} limit"
         )
 
-    # Fair share of the SHARED pool (v2 P5 step 5, A12(1)), and it sits HERE --
-    # before the rate limiter, not after. `RateLimiter.acquire_async` SLEEPS
-    # until pool capacity frees; a tenant already over its share that is allowed
-    # to reach that await is exactly the noisy neighbour this check exists to
-    # stop, occupying the wait queue it is starving everyone else with. Rejecting
-    # first is what makes the difference visible as a 429 rather than as
-    # everyone else's latency.
-    #
-    # `limiter.tpm` IS the pool: one shared provider account means one published
-    # token window per quota scope (`src.limits.quota_scope`), which is the thing
-    # tenants actually contend for. No second capacity number is configured, so
-    # there is nothing here that can drift out of step with the real limit.
-    pool_tokens_reserved = input_tokens + max_output_tokens
+    # The fair-share guard that used to sit here is RETIRED (P5 G-P10, R117).
+    # It never fired: it needed 80% of `limiter.tpm` in pressure, and admission
+    # control (`src.limits.TenantConcurrency`) caps in-flight work at roughly 3%
+    # of that -- the offered load that would raise pressure is precisely what
+    # admission refuses. It passed nine tests and was unreachable in production,
+    # which is a worse state than absent, because green tests asserted it worked.
+    # Fairness now lives in the admission gate, the only place where contention
+    # is observable: `TenantConcurrency._ahead_of_share()`.
     model = getattr(provider, "model", "unknown")
-    if breaker.share_exceeded(tenant, pool_tokens_reserved, limiter.tpm):
-        retry_after = breaker.retry_after(tenant)
-        record_pool_share_rejection(tenant)
-        logger.warning(
-            "gateway: fair-share guard rejected request (tenant=%s, tokens=%s, "
-            "pool_tpm=%s, retry_after=%ss) -- shared pool under pressure",
-            tenant, pool_tokens_reserved, limiter.tpm, retry_after,
-        )
-        raise PoolShareExceeded(
-            f"tenant {tenant} is over its fair share of the shared pool "
-            f"({pool_tokens_reserved} tokens against a {limiter.tpm} tokens/min pool)",
-            retry_after=retry_after,
-        )
+    pool_tokens_reserved = input_tokens + max_output_tokens
 
     try:
         # Reserve input PLUS the completion ceiling, not input alone. Provider

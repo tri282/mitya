@@ -1,0 +1,74 @@
+{
+  "provenance": {
+    "ready": {
+      "generation": {
+        "model": "models/gemini-3.5-flash-lite",
+        "provider": "google",
+        "status": "ok"
+      },
+      "llama_server": "not serving generation (provider=google)",
+      "qdrant": {
+        "collection": "dostoevsky",
+        "count": 3284
+      },
+      "artifacts": {
+        "entities_loaded": 256,
+        "summaries_loaded": 231,
+        "structure_loaded": 5
+      },
+      "fake_provider": true,
+      "status": "ready",
+      "readiness": {
+        "generation_available": true,
+        "retrieval_available": true,
+        "cache_available": false,
+        "degraded": false
+      }
+    },
+    "arm": "fake",
+    "secure_cookie_under_test": false,
+    "credentials_file": "data/p5-test-accounts.env"
+  },
+  "shape": "9a",
+  "dry": false,
+  "curve": {
+    "1": {
+      "served": 20,
+      "p50_ms": 2045.3,
+      "p95_ms": 17579.2,
+      "p99_ms": 17579.2,
+      "rejections": 0
+    },
+    "2": {
+      "served": 11,
+      "p50_ms": 4119.8,
+      "p95_ms": 19577.0,
+      "p99_ms": 19577.0,
+      "rejections": 8
+    },
+    "4": {
+      "served": 7,
+      "p50_ms": 4230.8,
+      "p95_ms": 4429.3,
+      "p99_ms": 4429.3,
+      "rejections": 13
+    },
+    "8": {
+      "served": 4,
+      "p50_ms": 4158.8,
+      "p95_ms": 4192.9,
+      "p99_ms": 4192.9,
+      "rejections": 16
+    }
+  },
+  "compare_against": "out/ramp-fake-d7.json (same arm, pre-auth) -- the delta is auth",
+  "rejection_counters": {
+    "before": {},
+    "after": {
+      "mitya_admission_rejections_total{reason=\"tenant\",tenant=\"tenant-a\"}": 37.0
+    },
+    "delta": {
+      "mitya_admission_rejections_total{reason=\"tenant\",tenant=\"tenant-a\"}": 37.0
+    }
+  }
+}

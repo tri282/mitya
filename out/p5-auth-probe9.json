@@ -1,0 +1,52 @@
+{
+  "provenance": {
+    "ready": {
+      "generation": {
+        "model": "models/gemini-3.5-flash-lite",
+        "provider": "google",
+        "status": "ok"
+      },
+      "llama_server": "not serving generation (provider=google)",
+      "qdrant": {
+        "collection": "dostoevsky",
+        "count": 3284
+      },
+      "artifacts": {
+        "entities_loaded": 256,
+        "summaries_loaded": 231,
+        "structure_loaded": 5
+      },
+      "fake_provider": true,
+      "status": "ready",
+      "readiness": {
+        "generation_available": true,
+        "retrieval_available": true,
+        "cache_available": false,
+        "degraded": false
+      }
+    },
+    "arm": "fake",
+    "secure_cookie_under_test": null,
+    "credentials_file": "data/p5-test-accounts.env"
+  },
+  "dry": false,
+  "probes": [
+    {
+      "n": 9,
+      "probe": "user enumeration",
+      "verdict": "PASS",
+      "evidence": {
+        "unknown_median_ms": 31.3,
+        "wrong_password_median_ms": 31.4,
+        "timing_ratio": 1.004,
+        "statuses": [
+          401
+        ],
+        "bodies": [
+          "{\"detail\":\"invalid credentials\"}"
+        ]
+      },
+      "note": "identical status and body; timing within 1.5x (one argon2id verify on both branches)"
+    }
+  ]
+}

@@ -1,0 +1,176 @@
+{
+  "provenance": {
+    "ready": {
+      "generation": {
+        "model": "models/gemini-3.5-flash-lite",
+        "provider": "google",
+        "status": "ok"
+      },
+      "llama_server": "not serving generation (provider=google)",
+      "qdrant": {
+        "collection": "dostoevsky",
+        "count": 3284
+      },
+      "artifacts": {
+        "entities_loaded": 256,
+        "summaries_loaded": 231,
+        "structure_loaded": 5
+      },
+      "fake_provider": true,
+      "status": "ready",
+      "readiness": {
+        "generation_available": true,
+        "retrieval_available": true,
+        "cache_available": false,
+        "degraded": false
+      }
+    },
+    "arm": "fake",
+    "secure_cookie_under_test": false,
+    "credentials_file": "data/p5-test-accounts.env"
+  },
+  "dry": false,
+  "probes": [
+    {
+      "n": 1,
+      "probe": "unauthenticated /chat",
+      "verdict": "PASS",
+      "evidence": {
+        "status": 401,
+        "body_head": "{\"detail\":\"authentication required\"}",
+        "sse_frames": 0
+      },
+      "note": ""
+    },
+    {
+      "n": 2,
+      "probe": "unauthenticated /books",
+      "verdict": "PASS",
+      "evidence": {
+        "status": 401,
+        "body_head": "{\"detail\":\"authentication required\"}"
+      },
+      "note": ""
+    },
+    {
+      "n": 3,
+      "probe": "forged X-Tenant-ID header",
+      "verdict": "PASS",
+      "evidence": {
+        "status": 200,
+        "attribution_delta": {
+          "tenant-a": 1.0
+        }
+      },
+      "note": "header names tenant-b; attribution must stay on tenant-a"
+    },
+    {
+      "n": 4,
+      "probe": "forged / unparseable session",
+      "verdict": "PASS",
+      "evidence": {
+        "forged_status": 401,
+        "garbage_cookie_status": 401
+      },
+      "note": "an unparseable Cookie header must be 401, never 500"
+    },
+    {
+      "n": 5,
+      "probe": "cross-tenant cache observation",
+      "verdict": "RECORDED",
+      "evidence": {
+        "a_cache_hit": false,
+        "b_cache_hit": false,
+        "b_served_from_a_entry": false,
+        "a_tail": "Marvel not at the world's evil, but at man's capacity to endure it.",
+        "b_tail": "Marvel not at the world's evil, but at man's capacity to endure it."
+      },
+      "note": "VACUOUS by A12(2): no tenant in the cache key at P5. Real test lands at CP6."
+    },
+    {
+      "n": 6,
+      "probe": "invalidated session before /chat",
+      "verdict": "PASS",
+      "evidence": {
+        "status": 401
+      },
+      "note": "logout, not clock expiry -- see docstring"
+    },
+    {
+      "n": 7,
+      "probe": "invalidation mid-stream",
+      "verdict": "PASS",
+      "evidence": {
+        "stream_status": 200,
+        "frames_after_kill": 15,
+        "next_request_status": 401
+      },
+      "note": "the committed 200 must finish; only the NEXT request is refused (R114 case 2)"
+    },
+    {
+      "n": 8,
+      "probe": "secrets redaction",
+      "verdict": "PASS",
+      "evidence": {
+        "env_secrets_checked": 4,
+        "leaked_names": [],
+        "scraped_chars": 27351
+      },
+      "note": ""
+    },
+    {
+      "n": 9,
+      "probe": "user enumeration",
+      "verdict": "FAIL",
+      "evidence": {
+        "unknown_median_ms": 32.8,
+        "wrong_password_median_ms": 16.5,
+        "timing_ratio": 1.984,
+        "statuses": [
+          401,
+          429
+        ],
+        "bodies": [
+          "{\"detail\":\"invalid credentials\"}",
+          "{\"detail\":\"too many attempts\"}"
+        ]
+      },
+      "note": "identical status and body; timing within 1.5x (one argon2id verify on both branches)"
+    },
+    {
+      "n": 10,
+      "probe": "per-account login rate limit",
+      "verdict": "PASS",
+      "evidence": {
+        "wrong_password_statuses": [
+          401,
+          401,
+          401,
+          401,
+          401,
+          429
+        ],
+        "correct_password_status": 429,
+        "retry_after": "60"
+      },
+      "note": "R108 regression: the correct password must ALSO be refused once the cap is reached"
+    },
+    {
+      "n": 11,
+      "probe": "per-IP login rate limit",
+      "verdict": "PASS",
+      "evidence": {
+        "first_429_at_attempt": 1,
+        "statuses_tail": [
+          429,
+          429,
+          429,
+          429,
+          429,
+          429
+        ]
+      },
+      "note": "distinct usernames, so only the IP counter can be what refuses"
+    }
+  ]
+}

@@ -267,6 +267,12 @@ class Config(metaclass=_ConfigMeta):
     # by construction.
     CHAT_MAX_INFLIGHT_PER_TENANT = int(os.getenv("CHAT_MAX_INFLIGHT_PER_TENANT", "2"))
     CHAT_MAX_INFLIGHT_TOTAL = int(os.getenv("CHAT_MAX_INFLIGHT_TOTAL", "6"))
+    # Least-served fairness on the global slots (P5 G-P10, R117/R118). The last
+    # RESERVE slots are withheld from a tenant already ahead of the mean served
+    # count over WINDOW seconds, by more than TOLERANCE. 0 restores FCFS.
+    CHAT_FAIRNESS_RESERVE = int(os.getenv("CHAT_FAIRNESS_RESERVE", "2"))
+    CHAT_FAIRNESS_WINDOW_SECONDS = float(os.getenv("CHAT_FAIRNESS_WINDOW_SECONDS", "60"))
+    CHAT_FAIRNESS_TOLERANCE = float(os.getenv("CHAT_FAIRNESS_TOLERANCE", "1.25"))
     LLAMA_SERVER_URL = os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080")
     # CTX_SIZE, MAX_TOKENS, GEN_TEMPERATURE, GEN_TOP_P moved to the versioned
     # serving config -- they change what a correct answer is. Resolved through
