@@ -290,8 +290,37 @@ The cached value is `{answer, sources, footer}`, so a cache hit re-emits the `so
 * `POST /chat` — `{query, filters?, session_id?}`; SSE stream of answer tokens, then a `sources` event, then a `meta` event. `session_id` is log-correlation only in v1 (conversation memory is out of scope).
 * `GET /health` — llama-server reachability + Qdrant collection presence/count + artifact load status.
 * `GET /books` — the `structure.json` tree, feeds the filter UI.
+* `POST /auth/login`, `POST /auth/logout`, `GET /auth/session` — **v2 CP5.** `/chat`, `/books` and
+  `/auth/session` require an authenticated session; an unauthenticated caller gets `401` with a
+  generic body and no SSE frames.
 
 Bind uvicorn and llama-server to `127.0.0.1` by default. Query text appears in local logs only — fine for a single-user deployment.
+
+**Auth and tenant identity (v2 CP5).** Accounts, sessions and login-attempt records live in one
+SQLite file (`stdlib sqlite3`, `CREATE TABLE IF NOT EXISTS` at startup, no ORM and no migration
+tool — P6's memory tables arrive the same way). Passwords are argon2id via `cryptography`'s OpenSSL
+binding, which cost no new dependency. Session tokens are **opaque and server-side, not JWT** —
+single server, no federation, and revocation is the property that matters; only the token's hash is
+stored. The cookie carries `HttpOnly`, `Secure`, `SameSite=Lax` and is **rotated on login**, which
+closes session fixation. Login is rate-limited **per account and per IP**, and the limiter *rejects*
+rather than sleeps: a login limiter that sleeps converts password guessing into a
+connection-holding denial of service. Unknown-account and wrong-password failures are
+indistinguishable by status, body, and timing — the unknown branch verifies against a decoy hash so
+the difference is a dict lookup rather than a 40 ms KDF. Registration is **closed**; accounts come
+from `scripts/seed_account.py`.
+
+The tenant is resolved **once**, at the session-cookie check, and carried on `request.state` into
+P1's existing telemetry dimension — no second round trip per request, and it is a metric label on
+four instruments. v1's unauthenticated `X-Tenant-ID` header was **removed, not supplemented**: an
+authenticated tenant that a header can override is not authenticated.
+
+**The answer cache is deliberately NOT tenant-keyed** (charter A12(2)). The corpus is shared, so
+tenants ask overlapping questions about the same documents; tenant-keying would discard most of the
+cost saving that is the cache's whole purpose, and with no per-tenant documents there is nothing to
+leak. Tenant enters the key at **CP6**, the moment per-tenant memory reaches the prompt. CP5's
+cross-tenant leak test is therefore **vacuous by construction** and is recorded as such rather than
+reported as an isolation pass — `test/test_cache_isolation.py` is written to start failing at CP6 if
+memory reaches the prompt without the key changing. That conditional is the real isolation test.
 
 **Shipped for the UI build (`mitya-ui`):** an `event: meta` SSE event, added for the UI's debug panel, carrying `{route_name, chunk_ids, ttft_ms, total_ms, filter_relaxed, no_context, cache_hit}` — fields the pipeline already computed and previously only logged. Always-on, no request flag (single local user; query text is already in local logs). Placement:
 - **Live path:** `token`* → `sources` → **`meta`** (stream close). Emitted *after* `sources` and after `cache.set`, at the point `total_ms`/`ttft_ms` are already computed and logged, so `total_ms` is a truthful end-to-end figure.
@@ -300,8 +329,32 @@ The client must treat `meta` as optional and non-terminal for forward compatibil
 
 ### 2. Concurrency & timeouts
 
-* One request at a time through retrieval+generation: `asyncio.Semaphore(1)` (llama-server runs `--parallel 1`; the embedder is not re-entrant). Concurrent submits queue.
+* **Retrieval** is serialized by `asyncio.Semaphore(1)` — the embedder is not re-entrant. v2 CP4
+  narrowed this lock to release **before** generation (previously it covered both), which moved the
+  concurrency knee from 1 to 4 and raised throughput 1.74x.
+* **Admission control** (v2 CP5, `src.limits.TenantConcurrency`): bounded in-flight requests, per
+  tenant (`CHAT_MAX_INFLIGHT_PER_TENANT`, default 2) and in total (`CHAT_MAX_INFLIGHT_TOTAL`,
+  default 6), held for the whole call including the SSE body. It **rejects rather than queues** — a
+  limiter that sleeps until capacity frees is how an unbounded queue is spelled. Over capacity is
+  `429` with the reason attributed (`tenant`, `total`, `fairness`).
 * Per-request budget enforced; `503` when llama-server is unreachable, `504` on timeout — errors surface to the client as structured JSON, never a hung stream.
+
+**What the bound actually bought, measured (CP5, R117-R119).** Before it, the system never rejected
+anything at any concurrency: it queued silently to a 62 s p99 with a 100% success rate. After it,
+the same load at the same level rejects in ~4 s. But admitted requests still showed p95 of
+**12-30 s** against a 2.1 s idle baseline, and system throughput sat near **0.25 rps** — the knee,
+not the gate's capacity. `CHAT_MAX_INFLIGHT_TOTAL=6` admits more than the pipeline can serve while
+retrieval remains mutually exclusive, so most admitted requests queue *inside* the box. **The bound
+caps how many wait, not how long any one waits.** Sizing the gate to the measured knee is open work.
+
+**Per-tenant fairness is not settled** (gap G-P10). Two mechanisms were built and one was retired:
+a token-pressure fair-share guard in the gateway that **never fired** — it needed 80% of the
+provider's TPM window, and admission control caps in-flight work at roughly 3% of that, so the load
+that would raise pressure is precisely what admission refuses — and a least-served rule in the
+admission gate, which does fire but whose effect could not be measured (a 90 s window serves ~25
+requests across 5 tenants, and a share ratio computed from single-digit counts is noise). The
+retired guard passed nine tests while being unreachable in production; that is a worse state than
+absent, because green tests asserted it worked.
 
 ### 3. Failure modes
 

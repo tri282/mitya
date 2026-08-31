@@ -99,6 +99,16 @@ A thin browser client over the existing `/chat` SSE endpoint — no new backend 
 * **Visual system:** the single dim "Evening Reading Room" theme (see root `DESIGN.md`) — warm near-black surface, one amber "lamplight" accent, literary serif reading column, quiet sans chrome. No light theme in v1.
 * **Backend contract deltas (shipped):** (1) an `event: meta` SSE event carrying per-answer diagnostics (`route_name, chunk_ids, ttft_ms, total_ms, filter_relaxed, no_context, cache_hit`, and from v2 CP1 also `request_id, tenant, cost_usd, cost_metered, config_version, corpus_version`) for a collapsed debug panel; (2) the `cache.py` cached value changed from a bare answer string to `{answer, sources, footer}` so a cache hit re-emits the `sources` event and grounding stays visible on repeat questions. Both are additive, local-only (no new request flag) — see `docs/RAG.md` §III.6/§IV.1 for the full contract. `frontend/` (the Vue 3 SPA) is built and served in production via a mount-last `StaticFiles`; see the repo README for build/run notes.
 
+* **Auth-gated state (v2 CP5):** the SPA is behind a **login wall**. An unauthenticated visitor sees
+  the login view and nothing else — no corpus browsing, no public demo tenant. Session state lives in
+  `frontend/src/state/auth.ts`; `LoginView.vue` is the only surface reachable without a session.
+  Deliberately minimal: D8 rules out ceremony, and auth is not a new product surface here.
+* **Session expiry is two cases, and only one can be a 401.** Expiry *before* `/chat` answers is a
+  clean `401` and the SPA returns to the login view. Expiry *after* the first token cannot be a 401
+  at all — the `200` is already committed and the stream is in flight — so the in-flight answer
+  completes and the **next** request is refused. Measured end-to-end at CP5: 15 frames delivered
+  after the session was destroyed mid-stream, then `401` on the following call.
+
 *See `DESIGN.md` (repo root) for the visual system and `docs/RAG.md` §IV.1 for the SSE contract.*
 
 ---
