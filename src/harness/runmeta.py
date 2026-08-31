@@ -40,7 +40,7 @@ def load_credentials(path: str = DEFAULT_CREDENTIALS) -> dict[str, str]:
     return creds
 
 
-async def provenance(base_url: str) -> dict:
+async def provenance(base_url: str, **kwargs) -> dict:
     """Read `/ready` BEFORE any traffic and return it for the artifact.
 
     Which arm served a run is not recoverable afterwards, so it is captured
@@ -56,7 +56,13 @@ async def provenance(base_url: str) -> dict:
     was switched off, which is precisely the mislabelling R106 exists to stop.
     `logged_in()` fills it in from the real `Set-Cookie`.
     """
-    async with HarnessClient(base_url=base_url) as client:
+    # `**kwargs` reaches `HarnessClient` unchanged -- P6 Batch B's driver
+    # passes `transport=httpx.ASGITransport(app=app)` so a run needs no
+    # uvicorn (CLAUDE.md: uvicorn holds an exclusive lock on data/vector_db/).
+    # `logged_in()` below already forwarded kwargs; this one did not, and the
+    # two have to agree or the provenance read and the traffic would go to
+    # different servers.
+    async with HarnessClient(base_url=base_url, **kwargs) as client:
         body = client_ready = (await client.ready()).json()
     logger.info("provenance: %s", json.dumps(body, sort_keys=True)[:400])
 

@@ -84,6 +84,19 @@ class ChatResult:
     answer_tail: str | None
     request_id: str | None  # correlates back to the server's own logs/spans
     rung: str | None  # served Rung.value (Batch C step 8, R93/R94); None on transport failure
+    # --- v2 P6 Batch B: what the multi-turn driver needs and could not get ---
+    # The three fields below are read off the SERVER's own events and are never
+    # derived here. A client that recomputes either the plan or the served
+    # sources agrees with the server right up until the moment it matters, and
+    # disagrees while looking identical to success -- the R97 shape.
+    sources: list[dict] | None  # `sources` event: deduped {book, part, chapter} actually in context
+    context_plan: dict | None  # meta.context_plan == ContextPlan.attributes(); None on paths that serve no prompt
+    # meta.total_ms, stamped by the server when the answer finished, not when
+    # the stream closed. `total_ms` above is this client's stream-close number
+    # and both are kept: `phase-6.md`'s "Owed into Batch B" requires per-turn
+    # latency timestamped at the answer-done event, because Batch C's
+    # summarizer write lands after it and would otherwise fold into p95.
+    server_total_ms: float | None
 
 
 class HarnessClient:
@@ -212,6 +225,7 @@ class HarnessClient:
                         error_detail=body.decode(errors="replace")[:500], answer_chars=0,
                         answer_tail=None,
                         request_id=None,
+                        sources=None, context_plan=None, server_total_ms=None,
                         # R93: every /chat error exit carries X-Mitya-Rung, since the
                         # exception paths emit no `meta` event to carry it instead.
                         rung=resp.headers.get("x-mitya-rung"),
@@ -228,6 +242,7 @@ class HarnessClient:
                 fault_phase="pre_first_token", error_detail=str(exc), answer_chars=0,
                 answer_tail=None,
                 request_id=None,
+                sources=None, context_plan=None, server_total_ms=None,
                 # No response ever arrived, so no header either -- distinct from
                 # the pre_first_token-with-a-status-code case above, which reads
                 # the rung header from a response that DID arrive.
@@ -241,6 +256,7 @@ class HarnessClient:
         t_first_token: float | None = None
         route = cache_hit = cost_usd = cost_metered = model = None
         no_context = filter_relaxed = chunk_ids = request_id = rung = None
+        sources = context_plan = server_total_ms = None
         terminal_event: str | None = None
         error_detail: str | None = None
         answer_chars = 0
@@ -274,6 +290,14 @@ class HarnessClient:
                     chunk_ids = body.get("chunk_ids")
                     request_id = body.get("request_id")
                     rung = body.get("rung")  # Batch C step 8 (R93/R94)
+                    # v2 P6 Batch B. Absent on the cache-hit and
+                    # retrieval-only metas (neither composes a prompt), so
+                    # None here means "the server served no plan", never
+                    # "the client did not look".
+                    context_plan = body.get("context_plan")
+                    server_total_ms = body.get("total_ms")
+                elif event_name == "sources":
+                    sources = body.get("sources")
                 elif event_name in ("done", "error"):
                     terminal_event = event_name
                     if event_name == "error":
@@ -290,4 +314,5 @@ class HarnessClient:
             chunk_ids=chunk_ids, terminal_event=terminal_event, fault_phase=fault_phase,
             error_detail=error_detail, answer_chars=answer_chars,
             answer_tail=answer_tail or None, request_id=request_id, rung=rung,
+            sources=sources, context_plan=context_plan, server_total_ms=server_total_ms,
         )
