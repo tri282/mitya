@@ -122,11 +122,43 @@ class HarnessClient:
         await self._client.aclose()
 
     def _headers(self) -> dict[str, str]:
-        """The single seam P5's auth retrofit edits (D7, R86). Empty today --
-        the harness predates auth (G7) -- but every request below reads
-        headers from here, so adding a credential is one change, not a hunt
-        across `/books` and `/chat`."""
+        """The seam R86 measured. It stayed EMPTY after P5, and that is the
+        finding, not an omission: D7's credential is a Set-Cookie, and
+        `httpx.AsyncClient` carries its own cookie jar -- so `login()` below
+        arms every subsequent request on this client without any call site
+        adding a header. The two call sites R86 counted turned out to be
+        zero."""
         return {}
+
+    async def login(self, username: str, password: str) -> httpx.Response:
+        """Authenticate this client (G7: the harness logs in like everyone
+        else -- no test-only credential path, which would be an auth bypass
+        under another name).
+
+        The session cookie lands in this client's jar and is replayed on every
+        later `/books` and `/chat` call automatically.
+
+        CAVEAT that will bite a local run: the server issues the cookie with
+        `Secure` (D7), and httpx will NOT return a Secure cookie over plain
+        `http://`. Against a local uvicorn the server must therefore be started
+        with `SESSION_COOKIE_SECURE=0` -- see `src/config.py`. Against the real
+        deployment, where TLS is terminated in front, nothing changes here.
+        """
+        resp = await self._client.post(
+            "/auth/login", json={"username": username, "password": password}
+        )
+        if resp.status_code != 200:
+            logger.warning(
+                "harness: login failed status=%s body=%r",
+                resp.status_code, resp.text[:200],
+            )
+        elif not self._client.cookies.get("mitya_session"):
+            logger.warning(
+                "harness: login returned 200 but no session cookie was stored -- "
+                "the server is almost certainly issuing Secure cookies over http; "
+                "start it with SESSION_COOKIE_SECURE=0 for local runs"
+            )
+        return resp
 
     async def _request(self, method: str, path: str, *, json_body: dict | None = None) -> httpx.Response:
         """Non-streaming requests: `/metrics`, `/health`, `/ready`, `/books`."""

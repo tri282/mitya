@@ -90,11 +90,18 @@ def reset_request_id(token: contextvars.Token) -> None:
 # deliberately not a second mechanism.
 # ---------------------------------------------------------------------------
 
-# UNAUTHENTICATED until P5: anyone who can reach the endpoint can claim any
-# tenant by sending this header. Acceptable now (single operator, synthetic
-# traffic, loopback) -- see parse_tenant() for the validation that keeps it
-# from becoming a log-injection or metrics-cardinality problem in the
-# meantime.
+# RETIRED FROM THE REQUEST PATH at v2 P5 (D7). Until P5 this header WAS the
+# tenant: anyone who could reach the endpoint could claim any tenant by
+# sending it, which P1 accepted explicitly and bounded to "until P5 makes
+# identity real". P5 made it real, so `RequestIdMiddleware` no longer reads
+# this header at all -- the tenant comes from an authenticated session cookie
+# through the injected `tenant_resolver`, and a caller who sends
+# X-Tenant-ID now gets it ignored rather than honoured.
+#
+# The constant and `parse_tenant()` survive as the SHAPE validator for a
+# tenant id, which is still needed: `src.auth.create_account` refuses an
+# account id that would not be safe in LOG_FORMAT's [%(tenant)s] or in a
+# metric label. They are no longer an intake path.
 TENANT_HEADER = b"x-tenant-id"
 
 # Allowlist-shaped, not a registry of known tenant ids -- there is no tenant
@@ -107,6 +114,17 @@ TENANT_HEADER = b"x-tenant-id"
 # already rejected (\n is not in the class); it is specifically the trailing one
 # that slipped through. \Z anchors at end-of-string and nothing else.
 _TENANT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}\Z")
+
+
+def is_valid_tenant(value: str) -> bool:
+    """Whether a string is safe to use as a tenant id.
+
+    The one definition of that shape in the codebase. `parse_tenant()` applies
+    it to an inbound header (retired, see above) and
+    `src.auth.create_account()` applies it to a new account id -- an account id
+    IS a tenant id, and it reaches log lines and span attributes verbatim.
+    """
+    return bool(_TENANT_RE.match(value))
 
 
 def current_tenant() -> str:
@@ -232,16 +250,33 @@ class RequestIdMiddleware:
     Also binds the tenant (P1 step 4) in the same try/finally, reusing this
     middleware rather than adding a second one: a second ASGI hop would cost
     a task boundary on a path measured to the millisecond, the same reasoning
-    that keeps this one plain ASGI in the first place. Unlike X-Request-ID,
-    X-Tenant-ID IS read on the way in -- P4's load harness needs it to
-    generate multi-tenant load without waiting for P5 -- so it goes through
-    parse_tenant()'s validation rather than being ignored.
+    that keeps this one plain ASGI in the first place.
+
+    **Tenant resolution changed at v2 P5 (D7, C11).** P1 read X-Tenant-ID off
+    the wire and said so: unauthenticated, acceptable until P5 made identity
+    real. It is now ignored -- see TENANT_HEADER above. Instead this
+    middleware calls an injected `tenant_resolver(scope) -> str | None` and
+    binds whatever it returns, falling back to `Config.DEFAULT_TENANT` when it
+    returns None (no session, expired session, or an operator-plane route that
+    has none). `src.api.app` passes `src.api.app._resolve_tenant`, which reads
+    the session cookie.
+
+    That injection, rather than an import of `src.auth` here, keeps the
+    telemetry module free of a dependency on the auth module (this one is
+    imported by offline scripts that have no database) and keeps
+    `test_observability.py` drivable with a stub.
+
+    **C11 is satisfied here, structurally.** The resolver runs exactly ONCE per
+    request, and its result is bound to both the `tenant` ContextVar and
+    `scope["state"]["tenant"]` -- which is what `request.state.tenant` reads.
+    Nothing downstream, the cache key included, performs a second lookup.
     """
 
     HEADER = b"x-request-id"
 
-    def __init__(self, app):
+    def __init__(self, app, tenant_resolver=None):
         self.app = app
+        self._tenant_resolver = tenant_resolver
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -250,7 +285,19 @@ class RequestIdMiddleware:
 
         request_id = request_id_from_active_span() or new_request_id()
         request_id_token = set_request_id(request_id)
-        tenant_token = set_tenant(parse_tenant(_header_value(scope, TENANT_HEADER)))
+
+        from src.config import Config
+
+        tenant = None
+        if self._tenant_resolver is not None:
+            tenant = self._tenant_resolver(scope)
+        tenant = tenant or Config.DEFAULT_TENANT
+        tenant_token = set_tenant(tenant)
+        # Starlette's `HTTPConnection.state` reads `scope["state"]`, so this is
+        # how a plain-ASGI middleware reaches `request.state.tenant` in the
+        # endpoint. setdefault, not assignment: uvicorn already puts the
+        # lifespan state dict here.
+        scope.setdefault("state", {})["tenant"] = tenant
 
         async def send_with_header(message):
             if message["type"] == "http.response.start":

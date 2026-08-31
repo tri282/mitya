@@ -32,16 +32,27 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
+from http.cookies import SimpleCookie
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastembed import SparseTextEmbedding, TextEmbedding
 from opentelemetry import trace
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
 
+from src.auth import (
+    COOKIE_NAME,
+    LoginFailed,
+    RateLimited,
+    argon2_available,
+    login as auth_login,
+    logout as auth_logout,
+    resolve_session,
+)
 from src.config import Config
+from src.db import init_schema
 from src.config_artifact import (
     active_config_version,
     active_corpus_manifest,
@@ -130,6 +141,27 @@ async def lifespan(app: FastAPI):
     missing artifacts (Config.validate_rag) or an empty Qdrant collection both
     raise before the server starts accepting requests."""
     Config.validate_rag()
+    # v2 P5 step 1 (C10): the one storage decision for the whole system.
+    # CREATE TABLE IF NOT EXISTS at startup -- no ORM, no migration tool, no
+    # extra service. P6's memory tables append to src/db.py's SCHEMA.
+    init_schema()
+    # Fail loudly at startup, not on a user's first login. `cryptography`'s
+    # Argon2id is OpenSSL's, and OpenSSL below 3.2 raises UnsupportedAlgorithm
+    # on the first derive -- which would otherwise surface as a 500 on /auth/login
+    # with the cause buried in a traceback (see src/auth.py).
+    if not argon2_available():
+        raise RuntimeError(
+            "auth: argon2id is unavailable -- cryptography is linked against "
+            "OpenSSL < 3.2. Install argon2-cffi and swap src/auth.py's hasher, "
+            "or run against a newer OpenSSL. D7 does not permit a fallback KDF."
+        )
+    if not Config.SESSION_COOKIE_SECURE:
+        logger.warning(
+            "auth: SESSION_COOKIE_SECURE=0 -- session cookies are being issued "
+            "WITHOUT the Secure flag and will travel over plain HTTP. This is "
+            "the local-harness setting (see src/config.py); it must never be "
+            "set on a deployed instance."
+        )
     # v2 P1 step 8 (D9): the corpus manifest and the serving config's
     # EMBED_MODEL must agree, or refuse to start. Without this, swapping
     # EMBED_MODEL and restarting without re-ingesting compares query vectors
@@ -181,17 +213,164 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# The tenant resolver the middleware below is wired with. Defined here, above
+# `add_middleware`, because that call runs at import time and needs the name.
+def _cookie_from_scope(scope, name: str) -> str | None:
+    """Read one cookie out of a raw ASGI scope.
+
+    Plain ASGI, so there is no `Request` yet -- the resolver runs inside
+    `RequestIdMiddleware`, before Starlette builds one. `SimpleCookie` rather
+    than a split on ';' because cookie values are quoted-string encoded and a
+    hand-rolled parse gets that wrong in exactly the cases an attacker picks.
+    """
+    for key, value in scope.get("headers", []):
+        if key == b"cookie":
+            jar = SimpleCookie()
+            try:
+                jar.load(value.decode("latin-1"))
+            except Exception:  # a malformed Cookie header is "no cookie", not a 500
+                return None
+            morsel = jar.get(name)
+            return morsel.value if morsel else None
+    return None
+
+
+def _resolve_tenant(scope) -> str | None:
+    """THE one tenant lookup per request (C11). Injected into
+    `RequestIdMiddleware`; returns None for an unauthenticated caller, which
+    the middleware renders as `Config.DEFAULT_TENANT` in logs and spans.
+
+    Returning None rather than raising is deliberate: this runs for EVERY
+    route including the operator plane (`/health`, `/ready`, `/metrics`),
+    which is unauthenticated on purpose -- the degradation ladder and an
+    orchestrator's probe cannot depend on a session. Rejection is a per-route
+    concern, and that is `require_tenant` below.
+    """
+    session = resolve_session(_cookie_from_scope(scope, COOKIE_NAME))
+    return session.tenant_id if session else None
+
+
 # Order matters, and only this way round: FastAPIInstrumentor registers its own
 # middleware, and Starlette runs the LAST-added middleware outermost. Ours must
 # run first so the request_id ContextVar is set before the tracer mints the root
 # span -- that is what lets RequestIdGenerator derive trace_id from request_id
 # instead of falling back to random (R32).
 tracer = configure_tracing(app)
-app.add_middleware(RequestIdMiddleware)
+# v2 P5 step 3 (C11): the tenant is resolved ONCE here, from the session
+# cookie, and carried on `request.state.tenant` and the `tenant` ContextVar
+# for the rest of the request. The X-Tenant-ID header P1 read is ignored from
+# this point on -- see src/observability.py's TENANT_HEADER note.
+app.add_middleware(RequestIdMiddleware, tenant_resolver=_resolve_tenant)
 # Second, independent reader on the same span/attribute data (P1 step 7,
 # R32) -- see src/metrics.py's module docstring for why this is not a second
 # measurement path.
 configure_metrics()
+
+
+# ---------------------------------------------------------------------------
+# Auth (v2 P5 steps 2-3; D7, C11)
+# ---------------------------------------------------------------------------
+
+def require_tenant(request: Request) -> str:
+    """Dependency for every route that serves a tenant's data.
+
+    Reads the tenant the middleware already resolved -- NO second round trip,
+    which is C11's stated discriminator. `request.state.tenant` is set for
+    every request; it is `Config.DEFAULT_TENANT` when nobody is logged in, and
+    an anonymous caller is what this rejects.
+    """
+    tenant = getattr(request.state, "tenant", None)
+    if not tenant or tenant == Config.DEFAULT_TENANT:
+        raise HTTPException(status_code=401, detail="authentication required")
+    return tenant
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+def _client_ip(request: Request) -> str:
+    """The address the per-IP login limit counts against.
+
+    X-Forwarded-For is client-supplied and is honoured ONLY when
+    `Config.TRUST_FORWARDED_FOR` says a proxy that overwrites it sits in
+    front. Otherwise trusting it hands an attacker an unlimited supply of
+    distinct "IPs" and the per-IP limit stops existing. When it IS trusted,
+    the LAST hop is taken -- the one the trusted proxy appended -- because
+    every earlier entry is whatever the client chose to send.
+    """
+    if Config.TRUST_FORWARDED_FOR:
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[-1].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _set_session_cookie(response: JSONResponse, token: str) -> None:
+    """D7's cookie clauses, all four in one place so no call site can drop one.
+
+    `Secure` is a Config knob only because an HTTP client will not return a
+    Secure cookie over plain http, which is every local harness run; it
+    defaults True and lifespan() warns when it is not.
+    """
+    response.set_cookie(
+        COOKIE_NAME, token,
+        max_age=Config.SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=Config.SESSION_COOKIE_SECURE,
+        samesite="lax",
+        path="/",
+    )
+
+
+@app.post("/auth/login")
+async def auth_login_route(body: LoginRequest, request: Request) -> JSONResponse:
+    """Authenticate, rotate the session, set the cookie.
+
+    Both failure modes answer with the SAME status and the SAME body -- an
+    unknown username and a wrong password are indistinguishable from out here
+    (D7: generic failure messages, no user enumeration). src/auth.py's
+    `login()` also makes them cost comparable wall time.
+    """
+    presented = request.cookies.get(COOKIE_NAME)
+    try:
+        token = auth_login(
+            body.username, body.password, _client_ip(request),
+            presented_token=presented,
+        )
+    except RateLimited as exc:
+        raise HTTPException(
+            status_code=429, detail="too many attempts",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from None
+    except LoginFailed:
+        raise HTTPException(status_code=401, detail="invalid credentials") from None
+
+    # `body.username.lower()` IS the tenant: `accounts.tenant_id` is the
+    # account id and the lookup in auth.login() matched on exactly this value.
+    # Re-reading the session we just issued would be a second query on the
+    # login path for a value already in hand.
+    response = JSONResponse({"tenant": body.username.lower()})
+    _set_session_cookie(response, token)
+    return response
+
+
+@app.post("/auth/logout")
+async def auth_logout_route(request: Request) -> JSONResponse:
+    """Destroy the session server-side and clear the cookie. Idempotent, and
+    it does not say whether there was a session to destroy."""
+    auth_logout(request.cookies.get(COOKIE_NAME))
+    response = JSONResponse({"status": "ok"})
+    response.delete_cookie(COOKIE_NAME, path="/")
+    return response
+
+
+@app.get("/auth/session")
+async def auth_session_route(tenant: str = Depends(require_tenant)) -> dict:
+    """Who am I. The SPA's login wall reads this on load (P5 step 7); 401 is
+    the unauthenticated answer, supplied by the dependency."""
+    return {"tenant": tenant}
 
 
 def _sse(event: str, payload: dict) -> str:
@@ -351,13 +530,20 @@ async def ready(request: Request) -> JSONResponse:
 
 
 @app.get("/books")
-async def books(request: Request) -> dict:
-    """Serve structure.json verbatim -- feeds the UI's book/part/chapter filter."""
+async def books(request: Request, tenant: str = Depends(require_tenant)) -> dict:
+    """Serve structure.json verbatim -- feeds the UI's book/part/chapter filter.
+
+    Auth-gated at P5: `/books` and `/chat` are the tenant plane (R86 measured
+    exactly these two as the harness call sites that need credentials).
+    `/health`, `/ready` and `/metrics` are the operator plane and stay open --
+    the degradation ladder and a liveness probe cannot depend on a session."""
     return request.app.state.structure
 
 
 @app.post("/chat")
-async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
+async def chat(
+    body: ChatRequest, request: Request, tenant: str = Depends(require_tenant),
+) -> StreamingResponse:
     state = request.app.state
     filters = body.filters.model_dump(exclude_none=True) if body.filters else None
     t_start = time.monotonic()

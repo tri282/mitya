@@ -18,6 +18,15 @@ plane through the front door). `tenant` stays on spans and logs; it becomes a
 metric label at P5 once identity is authenticated and the tenant set is
 therefore bounded and known.
 
+STATUS at v2 P5 Batch A: the PRECONDITION is now met and the rule is
+deliberately NOT yet lifted. Identity is authenticated (D7) and the tenant set
+is bounded -- it is the `accounts` table, and only `scripts/seed_account.py`
+can add a row -- so `tenant` is now admissible as a metric label. Actually
+adding it is an instrumentation change with a cardinality budget attached, and
+this batch's scope is steps 1-3; it is recorded as owed in
+`plans/mitya-v2/05-impl/phase-5.md` rather than done here. Until then `tenant`
+remains a span/log dimension only.
+
 Every OTHER label is a closed set, enforced by routing every label value
 through one of the `_*_key()` helpers below rather than letting a call site
 pass a raw string -- an unknown id collapses to the literal "unknown" instead
