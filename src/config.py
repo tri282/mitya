@@ -231,6 +231,42 @@ class Config(metaclass=_ConfigMeta):
     # when a reverse proxy that overwrites the header terminates TLS in front
     # (D7's stated posture), and then the LAST hop is taken, not the first.
     TRUST_FORWARDED_FOR = os.getenv("TRUST_FORWARDED_FOR", "0") not in ("0", "false", "False")
+
+    # --- tenancy limits (v2 P5 Batch B; charter A12) --------------------
+    # Maximum tenant count this deployment claims to support. Stated by the
+    # owner 2026-08-30, closing R107's open bound; five accounts (tenant-a ..
+    # tenant-e) are seeded. It sizes exactly one thing in code -- the `tenant`
+    # metric-label cardinality budget (src/metrics.py's _tenant_key) -- and the
+    # default carries headroom over 5 so that seeding a sixth account degrades
+    # to a logged "other" bucket rather than to a silent relabel of a real one.
+    # DEPLOYMENT, not versioned: it changes no answer.
+    MAX_TENANT_LABELS = int(os.getenv("MAX_TENANT_LABELS", "8"))
+
+    # Fraction of the shared provider pool that must be committed before the
+    # per-tenant fair-share guard enforces anything (src/gateway/guard.py,
+    # A12(1)). Below it there is spare pool, so a heavy tenant is starving
+    # nobody and rejecting it would throw away throughput to enforce a fairness
+    # nobody needed. Fairness is a CONTENTION rule, not a quota -- with one
+    # tenant active its own fair share is the whole pool either way.
+    POOL_FAIRNESS_PRESSURE = float(os.getenv("POOL_FAIRNESS_PRESSURE", "0.8"))
+
+    # Admission control (P5 step 6, A12(3)), bounding the queue P4 measured as
+    # unbounded (R99: zero rejections at every level on both arms, 62 s p99,
+    # knee_concurrency = 1).
+    #
+    # The two numbers, and why these two. Concurrency past the knee buys zero
+    # throughput, so every admitted request beyond 1 is queue; the only question
+    # is how much queue is honest. TOTAL=6 against a ~2.1 s retrieval service
+    # time (R98) is a worst-case admitted wait of ~12.6 s, which is a slow
+    # answer rather than the 62 s one P4 measured. PER_TENANT=2 caps any single
+    # tenant at a third of the deployment -- one in flight plus one queued is
+    # what a person with two browser tabs generates, and the third is where
+    # "busy" starts. Five tenants x 2 = 10 > 6 deliberately: the total is the
+    # binding constraint under real contention, which is what makes "requests
+    # other tenants lose to a noisy one" a measurable number rather than zero
+    # by construction.
+    CHAT_MAX_INFLIGHT_PER_TENANT = int(os.getenv("CHAT_MAX_INFLIGHT_PER_TENANT", "2"))
+    CHAT_MAX_INFLIGHT_TOTAL = int(os.getenv("CHAT_MAX_INFLIGHT_TOTAL", "6"))
     LLAMA_SERVER_URL = os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080")
     # CTX_SIZE, MAX_TOKENS, GEN_TEMPERATURE, GEN_TOP_P moved to the versioned
     # serving config -- they change what a correct answer is. Resolved through

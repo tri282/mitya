@@ -244,3 +244,167 @@ class ScopedRateLimiter:
 
     def remaining_today(self, model: str) -> int:
         return self.limiter_for(model).remaining_today()
+
+
+# ---------------------------------------------------------------------------
+# Admission control (v2 P5 step 6, charter A12(3), D2)
+# ---------------------------------------------------------------------------
+
+
+class AtCapacity(LimitError):
+    """The request was not admitted. Nothing was queued and nothing was spent.
+
+    `reason` is `"tenant"` (this tenant already holds its maximum in-flight
+    requests) or `"total"` (the deployment is full). The two are separate
+    because they are the two halves of the starvation question P5 has to
+    answer: a `"tenant"` rejection is the noisy neighbour being held back, a
+    `"total"` rejection is somebody else losing a request to it.
+    """
+
+    def __init__(self, message: str, reason: str, retry_after: int = 1):
+        super().__init__(message, status=429)
+        self.reason = reason
+        self.retry_after = retry_after
+
+
+class TenantConcurrency:
+    """Bounded in-flight requests, per tenant and in total, over a SINGLE worker.
+
+    This is what bounds the queue P4 measured as unbounded. R98/R99: the system
+    never rejected anything at any concurrency level on either arm -- it queued
+    silently behind the retrieval lock, reaching 62 s p99 with a 100% success
+    rate. `knee_concurrency = 1` on both arms, so concurrency past the knee buys
+    exactly zero throughput and costs proportional latency; every request past
+    it is pure queue. An honest 429 is strictly better than a 62-second 200.
+
+    **Rejects, never waits.** There is deliberately no semaphore and no `await`
+    in the acquire path: a limiter that sleeps until capacity frees is how an
+    unbounded queue is spelled, and it is exactly what `RateLimiter.acquire_async`
+    does for a provider quota (correct there, wrong here -- the same distinction
+    `src.auth`'s login limiter records). Check-and-increment is atomic without a
+    lock because the acquire path contains no await point and this is one event
+    loop in one worker -- which A12(3) makes an assumption with a stated reason,
+    not an accident.
+
+    It does NOT replace `app.state.sem`. That lock is mutual exclusion over
+    non-re-entrant retrieval components (D7/R100/R101 narrowed it to exactly
+    that); this is admission control over whole requests, held for the entire
+    call including the SSE body. Different questions, different scopes.
+    """
+
+    def __init__(self, per_tenant: int, total: int):
+        self.per_tenant = per_tenant
+        self.total = total
+        self._inflight: dict[str, int] = {}
+        self._total = 0
+
+    @property
+    def inflight_total(self) -> int:
+        return self._total
+
+    def inflight_for(self, tenant: str) -> int:
+        return self._inflight.get(tenant, 0)
+
+    def acquire(self, tenant: str) -> None:
+        """Take a slot or raise `AtCapacity`. Pair with `release()` in a finally.
+
+        The per-tenant check runs FIRST so attribution is right when both caps
+        are hit at once: a tenant at its own limit is over its own limit, and
+        reporting that as "the box is full" would hide the noisy neighbour
+        inside everyone else's rejection count.
+        """
+        if self._inflight.get(tenant, 0) >= self.per_tenant:
+            raise AtCapacity(
+                f"tenant {tenant} already has {self.per_tenant} requests in flight",
+                reason="tenant",
+            )
+        if self._total >= self.total:
+            raise AtCapacity(
+                f"{self.total} requests already in flight", reason="total",
+            )
+        self._inflight[tenant] = self._inflight.get(tenant, 0) + 1
+        self._total += 1
+
+    def release(self, tenant: str) -> None:
+        remaining = self._inflight.get(tenant, 0) - 1
+        if remaining > 0:
+            self._inflight[tenant] = remaining
+        else:
+            # Drop the key rather than leaving a 0 behind: the dict would
+            # otherwise grow one entry per tenant that has ever connected and
+            # never shrink, which is the same unbounded-key problem the metric
+            # label rule exists for.
+            self._inflight.pop(tenant, None)
+        self._total = max(0, self._total - 1)
+
+
+class ConcurrencyMiddleware:
+    """Pure-ASGI admission control on the expensive paths (P5 step 6).
+
+    Plain ASGI, and that is the whole reason it is a middleware rather than a
+    context manager inside `chat()`. The slot must be held for the entire call
+    INCLUDING the streamed SSE body -- an in-flight request is in flight until
+    the client has its last token -- and `chat()` returns as soon as the
+    StreamingResponse is constructed. Wrapping `await self.app(...)` in one
+    try/finally gives exactly one acquire and one release covering every path:
+    the cache-hit stream, the retrieval-only stream, every pre-stream raise, a
+    mid-stream failure, and a client disconnect. `test_chat_semaphore.py` exists
+    because getting that right by hand across six exits is how a slot leaks.
+
+    Must be installed INSIDE `RequestIdMiddleware` (i.e. added to the app
+    BEFORE it, since Starlette runs the last-added middleware outermost): it
+    reads the tenant that middleware resolved out of `scope["state"]`.
+
+    Scoped to `paths` rather than every route on purpose -- `/health`,
+    `/ready` and `/metrics` are the operator plane and must answer while the
+    serving plane is full, which is precisely when an operator is looking.
+    """
+
+    def __init__(self, app, gate: TenantConcurrency, paths: tuple[str, ...] = ("/chat",)):
+        self.app = app
+        self.gate = gate
+        self.paths = paths
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("path") not in self.paths:
+            await self.app(scope, receive, send)
+            return
+
+        from src.config import Config
+        from src.metrics import record_admission_rejection
+
+        tenant = (scope.get("state") or {}).get("tenant") or Config.DEFAULT_TENANT
+        try:
+            self.gate.acquire(tenant)
+        except AtCapacity as exc:
+            record_admission_rejection(tenant, exc.reason)
+            logger.warning(
+                "admission: rejected %s (tenant=%s, reason=%s, inflight=%d/%d)",
+                scope.get("path"), tenant, exc.reason, self.gate.inflight_total,
+                self.gate.total,
+            )
+            await _send_429(send, str(exc), exc.retry_after)
+            return
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            self.gate.release(tenant)
+
+
+async def _send_429(send, detail: str, retry_after: int) -> None:
+    """A FastAPI-shaped `{"detail": ...}` body, hand-rolled because there is no
+    `Request`/`Response` at this layer -- the SPA and the harness both parse
+    that one shape and must not need a second error contract for this path."""
+    import json
+
+    body = json.dumps({"detail": detail}).encode("utf-8")
+    await send({
+        "type": "http.response.start",
+        "status": 429,
+        "headers": [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode()),
+            (b"retry-after", str(retry_after).encode()),
+        ],
+    })
+    await send({"type": "http.response.body", "body": body})

@@ -38,9 +38,12 @@ export interface MetaEvent {
   // resolves -- it IS the OTel trace id in hex, not a parallel identifier.
   // Server has emitted this since step 1; this interface had drifted.
   request_id: string
-  // P1 step 4. One synthetic tenant until P5 makes identity real -- the
-  // caller-supplied X-Tenant-ID header, or the server's default when absent
-  // or rejected for shape (see src/observability.py's parse_tenant()).
+  // P1 step 4, corrected at P5 (R102 rider 2 -- this comment described the
+  // retired header). The AUTHENTICATED tenant, resolved server-side from the
+  // session cookie once per request (C11). The X-Tenant-ID header P1 read is
+  // ignored: an authenticated tenant a header can override is not
+  // authenticated. `/chat` requires a session, so this is never the anonymous
+  // default on a successful response.
   tenant: string
   // P1 step 9 (D9). The exact serving config / corpus version that produced
   // this answer -- 12 hex chars each, content-addressed

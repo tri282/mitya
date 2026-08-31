@@ -105,6 +105,28 @@ const isEmptyComplete = computed(
       <button type="button" class="answer-block__retry" @click="emit('retry')">Try again</button>
     </template>
 
+    <!-- v2 P5: two new terminal states, both from tenancy limits.
+         error-401 is a session that expired between turns -- App.vue is
+         already dropping to the login wall, so this line only explains the
+         turn that was lost. error-429 covers both 429 shapes: the admission
+         bound (the deployment is at capacity) and the fair-share guard (this
+         account is over its share of the shared pool). One line for both,
+         deliberately: the reader's action is identical and the distinction is
+         an operator fact, which is where it is already recorded (two separate
+         metric instruments). -->
+    <template v-else-if="turn.state === 'error-401'">
+      <p class="answer-block__error">
+        Your reading session ended. Sign in again to continue.
+      </p>
+    </template>
+
+    <template v-else-if="turn.state === 'error-429'">
+      <p class="answer-block__error">
+        Too many readers at once. Wait a moment and ask again.
+      </p>
+      <button type="button" class="answer-block__retry" @click="emit('retry')">Try again</button>
+    </template>
+
     <template v-else-if="turn.state === 'error-504'">
       <p class="answer-block__error">
         Mitya paused too long over your question and the moment passed. Ask again?
