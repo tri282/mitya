@@ -185,12 +185,52 @@ class Config(metaclass=_ConfigMeta):
     # Resolved through the _ConfigMeta facade above; default lives in
     # src/config_artifact.py's ServingConfig.from_env().
     #
-    # One synthetic tenant until P5 makes identity real (v2 P1 step 4, A12).
-    # The X-Tenant-ID header that overrides this is UNAUTHENTICATED -- anyone
-    # who can reach the endpoint can claim any tenant -- so it is shape-
-    # validated, never used to build a registry. See src/observability.py's
-    # parse_tenant().
+    # The ANONYMOUS tenant since v2 P5. Until P5 this was the one synthetic
+    # tenant, overridable by an unauthenticated X-Tenant-ID header; P5 retired
+    # that header and this value is now what an UNAUTHENTICATED caller is
+    # bound to in logs and spans. `require_tenant` rejects exactly this value,
+    # and `src.auth.create_account` refuses it as an account id -- an account
+    # named "default" would authenticate and then be treated as anonymous.
     DEFAULT_TENANT = os.getenv("DEFAULT_TENANT", "default")
+
+    # --- auth + persistence (v2 P5 Batch A; C10/C11, D7) ----------------
+    # One sqlite file for the whole system (C10). Under DATA_DIR, which
+    # `.gitignore` already excludes -- so seeded accounts and live sessions are
+    # machine-local and never reach the repo, consistent with A11's "the
+    # evidence trail is local and untracked".
+    DB_PATH = os.getenv("MITYA_DB_PATH", os.path.join(DATA_DIR, "mitya.sqlite3"))
+
+    # DEPLOYMENT, not versioned: none of these change what a correct answer is,
+    # so they stay on Config rather than in `config_version`'s hash -- the same
+    # split EMPTY_RETRIES and SPEND_RATE_MAX_USD_PER_MINUTE sit on.
+    SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", str(12 * 3600)))
+
+    # THE CALIBRATION KNOB, and the one place local runs diverge from the real
+    # deployment. D7 requires `Secure`, and TLS is terminated in front, so the
+    # default is True and production must never see anything else. But an HTTP
+    # client will not RETURN a Secure cookie over plain http -- which is every
+    # local harness run, every `test_auth.py` end-to-end pass, and every
+    # `uvicorn` on 127.0.0.1:8000. Setting this False is how those runs work;
+    # doing it on a deployed instance is how a session token ends up on the
+    # wire in cleartext. It is loud at startup for that reason (see lifespan()).
+    SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "1") not in ("0", "false", "False")
+
+    # Login rate limits -- per account AND per IP (D7 requires both).
+    # 5 per account is the usual "a human who has forgotten their password"
+    # ceiling; 20 per IP is deliberately higher because one NAT egress or one
+    # harness host is many legitimate accounts, and a per-IP limit tuned to a
+    # single user turns the harness into its own attacker.
+    LOGIN_WINDOW_SECONDS = float(os.getenv("LOGIN_WINDOW_SECONDS", "900"))
+    LOGIN_MAX_PER_ACCOUNT = int(os.getenv("LOGIN_MAX_PER_ACCOUNT", "5"))
+    LOGIN_MAX_PER_IP = int(os.getenv("LOGIN_MAX_PER_IP", "20"))
+
+    # X-Forwarded-For is a CLIENT-SUPPLIED header. Trusting it unconditionally
+    # hands every attacker an unlimited supply of distinct "IPs" and voids the
+    # per-IP login limit entirely. Default False -- `request.client.host` is
+    # used, which is correct when uvicorn is reached directly. Set True ONLY
+    # when a reverse proxy that overwrites the header terminates TLS in front
+    # (D7's stated posture), and then the LAST hop is taken, not the first.
+    TRUST_FORWARDED_FOR = os.getenv("TRUST_FORWARDED_FOR", "0") not in ("0", "false", "False")
     LLAMA_SERVER_URL = os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080")
     # CTX_SIZE, MAX_TOKENS, GEN_TEMPERATURE, GEN_TOP_P moved to the versioned
     # serving config -- they change what a correct answer is. Resolved through

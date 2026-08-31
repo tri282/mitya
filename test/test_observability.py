@@ -383,7 +383,17 @@ def test_middleware_binds_default_tenant_with_no_header() -> None:
     assert current_tenant() == Config.DEFAULT_TENANT, "must not outlive the request"
 
 
-def test_middleware_tenant_header_wins() -> None:
+def test_middleware_ignores_the_tenant_header() -> None:
+    """CHANGED AT v2 P5 (D7). This test previously asserted the opposite --
+    that X-Tenant-ID won over the default -- which P1 accepted explicitly and
+    bounded to "until P5 makes identity real". P5 made it real: the tenant now
+    comes from an authenticated session through the injected `tenant_resolver`,
+    and an inbound header that could still set it would be a plain
+    impersonation primitive. The flip is the security property, so the test
+    flipped with it.
+
+    `parse_tenant()` itself is unchanged and still tested above -- it survives
+    as the SHAPE validator for an account id, not as an intake path."""
     observed: list[str] = []
 
     async def stub_app(scope, receive, send):
@@ -393,7 +403,25 @@ def test_middleware_tenant_header_wins() -> None:
 
     app = RequestIdMiddleware(stub_app)
     _drive(app, headers=[(TENANT_HEADER, b"Acme-Corp")])
-    assert observed == ["acme-corp"], "lowercased, header wins over the default"
+    assert observed == [Config.DEFAULT_TENANT], "the header must not set the tenant"
+
+
+def test_middleware_binds_what_the_resolver_returns() -> None:
+    """The P5 seam: whatever `tenant_resolver(scope)` returns is bound to the
+    ContextVar and to `scope["state"]["tenant"]`, and None means anonymous."""
+    observed: list[tuple] = []
+
+    async def stub_app(scope, receive, send):
+        observed.append((current_tenant(), scope["state"]["tenant"]))
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    _drive(RequestIdMiddleware(stub_app, tenant_resolver=lambda scope: "acme-corp"))
+    assert observed == [("acme-corp", "acme-corp")], observed
+
+    observed.clear()
+    _drive(RequestIdMiddleware(stub_app, tenant_resolver=lambda scope: None))
+    assert observed == [(Config.DEFAULT_TENANT, Config.DEFAULT_TENANT)], observed
 
 
 def test_middleware_hostile_tenant_header_falls_back() -> None:
@@ -416,6 +444,9 @@ def test_middleware_hostile_tenant_header_falls_back() -> None:
     app = RequestIdMiddleware(stub_app)
     hostile = b"forged\nWARNING evil"
     _drive(app, headers=[(TENANT_HEADER, hostile)])
+    # Since P5 the header is ignored outright rather than validated-then-
+    # rejected, so this now holds for a stronger reason than it used to. The
+    # log-injection assertion below is the part that still earns its keep.
     assert observed == [Config.DEFAULT_TENANT]
     # The per-request log line renders the resolved default, never the raw
     # header -- the whole point of falling back rather than sanitizing.
