@@ -100,7 +100,7 @@ from src.observability import (
 from src.pricing import FREE, Cost, cost_usd, is_metered, total_usd
 from src.rag.context import build_context
 from src.rag.entities import EntityMap
-from src.gateway.guard import BudgetExceeded, Degraded, PoolShareExceeded, RequestTooLarge
+from src.gateway.guard import BudgetExceeded, Degraded, RequestTooLarge
 from src.gateway.ladder import ContentRefused
 from src.gateway.retry import TransportError
 from src.limits import QuotaExhausted
@@ -278,6 +278,9 @@ tracer = configure_tracing(app)
 app.state.admission = TenantConcurrency(
     per_tenant=Config.CHAT_MAX_INFLIGHT_PER_TENANT,
     total=Config.CHAT_MAX_INFLIGHT_TOTAL,
+    reserve=Config.CHAT_FAIRNESS_RESERVE,
+    window_seconds=Config.CHAT_FAIRNESS_WINDOW_SECONDS,
+    tolerance=Config.CHAT_FAIRNESS_TOLERANCE,
 )
 app.add_middleware(ConcurrencyMiddleware, gate=app.state.admission)
 app.add_middleware(RequestIdMiddleware, tenant_resolver=_resolve_tenant)
@@ -920,20 +923,6 @@ async def chat(
         _abort()
         raise HTTPException(
             status_code=429, detail="provider quota exhausted", headers=rung_header,
-        ) from exc
-    except PoolShareExceeded as exc:
-        # 429 like QuotaExhausted, but a DIFFERENT fact and a different body
-        # (v2 P5 step 5, A12(1)): the shared pool is not empty -- this tenant is
-        # simply over its share of it while others contend. Carries Retry-After
-        # because, unlike an exhausted pool, the wait is knowable. Not 503: the
-        # deployment is healthy and is serving other tenants right now, so
-        # calling this an availability failure would be a false statement about
-        # the system.
-        _abort()
-        raise HTTPException(
-            status_code=429,
-            detail="over your share of the shared model pool",
-            headers={**rung_header, "Retry-After": str(exc.retry_after)},
         ) from exc
     except RequestTooLarge as exc:
         _abort()

@@ -34,7 +34,6 @@ from src.gateway.contract import GenerationStream, Provider, Usage
 from src.gateway.guard import (
     BudgetExceeded,
     Degraded,
-    PoolShareExceeded,
     RequestTooLarge,
     SpendRateBreaker,
     guarded_generate,
@@ -44,7 +43,7 @@ from src.gateway.retry import TransportError, record_if_empty_completion
 
 __all__ = [
     "GenerationStream", "Provider", "Usage",
-    "BudgetExceeded", "Degraded", "PoolShareExceeded", "RequestTooLarge",
+    "BudgetExceeded", "Degraded", "RequestTooLarge",
     "SpendRateBreaker", "guarded_generate",
     "Readiness", "Rung", "next_rung", "readiness_from_status",
     "TransportError", "record_if_empty_completion",

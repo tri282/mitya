@@ -26,9 +26,11 @@ the owner has stated the maximum tenant count as **5** (`decisions-p5.md`),
 which is the number R107 recorded as missing.
 
 The budget, stated so it can be checked: `tenant` appears on exactly four
-instruments -- `request_duration`, `answer_cost`, `quota_rejections`,
-`pool_share_rejections` -- plus the new `admission_rejections`, five in all, of
-the ten defined here. At 5 tenants the worst case is 5 x (2 routes x 4 outcomes)
+instruments -- `request_duration`, `answer_cost`, `quota_rejections` and
+`admission_rejections` -- of the nine defined here. (`pool_share_rejections`
+was the fifth until G-P10 retired the guard it counted: R117 measured it at
+zero because it could never fire, and a counter for a mechanism that does not
+exist is an operator reading a line that can only ever say 0.) At 5 tenants the worst case is 5 x (2 routes x 4 outcomes)
 = 40 histogram series on the largest of them; the rest are counters in the
 single digits. Trivial, which is the whole reason it is now allowed.
 
@@ -81,7 +83,7 @@ CACHE_OUTCOMES = ("hit", "miss")
 # "tenant" is the noisy neighbour held at its own cap, "total" is somebody else
 # losing a request because the deployment is full. Two labels because they are
 # the two halves of the starvation question.
-ADMISSION_REASONS = ("tenant", "total")
+ADMISSION_REASONS = ("tenant", "total", "fairness")
 
 UNKNOWN = "unknown"
 # Overflow bucket for the tenant label -- see _tenant_key(). Distinct from
@@ -310,10 +312,6 @@ def configure_metrics():
     _instruments["empty_completions"] = meter.create_counter(
         "mitya_empty_completions_total", description="EMPTY_RETRIES exhausted -- no token ever arrived",
     )
-    _instruments["pool_share_rejections"] = meter.create_counter(
-        "mitya_pool_share_rejections_total",
-        description="Rejections by the shared-pool fair-share guard (v2 P5, A12(1))",
-    )
     _instruments["admission_rejections"] = meter.create_counter(
         "mitya_admission_rejections_total",
         description="Requests not admitted by the concurrency bound, by reason (v2 P5, A12(3))",
@@ -390,24 +388,17 @@ def record_quota_rejection(model: str, tenant: str | None = None) -> None:
     )
 
 
-def record_pool_share_rejection(tenant: str) -> None:
-    """The fair-share guard rejected a request (src/gateway/guard.py, A12(1)).
-
-    Its own counter rather than a second reason on `quota_rejections`, for the
-    reason guard.py already records for BudgetExceeded: "the pool is empty" and
-    "the pool is not empty but this share of it is not yours" are different
-    operator facts, and one series with no way to separate them is worse than
-    two."""
-    _instruments.get("pool_share_rejections", _NULL).add(1, {"tenant": _tenant_key(tenant)})
-
-
 def record_admission_rejection(tenant: str, reason: str) -> None:
     """A request the concurrency bound did not admit (src/limits.py, A12(3)).
 
     `reason` comes from `AtCapacity.reason` and is a closed set
     (ADMISSION_REASONS). This is the instrument the starvation number is read
     off: "tenant" counts the noisy neighbour being held back, "total" counts
-    what everyone else loses."""
+    what everyone else loses, and "fairness" counts a tenant asked to yield the
+    reserved tail of the pool because it is ahead of the others (G-P10). The
+    third arrived with the least-served rule and had to be added HERE too: an
+    unlisted reason is silently relabelled `unknown`, which is how a live run
+    came back with nine rejections attributed to nothing."""
     _instruments.get("admission_rejections", _NULL).add(
         1, {"tenant": _tenant_key(tenant), "reason": reason if reason in ADMISSION_REASONS else UNKNOWN},
     )

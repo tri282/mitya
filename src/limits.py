@@ -292,11 +292,21 @@ class TenantConcurrency:
     call including the SSE body. Different questions, different scopes.
     """
 
-    def __init__(self, per_tenant: int, total: int):
+    def __init__(self, per_tenant: int, total: int, reserve: int = 0,
+                 window_seconds: float = 60.0, tolerance: float = 1.25,
+                 clock=time.monotonic):
         self.per_tenant = per_tenant
         self.total = total
+        # Least-served fairness on the GLOBAL slots (P5 G-P10, R117/R118).
+        # `reserve` is how many of the last slots are withheld from a tenant
+        # that is already ahead; 0 disables the rule and restores plain FCFS.
+        self.reserve = reserve
+        self.window_seconds = window_seconds
+        self.tolerance = tolerance
+        self._clock = clock
         self._inflight: dict[str, int] = {}
         self._total = 0
+        self._served: dict[str, list[float]] = {}
 
     @property
     def inflight_total(self) -> int:
@@ -322,8 +332,69 @@ class TenantConcurrency:
             raise AtCapacity(
                 f"{self.total} requests already in flight", reason="total",
             )
+        now = self._clock()
+        # Prune on EVERY admission, not only when the fairness rule is
+        # consulted. `_ahead_of_share` returns early whenever there is room or
+        # `reserve` is 0, so evicting only from inside it left the history
+        # growing without bound on an uncontended gate -- the same unbounded-key
+        # problem `release()` avoids, reintroduced one function away.
+        self._evict(now)
+        if self._ahead_of_share(tenant, now):
+            raise AtCapacity(
+                f"tenant {tenant} is ahead of its share; the last "
+                f"{self.reserve} slots are held for less-served tenants",
+                reason="fairness",
+            )
+        self._served.setdefault(tenant, []).append(now)
         self._inflight[tenant] = self._inflight.get(tenant, 0) + 1
         self._total += 1
+
+    def _ahead_of_share(self, tenant: str, now: float) -> bool:
+        """Should this tenant yield one of the last free slots?
+
+        **Least-served, decided at arrival, without a queue** (G-P10). R118
+        measured the global cap distributing by arrival time: five tenants
+        offering identical load received shares from 0.273 to 0.091, and in the
+        noisy-neighbour run two LIGHT tenants were rejected eight times each
+        while two others at the same offered load were rejected none. FCFS on a
+        shared cap is arbitrary under contention, and arbitrary is not fair.
+
+        R117 is the other half. The token-pressure fair-share guard could never
+        fire, because admission caps in-flight work at ~3% of the pressure that
+        guard needed -- the offered load that would raise pressure is exactly
+        what admission refuses. Fairness therefore belongs HERE, at the only
+        place where contention is actually observable, and the second mechanism
+        is retired rather than left green-tested and unreachable.
+
+        Deliberately still reject-never-wait. Ordering waiters by served count
+        would be the textbook least-served scheduler and it would reintroduce
+        the queue P4 measured at 62 s p99. Instead the scarce tail of the pool
+        is simply withheld from whoever is already ahead: the last `reserve`
+        slots are available only to tenants at or below the mean served count
+        in the window. Under contention that hands the next slot to a
+        less-served tenant without anyone waiting for it.
+        """
+        if self.reserve <= 0:
+            return False
+        if (self.total - self._total) > self.reserve:
+            return False  # plenty of room; fairness is not the binding question
+        active = set(self._served) | {tenant}
+        if len(active) < 2:
+            return False  # nobody to be fair to
+        counts = {t: len(self._served.get(t, ())) for t in active}
+        mean = sum(counts.values()) / len(counts)
+        return counts[tenant] > mean * self.tolerance
+
+    def _evict(self, now: float) -> None:
+        """Drop served timestamps outside the window, and tenants with none
+        left -- same unbounded-key argument as `release()` below."""
+        cutoff = now - self.window_seconds
+        for t in list(self._served):
+            kept = [ts for ts in self._served[t] if ts >= cutoff]
+            if kept:
+                self._served[t] = kept
+            else:
+                del self._served[t]
 
     def release(self, tenant: str) -> None:
         remaining = self._inflight.get(tenant, 0) - 1

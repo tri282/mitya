@@ -43,7 +43,6 @@ from src.metrics import (
     record_admission_rejection,
     record_cache_lookup,
     record_empty_completion,
-    record_pool_share_rejection,
     record_request_duration,
     record_stage_duration,
     record_ttft,
@@ -61,13 +60,12 @@ def _scrape() -> list[str]:
     ]
 
 
-# The five instruments P5 allows `tenant` on. Anything else carrying it is a
+# The four instruments P5 allows `tenant` on. Anything else carrying it is a
 # leak, and the test below reads this list rather than a hand-copied one.
 TENANT_LABELLED = (
     "mitya_request_duration_seconds",
     "mitya_answer_cost_usd",
     "mitya_quota_rejections_total",
-    "mitya_pool_share_rejections_total",
     "mitya_admission_rejections_total",
 )
 
@@ -82,7 +80,6 @@ def _emit_one_of_everything() -> None:
     record_cache_lookup("DEFAULT", "hit")
     record_empty_completion("STRUCTURAL")
     record_quota_rejection("local-q4km", "tenant-a")
-    record_pool_share_rejection("tenant-a")
     record_admission_rejection("tenant-a", "tenant")
 
 
@@ -104,7 +101,7 @@ def test_every_instrument_appears() -> None:
         "mitya_stage_duration_seconds", "mitya_answer_cost_usd",
         "mitya_unmetered_answers_total", "mitya_unpriced_answers_total",
         "mitya_cache_lookups_total", "mitya_empty_completions_total",
-        "mitya_pool_share_rejections_total", "mitya_admission_rejections_total",
+        "mitya_quota_rejections_total", "mitya_admission_rejections_total",
     ):
         assert name in lines, f"{name} missing from the scrape"
 
@@ -218,7 +215,7 @@ def test_label_sets_are_closed_and_small() -> None:
     assert len(STAGES) == 8 and len(set(STAGES)) == 8
     assert set(CACHE_OUTCOMES) == {"hit", "miss"}
     assert set(REQUEST_OUTCOMES) == {"ok", "error", "empty", "quota"}
-    assert set(ADMISSION_REASONS) == {"tenant", "total"}
+    assert set(ADMISSION_REASONS) == {"tenant", "total", "fairness"}
 
 
 def test_unmetered_does_not_enter_the_cost_histogram() -> None:
