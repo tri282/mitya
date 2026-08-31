@@ -1,0 +1,632 @@
+{
+  "honest": {
+    "config_version": "bf367f63e956"
+  },
+  "starved": {
+    "config_version": "71a369e62470"
+  },
+  "separation": {
+    "family": "c",
+    "per_family": {
+      "locate": {
+        "honest_recall": 0.36363636363636365,
+        "starved_recall": 0.36363636363636365,
+        "delta": 0.0,
+        "turns_scored": 22,
+        "verdict": "no_separation"
+      },
+      "passage_paste": {
+        "honest_recall": 0.4,
+        "starved_recall": 0.4,
+        "delta": 0.0,
+        "turns_scored": 30,
+        "verdict": "no_separation"
+      },
+      "refusal": {
+        "honest_recall": null,
+        "starved_recall": null,
+        "delta": null,
+        "turns_scored": 0,
+        "verdict": "unmeasured_no_gold"
+      },
+      "structural": {
+        "honest_recall": 0.5,
+        "starved_recall": 0.5,
+        "delta": 0.0,
+        "turns_scored": 10,
+        "verdict": "no_separation"
+      },
+      "thematic": {
+        "honest_recall": 0.06060606060606061,
+        "starved_recall": 0.06060606060606061,
+        "delta": 0.0,
+        "turns_scored": 33,
+        "verdict": "no_separation"
+      }
+    },
+    "families_separating": [],
+    "pre_registered_expectation": "arm-invariant: neither policy truncates the passages block and retrieval reads no transcript, so `sources` is expected identical under both arms and delta 0.000 everywhere. Under CP-6b rule 1 that REJECTS family (c) as the allocation metric.",
+    "verdict": "REJECTED under CP-6b rule 1 -- a metric that does not separate the starved arm from the honest arm is rejected, whatever else it recommends",
+    "corpus_label": "Derived from a harness-authored synthetic session corpus (P4, R91). Its resemblance to real usage is unproven and was not tested: no real traffic exists to compare against (D3), and the corpus was declared unvalidated by choice rather than validated by a check. Its composition is a pre-registered design parameter -- 40 sessions across five families, 50% literal-bearing -- chosen for measurability, not realism, and its cache repeat rate is a dial, not an observation. Per-family figures are reported separately so any reweighting is arithmetic rather than a regeneration."
+  },
+  "honest_metrics": {
+    "corpus_version": "4155c97b0a2b",
+    "corpus_label": "Derived from a harness-authored synthetic session corpus (P4, R91). Its resemblance to real usage is unproven and was not tested: no real traffic exists to compare against (D3), and the corpus was declared unvalidated by choice rather than validated by a check. Its composition is a pre-registered design parameter -- 40 sessions across five families, 50% literal-bearing -- chosen for measurability, not realism, and its cache repeat rate is a dial, not an observation. Per-family figures are reported separately so any reweighting is arithmetic rather than a regeneration.",
+    "turns": 108,
+    "families": {
+      "a": {
+        "name": "task success on scripted multi-turn goals",
+        "computable": false,
+        "gold_required": "Per-turn authored gold, 108 rows: for each turn, the goal it advances and a machine-checkable success predicate (an expected entity, chapter, or refusal). The corpus has none -- every turn is {query}. A9 makes this a NEW VERSION STAMP of test/session_corpus.json (a re-freeze with its own pre-registration, CP-4a shape), not an added field: src/harness/sessions.py refuses a modified file. Cost rider (R120): authored gold on a corpus already declared unvalidated (R91/O5) compounds the O5/O10 label rather than fixing it.",
+        "result": null,
+        "status": "not_computable_on_this_corpus_version"
+      },
+      "b": {
+        "name": "answer quality at turn N given information introduced at turn 1",
+        "computable": false,
+        "gold_required": "Either (i) per-session authored gold stating what a turn-N answer must retain from turn 1 -- 68 follow-up turns, again a corpus re-freeze under A9 -- or (ii) a judge. The judge exists (scripts/eval_quality.py, Config.JUDGE_MODEL) but is METERED, so it cannot run on Batch B's $0 fake arm; A7 pins it to Tier 2 (reports, never gates) and R63 records that it cannot arbitrate quality here. A further blocker specific to this batch: the fake provider replays one fixed fixture, so on the fake arm every arm's answer text is identical by construction and there is nothing for a judge to score.",
+        "result": null,
+        "status": "not_computable_on_this_corpus_version"
+      },
+      "c": {
+        "name": "retrieval-style recall over what should have been in context",
+        "computable": true,
+        "gold_required": "Already present: session-level `targets`, one {book, part, chapter} per session, on 35 of 40 sessions (95 of 108 turns). Constant within a session, so per-turn scoring is possible but turn-to-turn discrimination is not (R120 qualifier 2).",
+        "result": {
+          "per_family": {
+            "locate": {
+              "sessions_scored": 8,
+              "turns_scored": 22,
+              "hits": 8,
+              "recall": 0.36363636363636365,
+              "unmeasured": {}
+            },
+            "passage_paste": {
+              "sessions_scored": 12,
+              "turns_scored": 30,
+              "hits": 12,
+              "recall": 0.4,
+              "unmeasured": {}
+            },
+            "refusal": {
+              "sessions_scored": 0,
+              "turns_scored": 0,
+              "hits": 0,
+              "recall": null,
+              "unmeasured": {
+                "no_gold": 13
+              }
+            },
+            "structural": {
+              "sessions_scored": 5,
+              "turns_scored": 10,
+              "hits": 5,
+              "recall": 0.5,
+              "unmeasured": {}
+            },
+            "thematic": {
+              "sessions_scored": 10,
+              "turns_scored": 33,
+              "hits": 2,
+              "recall": 0.06060606060606061,
+              "unmeasured": {}
+            }
+          },
+          "per_session": {
+            "s-0001": {
+              "family": "passage_paste",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0002": {
+              "family": "passage_paste",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0003": {
+              "family": "passage_paste",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0004": {
+              "family": "passage_paste",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0005": {
+              "family": "passage_paste",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0006": {
+              "family": "passage_paste",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0007": {
+              "family": "passage_paste",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0008": {
+              "family": "passage_paste",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0009": {
+              "family": "passage_paste",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0010": {
+              "family": "passage_paste",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0011": {
+              "family": "passage_paste",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0012": {
+              "family": "passage_paste",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0013": {
+              "family": "locate",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0014": {
+              "family": "locate",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0015": {
+              "family": "locate",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0016": {
+              "family": "locate",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0017": {
+              "family": "locate",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0018": {
+              "family": "locate",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0019": {
+              "family": "locate",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0020": {
+              "family": "locate",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0021": {
+              "family": "thematic",
+              "turns_scored": 3,
+              "hits": 0
+            },
+            "s-0022": {
+              "family": "thematic",
+              "turns_scored": 3,
+              "hits": 0
+            },
+            "s-0023": {
+              "family": "thematic",
+              "turns_scored": 4,
+              "hits": 0
+            },
+            "s-0024": {
+              "family": "thematic",
+              "turns_scored": 3,
+              "hits": 0
+            },
+            "s-0025": {
+              "family": "thematic",
+              "turns_scored": 4,
+              "hits": 0
+            },
+            "s-0026": {
+              "family": "thematic",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0027": {
+              "family": "thematic",
+              "turns_scored": 3,
+              "hits": 0
+            },
+            "s-0028": {
+              "family": "thematic",
+              "turns_scored": 3,
+              "hits": 0
+            },
+            "s-0029": {
+              "family": "thematic",
+              "turns_scored": 3,
+              "hits": 0
+            },
+            "s-0030": {
+              "family": "thematic",
+              "turns_scored": 4,
+              "hits": 1
+            },
+            "s-0031": {
+              "family": "structural",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0032": {
+              "family": "structural",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0033": {
+              "family": "structural",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0034": {
+              "family": "structural",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0035": {
+              "family": "structural",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0036": {
+              "family": "refusal",
+              "turns_scored": 0,
+              "hits": 0
+            },
+            "s-0037": {
+              "family": "refusal",
+              "turns_scored": 0,
+              "hits": 0
+            },
+            "s-0038": {
+              "family": "refusal",
+              "turns_scored": 0,
+              "hits": 0
+            },
+            "s-0039": {
+              "family": "refusal",
+              "turns_scored": 0,
+              "hits": 0
+            },
+            "s-0040": {
+              "family": "refusal",
+              "turns_scored": 0,
+              "hits": 0
+            }
+          },
+          "overall": {
+            "turns_scored": 95,
+            "hits": 27,
+            "recall": 0.28421052631578947,
+            "note": "arithmetic only -- decisions are taken per family (R91/R119), never on this row"
+          }
+        }
+      }
+    },
+    "tier_value": {
+      "tiers": {
+        "passages": {
+          "turns_present": 108,
+          "tokens": 162267,
+          "value": "unmeasured",
+          "value_reason": "scored from the context plan alone, which is the allocator's own output; CP-6b refuses that as a metric. An external signal for this tier's value does not exist in the frozen corpus -- see FAMILIES['a'] and ['b'] for the gold it would take."
+        },
+        "recent_turns": {
+          "turns_present": 68,
+          "tokens": 8547,
+          "value": "unmeasured",
+          "value_reason": "scored from the context plan alone, which is the allocator's own output; CP-6b refuses that as a metric. An external signal for this tier's value does not exist in the frozen corpus -- see FAMILIES['a'] and ['b'] for the gold it would take."
+        }
+      },
+      "turns_without_a_served_plan": 0,
+      "note": "allocation, not value. A cache-hit or retrieval-only turn composes no prompt and emits no context_plan; those are counted, not treated as an empty allocation."
+    }
+  },
+  "starved_metrics": {
+    "corpus_version": "4155c97b0a2b",
+    "corpus_label": "Derived from a harness-authored synthetic session corpus (P4, R91). Its resemblance to real usage is unproven and was not tested: no real traffic exists to compare against (D3), and the corpus was declared unvalidated by choice rather than validated by a check. Its composition is a pre-registered design parameter -- 40 sessions across five families, 50% literal-bearing -- chosen for measurability, not realism, and its cache repeat rate is a dial, not an observation. Per-family figures are reported separately so any reweighting is arithmetic rather than a regeneration.",
+    "turns": 108,
+    "families": {
+      "a": {
+        "name": "task success on scripted multi-turn goals",
+        "computable": false,
+        "gold_required": "Per-turn authored gold, 108 rows: for each turn, the goal it advances and a machine-checkable success predicate (an expected entity, chapter, or refusal). The corpus has none -- every turn is {query}. A9 makes this a NEW VERSION STAMP of test/session_corpus.json (a re-freeze with its own pre-registration, CP-4a shape), not an added field: src/harness/sessions.py refuses a modified file. Cost rider (R120): authored gold on a corpus already declared unvalidated (R91/O5) compounds the O5/O10 label rather than fixing it.",
+        "result": null,
+        "status": "not_computable_on_this_corpus_version"
+      },
+      "b": {
+        "name": "answer quality at turn N given information introduced at turn 1",
+        "computable": false,
+        "gold_required": "Either (i) per-session authored gold stating what a turn-N answer must retain from turn 1 -- 68 follow-up turns, again a corpus re-freeze under A9 -- or (ii) a judge. The judge exists (scripts/eval_quality.py, Config.JUDGE_MODEL) but is METERED, so it cannot run on Batch B's $0 fake arm; A7 pins it to Tier 2 (reports, never gates) and R63 records that it cannot arbitrate quality here. A further blocker specific to this batch: the fake provider replays one fixed fixture, so on the fake arm every arm's answer text is identical by construction and there is nothing for a judge to score.",
+        "result": null,
+        "status": "not_computable_on_this_corpus_version"
+      },
+      "c": {
+        "name": "retrieval-style recall over what should have been in context",
+        "computable": true,
+        "gold_required": "Already present: session-level `targets`, one {book, part, chapter} per session, on 35 of 40 sessions (95 of 108 turns). Constant within a session, so per-turn scoring is possible but turn-to-turn discrimination is not (R120 qualifier 2).",
+        "result": {
+          "per_family": {
+            "locate": {
+              "sessions_scored": 8,
+              "turns_scored": 22,
+              "hits": 8,
+              "recall": 0.36363636363636365,
+              "unmeasured": {}
+            },
+            "passage_paste": {
+              "sessions_scored": 12,
+              "turns_scored": 30,
+              "hits": 12,
+              "recall": 0.4,
+              "unmeasured": {}
+            },
+            "refusal": {
+              "sessions_scored": 0,
+              "turns_scored": 0,
+              "hits": 0,
+              "recall": null,
+              "unmeasured": {
+                "no_gold": 13
+              }
+            },
+            "structural": {
+              "sessions_scored": 5,
+              "turns_scored": 10,
+              "hits": 5,
+              "recall": 0.5,
+              "unmeasured": {}
+            },
+            "thematic": {
+              "sessions_scored": 10,
+              "turns_scored": 33,
+              "hits": 2,
+              "recall": 0.06060606060606061,
+              "unmeasured": {}
+            }
+          },
+          "per_session": {
+            "s-0001": {
+              "family": "passage_paste",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0002": {
+              "family": "passage_paste",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0003": {
+              "family": "passage_paste",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0004": {
+              "family": "passage_paste",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0005": {
+              "family": "passage_paste",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0006": {
+              "family": "passage_paste",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0007": {
+              "family": "passage_paste",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0008": {
+              "family": "passage_paste",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0009": {
+              "family": "passage_paste",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0010": {
+              "family": "passage_paste",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0011": {
+              "family": "passage_paste",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0012": {
+              "family": "passage_paste",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0013": {
+              "family": "locate",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0014": {
+              "family": "locate",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0015": {
+              "family": "locate",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0016": {
+              "family": "locate",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0017": {
+              "family": "locate",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0018": {
+              "family": "locate",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0019": {
+              "family": "locate",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0020": {
+              "family": "locate",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0021": {
+              "family": "thematic",
+              "turns_scored": 3,
+              "hits": 0
+            },
+            "s-0022": {
+              "family": "thematic",
+              "turns_scored": 3,
+              "hits": 0
+            },
+            "s-0023": {
+              "family": "thematic",
+              "turns_scored": 4,
+              "hits": 0
+            },
+            "s-0024": {
+              "family": "thematic",
+              "turns_scored": 3,
+              "hits": 0
+            },
+            "s-0025": {
+              "family": "thematic",
+              "turns_scored": 4,
+              "hits": 0
+            },
+            "s-0026": {
+              "family": "thematic",
+              "turns_scored": 3,
+              "hits": 1
+            },
+            "s-0027": {
+              "family": "thematic",
+              "turns_scored": 3,
+              "hits": 0
+            },
+            "s-0028": {
+              "family": "thematic",
+              "turns_scored": 3,
+              "hits": 0
+            },
+            "s-0029": {
+              "family": "thematic",
+              "turns_scored": 3,
+              "hits": 0
+            },
+            "s-0030": {
+              "family": "thematic",
+              "turns_scored": 4,
+              "hits": 1
+            },
+            "s-0031": {
+              "family": "structural",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0032": {
+              "family": "structural",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0033": {
+              "family": "structural",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0034": {
+              "family": "structural",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0035": {
+              "family": "structural",
+              "turns_scored": 2,
+              "hits": 1
+            },
+            "s-0036": {
+              "family": "refusal",
+              "turns_scored": 0,
+              "hits": 0
+            },
+            "s-0037": {
+              "family": "refusal",
+              "turns_scored": 0,
+              "hits": 0
+            },
+            "s-0038": {
+              "family": "refusal",
+              "turns_scored": 0,
+              "hits": 0
+            },
+            "s-0039": {
+              "family": "refusal",
+              "turns_scored": 0,
+              "hits": 0
+            },
+            "s-0040": {
+              "family": "refusal",
+              "turns_scored": 0,
+              "hits": 0
+            }
+          },
+          "overall": {
+            "turns_scored": 95,
+            "hits": 27,
+            "recall": 0.28421052631578947,
+            "note": "arithmetic only -- decisions are taken per family (R91/R119), never on this row"
+          }
+        }
+      }
+    },
+    "tier_value": {
+      "tiers": {
+        "passages": {
+          "turns_present": 108,
+          "tokens": 162267,
+          "value": "unmeasured",
+          "value_reason": "scored from the context plan alone, which is the allocator's own output; CP-6b refuses that as a metric. An external signal for this tier's value does not exist in the frozen corpus -- see FAMILIES['a'] and ['b'] for the gold it would take."
+        }
+      },
+      "turns_without_a_served_plan": 0,
+      "note": "allocation, not value. A cache-hit or retrieval-only turn composes no prompt and emits no context_plan; those are counted, not treated as an empty allocation."
+    }
+  }
+}
