@@ -11,7 +11,7 @@ section that is checkable without a run:
     verified by shipping a second trivial policy and switching to it";
   * the C-1 invariant's Batch A half: recent turns are process memory and
     **nothing here can persist them** (`cp-6a-input.md` C-1 / O-A(i));
-  * the C-2 budget: 306 tokens, and where that number comes from.
+  * the budget: 3072 tokens after G-P18, and where that number comes from.
 
 The bypass predicate (step 7(a) / G-P12(b)) is NOT here -- it is asserted on
 the real `/chat` path in `test/test_cache_isolation.py`, because a bypass
@@ -183,7 +183,7 @@ def test_the_plan_renders_span_attributes_per_block() -> None:
     assert all(isinstance(v, (str, int)) for v in attrs.values()), attrs
 
 
-# --- the budget: C-2's 306 tokens --------------------------------------------
+# --- the budget: G-P18's 3072 tokens, raised from C-2's 306 -------------------
 
 
 def test_the_budget_is_ctx_size_minus_max_tokens() -> None:
@@ -192,16 +192,28 @@ def test_the_budget_is_ctx_size_minus_max_tokens() -> None:
     assert context_budget_tokens() == Config.CTX_SIZE - Config.MAX_TOKENS
 
 
-def test_the_memory_budget_default_is_c2s_measured_headroom() -> None:
-    """306 = 2048 - 1742, the measured P4 prompt draw (R121/R96).
+def test_the_memory_budget_is_g_p18s_raised_ceiling() -> None:
+    """3072, raised from 306 at CP-6d (G-P18), and the arithmetic that bounds it.
 
-    Asserted against the ACTIVE artifact, not against the source default: the
-    number that binds at serving time is the promoted one, and a config that
-    quietly raised it would push the prompt past CTX_SIZE on the 6GB box --
-    which is the one constraint `CLAUDE.md`'s priority order puts first.
+    306 was C-2's headroom (2048 of prompt budget minus R96's measured
+    1742-token draw) and G-P16 is what retired it: the allocator admits WHOLE
+    turns, a real answer runs toward `MAX_TOKENS`, so at 306 the recent tier
+    contributed zero blocks on essentially every turn against a live provider --
+    the phase would have published a utilization row for a tier that cannot fire.
+
+    **Asserted against the ACTIVE artifact, not the source default**, for the
+    reason this test always gave: the number that binds at serving time is the
+    promoted one. Two consequences, both deliberate. A run before the promotion
+    fails here, which is the correct direction of failure -- CP-6d's raise is
+    promoted first and the suite is run after. And a LOCAL llama-server run
+    promotes an artifact carrying `ctx_size=3072`, where this assertion is
+    expected to fail and the second one below is the invariant that still holds.
     """
-    assert Config.MEMORY_BUDGET_TOKENS == 306
-    assert Config.MEMORY_BUDGET_TOKENS <= context_budget_tokens() - 1742
+    assert Config.MEMORY_BUDGET_TOKENS == 3072
+    # The real constraint, which survives either promotion: R96's measured
+    # passages+persona draw plus the memory ceiling plus the completion ceiling
+    # must fit inside the context window. 1742 + 3072 + 1024 = 5838 <= 6144.
+    assert 1742 + Config.MEMORY_BUDGET_TOKENS + Config.MAX_TOKENS <= Config.CTX_SIZE
 
 
 def test_memory_never_exceeds_the_memory_budget() -> None:

@@ -29,6 +29,7 @@ Same posture as the rest of `src/harness`: public API only, over
 module produces behaviour, exactly as `replay.py`'s docstring requires.
 """
 
+import asyncio
 import logging
 import time
 import uuid
@@ -56,15 +57,28 @@ async def drive_session(
     *,
     run: str,
     session_id: str | None = None,
+    min_interval_s: float = 0.0,
 ) -> list[dict]:
     """Walk ONE session's turns in order. Returns one record per turn.
 
     `await` per turn, sequentially, with no `gather` anywhere in this function
     -- that IS the mechanism, so it is stated where it lives.
+
+    `min_interval_s` paces the loop, and the pace binder is NOT a provider
+    limit: `MAX_WRITES_PER_MINUTE_PER_TENANT` is 12 (`src/memory_store.py`)
+    against a 15 rpm serving window, and a run at full pace would ask for ~15
+    extractions a minute and have ~20% of them SILENTLY SKIPPED -- returning 0,
+    which is what "the extractor found nothing" also returns (CP-6d(a)). So the
+    metered run paces at <=12 turns/min/tenant. Sleeping between turns is
+    honest here in a way it would not be in a load driver: this loop is
+    sequential by construction and measures nothing about throughput.
     """
     sid = session_id or f"{run}-{session['id']}"
     records: list[dict] = []
+    t0 = time.monotonic()
     for index, turn in enumerate(session["turns"], start=1):
+        if index > 1 and min_interval_s:
+            await asyncio.sleep(max(0.0, min_interval_s - (time.monotonic() - t0)))
         t0 = time.monotonic()
         result = await client.chat(turn["query"], session_id=sid)
         records.append({
@@ -89,6 +103,14 @@ async def drive_session(
             "sources": result.sources,
             "context_plan": result.context_plan,
             "server_total_ms": result.server_total_ms,
+            # Batch E prerequisites: the standing four per draw, from the
+            # SERVER's meta event. `config_version` per turn rather than per run
+            # only, so a mid-run promotion could not go unnoticed (R64).
+            "prompt_tokens": result.prompt_tokens,
+            "completion_tokens": result.completion_tokens,
+            "cost_usd": result.cost_usd,
+            "cost_metered": result.cost_metered,
+            "config_version": result.config_version,
             "client_total_ms": (time.monotonic() - t0) * 1000,
             "request_id": result.request_id,
         })
@@ -102,11 +124,22 @@ async def drive_session(
     return records
 
 
-async def drive(client: HarnessClient, sessions: list[dict], *, run: str) -> list[dict]:
+async def drive(
+    client: HarnessClient, sessions: list[dict], *, run: str, min_interval_s: float = 0.0,
+) -> list[dict]:
     """Every session, one after another. Sessions are independent; TURNS are
-    not, and only the inner loop's ordering is load-bearing."""
+    not, and only the inner loop's ordering is load-bearing.
+
+    Sessions are paced too, because the write cap is per TENANT per minute and
+    does not reset at a session boundary -- and because CP-6d(a)'s episodic
+    trigger puts a SECOND summarizer draw on the first turn of each session.
+    """
     records: list[dict] = []
-    for session in sessions:
-        records.extend(await drive_session(client, session, run=run))
+    for index, session in enumerate(sessions):
+        if index and min_interval_s:
+            await asyncio.sleep(min_interval_s)
+        records.extend(await drive_session(
+            client, session, run=run, min_interval_s=min_interval_s,
+        ))
     logger.info("multiturn: drove %d sessions, %d turns", len(sessions), len(records))
     return records

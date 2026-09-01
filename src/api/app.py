@@ -89,8 +89,9 @@ from src.memory import (
     TIER_PASSAGES,
     active_policy,
     context_budget_tokens,
+    render_turns,
 )
-from src.summarizer import write_profile_from_turn
+from src.summarizer import write_episode, write_profile_from_turn
 from src.observability import (
     STAGE_ALLOCATE,
     STAGE_CACHE,
@@ -687,6 +688,11 @@ async def chat(
         # answers pooled under one arm, which is R51's defect in a new place.
         # One predicate, evaluated once, policy-independent.
         recent_turns = state.turns.recent(tenant, body.session_id)
+        # CP-6d(a)'s lazy episodic trigger reads its predicate HERE, not at the
+        # write below: by then this turn has already been appended to
+        # `SessionTurns` and every turn would look like a continuation. A
+        # session-id-less request is never a session boundary.
+        first_turn_of_session = bool(body.session_id) and not recent_turns
         # Batch C: the persisted tiers join the predicate, and joining it is the
         # SECURITY half of this batch. A turn-1 request from a tenant who has a
         # profile is memory-bearing even with an empty transcript, and caching
@@ -1191,6 +1197,14 @@ async def chat(
                 "rung": rung.value,
                 "cost_usd": cost.usd,
                 "cost_metered": cost.metered,
+                # Token counts on the meta event (v2 P6 Batch E prerequisites).
+                # They were already logged and already priced; CP-6d's dry run
+                # requires the standing four -- answer tail, TOKEN COUNTS, cost,
+                # model id -- and the harness client can only report what the
+                # server says. Absent stays absent (None), never 0: a 0 here
+                # would read as a free draw rather than an unreported one.
+                "prompt_tokens": usage.get("prompt_tokens"),
+                "completion_tokens": usage.get("completion_tokens"),
                 # Producing arm (v2 P2 step 9, R51) -- same field the cache-hit
                 # meta event carries, so the frontend/attribution reader does
                 # not need a different lookup per cache_hit value.
@@ -1251,23 +1265,43 @@ async def chat(
             #
             # The QUESTION ONLY reaches the extractor (O-E), never `answer`.
             #
-            # THE EPISODIC WRITE IS ABSENT AND THAT IS G-P15: no session-end
-            # signal exists to trigger it from, and inventing one is CP-6d's
-            # decision, not this batch's. The episodic writer in
-            # `src/summarizer.py` is built, unit-tested and has no caller
-            # anywhere. Consequence, which must travel with
-            # the number: `memory_episodic` is never written in any run, so
-            # step 10's per-tier utilization reads zero for `episodic` --
-            # zero-because-untriggered, which is not zero-because-unused.
+            # THE EPISODIC WRITE IS THE LAZY TRIGGER (CP-6d(a), G-P15 closed).
+            # Session k-1 is summarized on the first turn of session k for the
+            # same tenant: no session-end signal exists to trigger it from --
+            # `ChatRequest` marks nothing finished and the auth session is a
+            # different object on a 12h TTL -- but the LRU is already ordered by
+            # use and keyed by tenant, so the predecessor is a LOOKUP, not an
+            # event. No new endpoint, no client contract, no background task,
+            # and it lands on a turn already in band, so G-P13 is unchanged.
+            #
+            # It fires at most once per session, and never for a session with no
+            # successor: the last session of every tenant is not summarized (39
+            # of 40 in a full replay) and a restart loses what RAM held. Both
+            # accepted at CP-6d; there is no orphaned-write machinery.
             if answer:
                 _t_write = time.monotonic()
                 written = await write_profile_from_turn(tenant, body.query)
+                episode_of = None
+                if first_turn_of_session:
+                    previous = state.turns.previous_session(tenant, body.session_id)
+                    if previous is not None:
+                        prior_id, prior_turns = previous
+                        # `turn_count` is the LAST TURN'S INDEX, not the deque's
+                        # length: the deque holds MAX_RECENT_TURNS and a digest
+                        # reporting "4 turns" for a nine-turn session would
+                        # misstate what it summarized. The transcript goes in
+                        # fenced, through the same renderer the serving prompt
+                        # uses -- one fence, not a second wording to drift.
+                        episode_of = prior_id if await write_episode(
+                            tenant, prior_id, render_turns(prior_turns), prior_turns[-1].index,
+                        ) else None
                 record_stage_duration(
                     time.monotonic() - _t_write, route_name, STAGE_MEMORY_WRITE,
                 )
                 logger.info(
-                    "chat: memory_write rows=%d session_id=%s write_ms=%d",
-                    written, body.session_id, int((time.monotonic() - _t_write) * 1000),
+                    "chat: memory_write rows=%d episode_of=%s session_id=%s write_ms=%d",
+                    written, episode_of, body.session_id,
+                    int((time.monotonic() - _t_write) * 1000),
                 )
         finally:
             # Ended here, not by a context manager: the span opens in this

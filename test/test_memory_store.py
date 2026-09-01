@@ -46,6 +46,7 @@ import tempfile
 
 sys.path.insert(0, ".")
 
+import src.memory as memory_mod  # noqa: E402
 import src.memory_store as store  # noqa: E402
 import src.metrics as metrics_mod  # noqa: E402
 import src.rag.generate as gen  # noqa: E402
@@ -606,7 +607,8 @@ def test_memory_injection_never_exceeds_the_memory_budget() -> None:
     """"Request size limits extended to memory injection size" -- the §IV row
     that reads "CP2, extended CP6". Rows are admitted whole and only while they
     fit, so no quantity of stored rows can push the memory block past
-    `Config.MEMORY_BUDGET_TOKENS` (306, C-2's measured headroom on the 6GB box).
+    `Config.MEMORY_BUDGET_TOKENS` (3072 after G-P18; the assertion reads the active
+    artifact, so a local promotion at 306 is still covered).
 
     Step 8's injection NUMBER is not this batch's; the size limit is.
     """
@@ -620,35 +622,124 @@ def test_memory_injection_never_exceeds_the_memory_budget() -> None:
     assert 0 < memory_tokens <= Config.MEMORY_BUDGET_TOKENS
 
 
-# --- G-P15: the episodic trigger is deliberately absent ---------------------
+# --- CP-6d(a): the episodic trigger, wired lazily ---------------------------
+#
+# This section used to assert the trigger's ABSENCE (G-P15). It is AMENDED, not
+# deleted: the tripwire existed to force the wiring to be a decided act, the
+# decision was taken at CP-6d, and what it now guards is the shape that decision
+# chose -- one caller, on the first turn of a session, never twice in one.
 
 
-def test_the_episodic_write_is_built_and_unwired() -> None:
-    """G-P15, asserted so the absence is a recorded decision rather than a
-    forgotten wire.
+def _trigger_defects(source: str) -> list[str]:
+    """What is wrong with `/chat`'s episodic trigger, read off its source.
 
-    No session-end signal exists: `ChatRequest` carries `query`, `filters` and
-    `session_id` and nothing marks a session finished, and the auth session is a
-    different object with a 12-hour TTL and no end event. The trigger is CP-6d's
-    to choose; the lazily-summarize-session-k-1 candidate is named in G-P15 and
-    explicitly NOT adopted.
+    A function rather than four inline asserts so the check can be run against a
+    MUTATED copy below -- a source scan that cannot fail proves nothing (R115),
+    and this file has had a vacuous pass before.
+    """
+    defects = []
+    predicate = "first_turn_of_session = bool(body.session_id) and not recent_turns"
+    if predicate not in source:
+        defects.append("the first-turn predicate is not computed from recent_turns")
+    if "if first_turn_of_session:" not in source:
+        defects.append("the episodic write is not guarded by the first-turn predicate")
+    if source.count("await write_episode(") != 1:
+        defects.append("write_episode is called other than exactly once")
+    # ORDER IS THE MECHANISM. The predicate must be read BEFORE this turn joins
+    # `SessionTurns`; read after the append, every turn looks like a
+    # continuation and the digest never fires at all.
+    if predicate in source and "if first_turn_of_session:" in source:
+        appended = source.index("state.turns.append(tenant, body.session_id, body.query, answer)")
+        if not source.index(predicate) < appended < source.index("if first_turn_of_session:"):
+            defects.append("the predicate is not read before this turn is appended to SessionTurns")
+    return defects
 
-    **Consequence this test exists to keep visible:** until the trigger lands,
-    `memory_episodic` is never written in any run, so step 10's per-tier
-    utilization row -- one of the four R128 left standing -- reads zero for
-    `episodic`. That is zero-because-untriggered, which is a different finding
-    from zero-because-unused, and the artifact must carry the distinction.
+
+def test_the_episodic_write_fires_once_on_the_first_turn_of_a_session() -> None:
+    """CP-6d(a), which closed G-P15 by taking its third candidate.
+
+    Session *k-1* is summarized on the first turn of session *k* for the same
+    tenant. No session-end signal exists to trigger it from and none was
+    invented: `SessionTurns` is keyed `(tenant, session_id)` in an LRU, so the
+    predecessor is a lookup rather than an event, and the write lands on a turn
+    that is already in band (G-P13 unchanged).
+
+    **What this test replaced, and why the replacement is the same tripwire.**
+    It used to assert `write_episode` had NO caller anywhere in `src/`, so that
+    wiring it could not happen by accident and Batch C's "per-tier utilization
+    reads zero BECAUSE UNTRIGGERED" stayed true. The trigger is now a decision,
+    so the assertion moves to its shape: exactly one caller, guarded by the
+    first-turn predicate, with the predicate read before the turn is appended.
+
+    **The residue CP-6d accepted, stated here so a reader of the run finds it:**
+    a session with NO SUCCESSOR is never summarized -- the last session of every
+    tenant, 1 of 40 in a full replay -- and a process restart loses every
+    un-summarized transcript. There is no orphaned-write machinery.
     """
     assert callable(summarizer.write_episode), "the write path is BUILT"
-    callers = [
+    # Scan CODE, not prose. A substring search over the source also reads
+    # docstrings -- `src/memory.py:236` says "hands the result to
+    # `write_episode`", which is documentation of this very decision, and an
+    # earlier form of this check counted it as a second caller. Same false
+    # positive Batch C hit on `RateLimiter`. `ast` sees calls and imports; it
+    # cannot see a docstring.
+    def _names_write_episode(path: pathlib.Path) -> bool:
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                if any(a.name == "write_episode" for a in node.names):
+                    return True
+            elif isinstance(node, ast.Call):
+                fn = node.func
+                if isinstance(fn, ast.Name) and fn.id == "write_episode":
+                    return True
+                if isinstance(fn, ast.Attribute) and fn.attr == "write_episode":
+                    return True
+        return False
+
+    callers = sorted(
         p for p in pathlib.Path("src").rglob("*.py")
-        if "write_episode" in p.read_text() and p.name != "summarizer.py"
-    ]
-    assert callers == [], (
-        f"something now triggers the episodic write ({[str(p) for p in callers]}). That is "
-        f"CP-6d's decision (G-P15), and taking it here also invalidates every report that "
-        f"says the episodic tier reads zero because it is untriggered."
+        if p.name != "summarizer.py" and _names_write_episode(p)
     )
+    assert [p.as_posix() for p in callers] == ["src/api/app.py"], (
+        f"the episodic write has callers {[str(p) for p in callers]}. CP-6d(a) put exactly "
+        f"one, in the /chat handler; a second caller is a second cadence nobody decided."
+    )
+    assert _trigger_defects(callers[0].read_text()) == []
+
+
+def test_the_trigger_check_can_actually_fire() -> None:
+    """The check above is a source scan, and a scan that cannot fail is the
+    shape this project keeps catching (R115). Each defect is injected once."""
+    source = pathlib.Path("src/api/app.py").read_text()
+    assert _trigger_defects(source.replace("if first_turn_of_session:", "if True:")), \
+        "removing the first-turn guard must be a defect"
+    assert _trigger_defects(source.replace("await write_episode(", "await write_episode(  # x\n    await write_episode(")), \
+        "a second episodic call must be a defect"
+
+
+def test_a_session_with_no_predecessor_writes_no_digest() -> None:
+    """The trigger's own known-answer case, at the lookup that drives it.
+
+    First session of a tenant: nothing to summarize, and the handler must get
+    `None` rather than an empty digest. This is also the shape of the accepted
+    residue -- a session with no SUCCESSOR is never summarized, because nothing
+    ever asks about it.
+    """
+    turns = memory_mod.SessionTurns()
+    turns.append("tenant-a", "s-1", "q1", "a1")
+    assert turns.previous_session("tenant-a", "s-1") is None
+
+    turns.append("tenant-a", "s-2", "q2", "a2")
+    previous = turns.previous_session("tenant-a", "s-2")
+    assert previous is not None and previous[0] == "s-1"
+    assert [t.question for t in previous[1]] == ["q1"]
+
+    # Another tenant's session is never a predecessor, however recently used:
+    # the LRU key is (tenant, session_id) and that is a boundary, not a naming
+    # convention.
+    turns.append("tenant-b", "s-9", "q", "a")
+    assert turns.previous_session("tenant-a", "s-2")[0] == "s-1"
 
 
 def test_no_table_was_added_for_recent_turns() -> None:

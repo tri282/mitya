@@ -15,7 +15,7 @@ tier in process memory, the allocator seam plus two policies, and the predicate
     carries no pass rate until step 8 measures one.
 
 **Batch C added** the two persisted tiers as value objects (`ProfileFact`,
-`Episode`), the one shared fence, and their admission into the same 306-token
+`Episode`), the one shared fence, and their admission into the same memory-token
 budget. Their SQL is `src/memory_store.py`; their writer is
 `src/summarizer.py`.
 
@@ -26,13 +26,22 @@ O-A option (i) -- process memory, dies with the session -- is what is built here
 and CP-6a stays free to choose (ii) later. `SessionTurns` therefore imports no
 database, holds no path, and writes no file.
 
-**The budget is 306 tokens of room, and that number is C-2.** `CTX_SIZE` is 3072
-and `MAX_TOKENS` is 1024, so the whole prompt budget is 2048
-(`context_budget_tokens()`); the measured P4 prompt draw is 1742 (R121/R96), of
-which the passages block is the bulk. 2048 - 1742 = **306**, and that is what
-`memory_budget_tokens` defaults to. Under `CLAUDE.md`'s priority order hardware
-fit outranks everything else in this file: memory takes what is left after
-retrieval, never the other way round.
+**The budget is 3072 tokens, raised from 306 at CP-6d (G-P18).** 306 was C-2's
+arithmetic: `CTX_SIZE` 3072 - `MAX_TOKENS` 1024 = 2048 of prompt budget, minus
+R96's measured 1742-token passages+persona draw. G-P16 is what retired it: this
+file admits WHOLE TURNS, a real prior turn's answer runs toward `MAX_TOKENS`, so
+one prior turn costs ~1050-1100 tokens against 306 of room and the recent tier
+contributes **zero blocks on essentially every turn against a live provider** --
+Batch B measured 68 blocks in 108 turns only because the fake provider replays a
+67-character fixture (R127). `ctx_size` is now 6144 and `memory_budget_tokens`
+3072, sized as what makes the tier non-vacuous.
+
+Hardware fit still outranks everything else in this file, and it is not being
+overruled: the 3072/6GB rule is the LOCAL arm's (`CLAUDE.md`), and A3 froze
+`local-q4km` as a chart line that nothing in the request path can start. A local
+run promotes an artifact carrying `ctx_size=3072`. Memory still takes what is
+left after retrieval, never the other way round: passages are admitted first and
+are never truncated to make room.
 """
 
 import logging
@@ -61,10 +70,11 @@ MEMORY_TIERS = frozenset({TIER_RECENT, TIER_EPISODIC, TIER_PROFILE})
 
 # Process-memory ceiling on the recent-turns store, per session. NOT a versioned
 # serving knob: the injection cap (`Config.MEMORY_BUDGET_TOKENS`) is what decides
-# how much reaches the prompt, and it binds long before this does -- 306 tokens
-# is one or two turns. This only bounds how much RAM a long session may hold.
-# N-1 in `cp-6a-input.md` is the reason the two are separate names: the first
-# person to tune one will otherwise conflate them.
+# how much reaches the prompt. At 3072 tokens (G-P18) the injection cap is
+# roughly three whole turns, so this RAM ceiling and that budget now bind at a
+# similar order -- they are still separate names for separate things (N-1), and
+# this one only bounds how much RAM a long session may hold. The first person to
+# tune one will otherwise conflate them.
 MAX_RECENT_TURNS = 4
 
 # Ceiling on how many sessions the process remembers at once, LRU-evicted.
@@ -214,6 +224,26 @@ class SessionTurns:
         # staleness is the fact G-P13's residual risk asks to be visible.
         index = turns[-1].index + 1 if turns else 1
         turns.append(Turn(index=index, question=question, answer=answer))
+
+    def previous_session(self, tenant: str, session_id: str | None) -> tuple[str, list[Turn]] | None:
+        """This tenant's most recently used OTHER live session, or None.
+
+        **The whole mechanism of CP-6d(a)'s lazy episodic trigger**, and the
+        reason it needs no new signal: G-P15 stayed open because nothing marks a
+        session finished, but the LRU is already ordered by use and already
+        keyed by tenant, so "the session this tenant was in before this one" is
+        a lookup, not an event. `src/api/app.py` calls it on the first turn of a
+        session and hands the result to `write_episode`.
+
+        Newest first, and never the caller's own session. Returns the id
+        alongside the turns because the digest row is keyed by session id, and
+        recovering it from the key afterwards would be a second lookup that
+        could disagree with this one.
+        """
+        for (owner, sid), turns in reversed(self._sessions.items()):
+            if owner == tenant and sid != session_id and turns:
+                return sid, list(turns)
+        return None
 
     def purge_tenant(self, tenant: str) -> int:
         """Drop everything this tenant has in process memory. Returns rows dropped.
@@ -400,7 +430,8 @@ class AllocationPolicy:
 class PassagesFirstPolicy(AllocationPolicy):
     """The one real policy: retrieval is admitted whole, memory takes what is left.
 
-    Two deliberate properties, both from C-2's 306 tokens:
+    Two deliberate properties, unchanged by G-P18's raise of the budget they
+    were written for:
 
       * **passages are never truncated to make room for memory.** Cutting a
         passage mid-sentence corrupts the grounding the whole system exists to
@@ -464,10 +495,11 @@ class PassagesFirstPolicy(AllocationPolicy):
         # is unchanged by this batch; profile before episodic because a profile
         # row is a handful of tokens and a digest is not.
         #
-        # ORDERING vs PREFIX REUSE IS NOT DECIDED HERE. R52/CP-6d asks whether
-        # blocks should be ordered so the byte-identical prefix is longest; this
-        # is the order that does not foreclose it, not a claim that reuse was
-        # achieved (R124's measurement is unrun).
+        # ORDERING vs PREFIX REUSE: DECIDED AT CP-6d ON R129, AND IT DOES NOT
+        # FIRE. The byte-identical prefix is 393 bytes as shipped and 511 under
+        # R52's own pinned ordering, against Gemini Flash's 4096-token floor --
+        # bytes bound tokens from above, so it is more than a factor of ten
+        # below. No ordering arm was run and this order stands unchanged.
         #
         # Rows are admitted WHOLE, like turns: a half-rendered fact is a record
         # that lies about what is on record.
@@ -548,11 +580,12 @@ def active_policy() -> AllocationPolicy:
 def context_budget_tokens() -> int:
     """Total prompt-context budget, in tokens: `CTX_SIZE - MAX_TOKENS`.
 
-    3072 - 1024 = **2048** on the shipped config. Derived, not a constant, so a
-    `CTX_SIZE` experiment moves the budget with it instead of leaving a stale
-    literal behind. C-2's arithmetic is what makes this the honest number: the
-    measured P4 prompt draw is 1742 (R121/R96), so what memory can actually win
-    is 2048 - 1742 = 306 tokens -- and `_memory_budget()` is that.
+    6144 - 1024 = **5120** on the shipped config after G-P18. Derived, not a
+    constant, so the `CTX_SIZE` raise moved this with it instead of leaving a
+    stale literal behind -- and a local promotion at 3072 moves it back.
+    `_memory_budget()` is the separate ceiling on what the memory tiers may take
+    of it: 3072, sized at CP-6d to make the recent tier non-vacuous rather than
+    to what R96's 1742-token draw leaves over.
     """
     return Config.CTX_SIZE - Config.MAX_TOKENS
 
@@ -567,8 +600,11 @@ def _retention_days() -> int:
 def _memory_budget() -> int:
     """Ceiling on tokens the memory tiers may take, `Config.MEMORY_BUDGET_TOKENS`.
 
-    Default 306 = 2048 - 1742 (C-2), i.e. the headroom that measurably exists on
-    the 6GB target box, not a round number chosen for looking like one. It is a
-    versioned field and a natural P7 search axis.
+    Default 3072 (G-P18, was 306). Not "what the provider allows" and not
+    "what R96's draw leaves over": it is two worst-case prior turns admitted
+    whole (~2200) plus the profile block, with a third turn genuinely competing
+    rather than always losing -- corpus sessions run 2-4 turns (R120, R122). It
+    is a versioned field and a natural P7 search axis, where under A13's cost
+    objective the interesting direction is SMALLER.
     """
     return Config.MEMORY_BUDGET_TOKENS

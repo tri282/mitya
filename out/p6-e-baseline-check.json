@@ -1,0 +1,233 @@
+{
+  "provenance": {
+    "ready": {
+      "generation": {
+        "model": "models/gemini-3.5-flash-lite",
+        "provider": "google",
+        "status": "ok"
+      },
+      "llama_server": "not serving generation (provider=google)",
+      "qdrant": {
+        "collection": "dostoevsky",
+        "count": 3284
+      },
+      "artifacts": {
+        "entities_loaded": 256,
+        "summaries_loaded": 231,
+        "structure_loaded": 5
+      },
+      "status": "ready",
+      "readiness": {
+        "generation_available": true,
+        "retrieval_available": true,
+        "cache_available": false,
+        "degraded": false
+      }
+    },
+    "arm": "metered",
+    "secure_cookie_under_test": false,
+    "credentials_file": "data/p5-test-accounts.env",
+    "config_version": "22213e2a3792",
+    "allocation_policy": "passages_only",
+    "arm_label": "baseline",
+    "in_process": true,
+    "memory_writes_enabled": false,
+    "serving_model": "models/gemini-3.5-flash-lite",
+    "summarizer_model": "models/gemini-3.1-flash-lite",
+    "ctx_size": 6144,
+    "memory_budget_tokens": 3072,
+    "pace_per_min": 12,
+    "corpus_version": "4155c97b0a2b",
+    "tenant": "tenant-a"
+  },
+  "run": "c1173f3a",
+  "records": [
+    {
+      "session": "s-0001",
+      "family": "passage_paste",
+      "session_id": "c1173f3a-s-0001",
+      "turn_index": 1,
+      "query": "\"And remember the condition: if you wear these out, you will have another suit for nothing! They only do business on that system at Fedyaev\u2019s; if you\u2019ve bought a thing once, you are satisfied for life, for you will never go there again of your own free will. You see that they are a bit worn, but they\u2019ll last a couple of months, for it\u2019s foreign work and foreign leather; the secretary of the English Embassy sold them last week--he had only worn them six days, but he was very short of cash.\"\n\nwho is being described here and why does it matter?",
+      "status_code": 200,
+      "terminal_event": null,
+      "fault_phase": null,
+      "route": "DEFAULT",
+      "cache_hit": false,
+      "model": "models/gemini-3.5-flash-lite",
+      "no_context": false,
+      "answer_chars": 1898,
+      "answer_tail": "to the community of men\u2014that chaotic, suffering, absurd brotherhood from which he tried so desperately to sever himself.",
+      "sources": [
+        {
+          "book": "Crime and Punishment",
+          "part": 2,
+          "chapter": 3
+        }
+      ],
+      "context_plan": {
+        "plan.policy": "passages_only",
+        "plan.budget_tokens": 5120,
+        "plan.tokens": 1429,
+        "plan.has_memory": "false",
+        "plan.blocks": "passages",
+        "plan.block.passages.tokens": 1429,
+        "plan.block.passages.provenance": "retrieval:build_context (no-memory arm)"
+      },
+      "server_total_ms": 5878,
+      "prompt_tokens": 1736,
+      "completion_tokens": 397,
+      "cost_usd": 0.0015133,
+      "cost_metered": false,
+      "config_version": "22213e2a3792",
+      "client_total_ms": 5889.131214997178,
+      "request_id": "ceb0ed3c7c46d805976a989964402fa8"
+    },
+    {
+      "session": "s-0001",
+      "family": "passage_paste",
+      "session_id": "c1173f3a-s-0001",
+      "turn_index": 2,
+      "query": "why does that matter later on?",
+      "status_code": 200,
+      "terminal_event": null,
+      "fault_phase": null,
+      "route": "DEFAULT",
+      "cache_hit": false,
+      "model": "models/gemini-3.5-flash-lite",
+      "no_context": false,
+      "answer_chars": 2017,
+      "answer_tail": "s thing\u2014will demand an accounting of every last drop of suffering we have caused, both to ourselves and to our neighbor.",
+      "sources": [
+        {
+          "book": "Crime and Punishment",
+          "part": 5,
+          "chapter": 4
+        },
+        {
+          "book": "The Idiot",
+          "part": 2,
+          "chapter": 8
+        },
+        {
+          "book": "The Possessed",
+          "part": 1,
+          "chapter": 1
+        }
+      ],
+      "context_plan": {
+        "plan.policy": "passages_only",
+        "plan.budget_tokens": 5120,
+        "plan.tokens": 1608,
+        "plan.has_memory": "false",
+        "plan.blocks": "passages",
+        "plan.block.passages.tokens": 1608,
+        "plan.block.passages.provenance": "retrieval:build_context (no-memory arm)"
+      },
+      "server_total_ms": 6253,
+      "prompt_tokens": 1671,
+      "completion_tokens": 428,
+      "cost_usd": 0.0015712999999999999,
+      "cost_metered": false,
+      "config_version": "22213e2a3792",
+      "client_total_ms": 6261.963837001531,
+      "request_id": "877b3a809905e74105812f6442570255"
+    }
+  ],
+  "summarizer": {
+    "draws": 0,
+    "extractor_draws": 0,
+    "episodic_draws": 0,
+    "summarizer_cost_usd": 0,
+    "unpriced_draws": 0,
+    "wall_ms_total": 0
+  },
+  "storage": {
+    "rows_before": 1,
+    "rows_after": 1,
+    "bytes_before": 133,
+    "bytes_after": 133
+  },
+  "known_answer_check": {
+    "arm_expects": "zero summarizer draws, summarizer_cost_usd == 0, no stored rows added",
+    "suppressed_calls": 2,
+    "summarizer_draws": 0,
+    "summarizer_cost_usd": 0,
+    "rows_before": 1,
+    "rows_after": 1,
+    "verdict": "pass",
+    "failures": [],
+    "note": "memory.write stage spans are NOT counted here: suppression is a driver stub and the request path still opens that span at ~0 ms with no draw behind it. The store delta is the stronger evidence (CP-6d(b), recorded deviation)."
+  },
+  "cost": {
+    "serving_usd": 0.0030846,
+    "summarizer_usd": 0,
+    "note": "serving and summarizer are SEPARATE model ids and separate quota windows (G-P11); they are never summed into one row without the split."
+  },
+  "arm": "baseline",
+  "policy": "passages_only",
+  "memory_writes_enabled": false,
+  "corpus_version": "4155c97b0a2b",
+  "dry": false,
+  "metrics": {
+    "corpus_version": "4155c97b0a2b",
+    "corpus_label": "Derived from a harness-authored synthetic session corpus (P4, R91). Its resemblance to real usage is unproven and was not tested: no real traffic exists to compare against (D3), and the corpus was declared unvalidated by choice rather than validated by a check. Its composition is a pre-registered design parameter -- 40 sessions across five families, 50% literal-bearing -- chosen for measurability, not realism, and its cache repeat rate is a dial, not an observation. Per-family figures are reported separately so any reweighting is arithmetic rather than a regeneration.",
+    "turns": 2,
+    "families": {
+      "a": {
+        "name": "task success on scripted multi-turn goals",
+        "computable": false,
+        "gold_required": "Per-turn authored gold, 108 rows: for each turn, the goal it advances and a machine-checkable success predicate (an expected entity, chapter, or refusal). The corpus has none -- every turn is {query}. A9 makes this a NEW VERSION STAMP of test/session_corpus.json (a re-freeze with its own pre-registration, CP-4a shape), not an added field: src/harness/sessions.py refuses a modified file. Cost rider (R120): authored gold on a corpus already declared unvalidated (R91/O5) compounds the O5/O10 label rather than fixing it.",
+        "result": null,
+        "status": "not_computable_on_this_corpus_version"
+      },
+      "b": {
+        "name": "answer quality at turn N given information introduced at turn 1",
+        "computable": false,
+        "gold_required": "Either (i) per-session authored gold stating what a turn-N answer must retain from turn 1 -- 68 follow-up turns, again a corpus re-freeze under A9 -- or (ii) a judge. The judge exists (scripts/eval_quality.py, Config.JUDGE_MODEL) but is METERED, so it cannot run on Batch B's $0 fake arm; A7 pins it to Tier 2 (reports, never gates) and R63 records that it cannot arbitrate quality here. A further blocker specific to this batch: the fake provider replays one fixed fixture, so on the fake arm every arm's answer text is identical by construction and there is nothing for a judge to score.",
+        "result": null,
+        "status": "not_computable_on_this_corpus_version"
+      },
+      "c": {
+        "name": "retrieval-style recall over what should have been in context",
+        "computable": true,
+        "gold_required": "Already present: session-level `targets`, one {book, part, chapter} per session, on 35 of 40 sessions (95 of 108 turns). Constant within a session, so per-turn scoring is possible but turn-to-turn discrimination is not (R120 qualifier 2).",
+        "result": {
+          "per_family": {
+            "passage_paste": {
+              "sessions_scored": 1,
+              "turns_scored": 2,
+              "hits": 1,
+              "recall": 0.5,
+              "unmeasured": {}
+            }
+          },
+          "per_session": {
+            "s-0001": {
+              "family": "passage_paste",
+              "turns_scored": 2,
+              "hits": 1
+            }
+          },
+          "overall": {
+            "turns_scored": 2,
+            "hits": 1,
+            "recall": 0.5,
+            "note": "arithmetic only -- decisions are taken per family (R91/R119), never on this row"
+          }
+        }
+      }
+    },
+    "tier_value": {
+      "tiers": {
+        "passages": {
+          "turns_present": 2,
+          "tokens": 3037,
+          "value": "unmeasured",
+          "value_reason": "scored from the context plan alone, which is the allocator's own output; CP-6b refuses that as a metric. An external signal for this tier's value does not exist in the frozen corpus -- see FAMILIES['a'] and ['b'] for the gold it would take."
+        }
+      },
+      "turns_without_a_served_plan": 0,
+      "note": "allocation, not value. A cache-hit or retrieval-only turn composes no prompt and emits no context_plan; those are counted, not treated as an empty allocation."
+    }
+  }
+}

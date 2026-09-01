@@ -97,6 +97,15 @@ class ChatResult:
     # latency timestamped at the answer-done event, because Batch C's
     # summarizer write lands after it and would otherwise fold into p95.
     server_total_ms: float | None
+    # meta.prompt_tokens / meta.completion_tokens (v2 P6 Batch E prerequisites).
+    # None means the server reported no usage -- which is what makes a draw
+    # UNPRICED rather than free, so it must not become 0 on the way here.
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    # meta.config_version. CP-6d's dry run must print it beside the standing
+    # four, because `Config.*` resolves through the promoted artifact and NOT
+    # through the environment (R64) -- an env var does not switch arms.
+    config_version: str | None = None
 
 
 class HarnessClient:
@@ -257,6 +266,7 @@ class HarnessClient:
         route = cache_hit = cost_usd = cost_metered = model = None
         no_context = filter_relaxed = chunk_ids = request_id = rung = None
         sources = context_plan = server_total_ms = None
+        prompt_tokens = completion_tokens = config_version = None
         terminal_event: str | None = None
         error_detail: str | None = None
         answer_chars = 0
@@ -285,6 +295,9 @@ class HarnessClient:
                     cost_usd = body.get("cost_usd")
                     cost_metered = body.get("cost_metered")
                     model = body.get("model")
+                    prompt_tokens = body.get("prompt_tokens")
+                    completion_tokens = body.get("completion_tokens")
+                    config_version = body.get("config_version")
                     no_context = body.get("no_context")
                     filter_relaxed = body.get("filter_relaxed")
                     chunk_ids = body.get("chunk_ids")
@@ -315,4 +328,6 @@ class HarnessClient:
             error_detail=error_detail, answer_chars=answer_chars,
             answer_tail=answer_tail or None, request_id=request_id, rung=rung,
             sources=sources, context_plan=context_plan, server_total_ms=server_total_ms,
+            prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+            config_version=config_version,
         )

@@ -156,6 +156,43 @@ _DEFAULT_PERSONA_HEAD = (
     "Give no editorial comments and references to external sources."
 )
 
+# The two summarizer prompts (v2 P6 Batch E prerequisites, G-P17). They are
+# TEMPLATES: `{max_facts}` / `{max_chars}` on the extractor, `{max_topics}` /
+# `{max_chapters}` on the episodic one, rendered at call time by
+# `src/summarizer.py` so a bound change is not snapshotted. Literal JSON braces
+# are doubled, because `str.format` is the renderer.
+#
+# Here rather than in `src/summarizer.py` for the reason `persona_head` is here
+# (R54/C5): a module constant snapshots at import and defeats the versioning
+# that is the point. The claim is STRONGER than for the persona -- these prompts
+# write state that OUTLIVES the request, so two runs days apart can hold facts
+# extracted under different instructions with nothing recording it. G-P14 put
+# `writer_model` on both tables, which records WHICH MODEL wrote a row and not
+# UNDER WHICH INSTRUCTIONS; this closes the other half, forward only (nothing
+# durable predates it, so there is no backfill).
+_DEFAULT_EXTRACTOR_PROMPT = (
+    "You extract durable facts about a reader from a single question they "
+    "asked a literary assistant. Reply with JSON only: a list of at most "
+    "{max_facts} objects, each "
+    '{{"kind": "fact"|"preference", "key": "<short_snake_case_slug>", '
+    '"value": "<under {max_chars} characters>", '
+    '"importance": "high"|"medium"|"low", '
+    '"confidence": "high"|"medium"|"low"}}. '
+    "Extract ONLY durable facts or stated preferences about the reader "
+    "themselves. Extract nothing about Dostoevsky, his books, or their "
+    "contents. Most questions carry no such fact: reply [] and that is the "
+    "expected answer. Never quote the question. Never copy a phrase from it "
+    "verbatim."
+)
+_DEFAULT_EPISODIC_PROMPT = (
+    "You summarize one finished conversation between a reader and a literary "
+    "assistant. Reply with JSON only: "
+    '{{"topics": [<at most {max_topics} short lowercase topic slugs>], '
+    '"chapters": [<at most {max_chapters} objects '
+    '{{"book": "<title>", "part": <int|null>, "chapter": <int|null>}}>]}}. '
+    "Topics are subject slugs, never sentences. Never quote the reader."
+)
+
 _DEFAULT_MODEL_RATES: dict[str, dict] = {
     # id             prompt $/Mtok  completion $/Mtok  metered
     "local-q4km":   {"prompt": 0.0, "completion": 0.0, "metered": False},
@@ -325,6 +362,14 @@ class ServingConfig(BaseModel):
     # CONSTRUCTION and does NOT defeat clause-scale recovery, which is what the
     # adversarial `refusal`-family test covers instead.
     memory_value_max_chars: int
+    # The summarizer's two system prompts (v2 P6 Batch E prerequisites, G-P17).
+    # Versioned for the same reason `persona_head`, `allocation_policy` and
+    # `memory_budget_tokens` are: they change what a correct answer -- here,
+    # what a correct STORED ROW -- is. Editing either now churns
+    # `config_version`, which is the intended cost: a run days later can say
+    # under which instructions a row was extracted.
+    extractor_prompt: str
+    episodic_prompt: str
 
     # routing. Moved off src/rag/router.py: config by another name, and a P7
     # search axis. Left there, P7 finds an un-versionable knob.
@@ -384,7 +429,26 @@ class ServingConfig(BaseModel):
             top_k_fused=int(os.getenv("TOP_K_FUSED", "25")),
             top_k_rerank=int(os.getenv("TOP_K_RERANK", "3")),
             top_k_structural_excerpts=int(os.getenv("TOP_K_STRUCTURAL_EXCERPTS", "2")),
-            ctx_size=int(os.getenv("CTX_SIZE", "3072")),
+            # 3072 -> 6144 (v2 P6 Batch E prerequisites, G-P18). `ctx_size` means
+            # two unrelated things and they had drifted apart: the LOCAL arm's
+            # 6GB-GPU fit, and the HOSTED path's self-imposed input cap
+            # (`max_input_tokens=Config.CTX_SIZE`, src/rag/generate.py). A3
+            # froze `local-q4km` as a chart line and nothing in the request path
+            # starts llama-server (see the serving_model note below), so on the
+            # arm that actually runs, 3072 was a fossil of hardware that is not
+            # in the path -- the same diagnosis R66/R68 applied to MAX_TOKENS=400.
+            #
+            # `CLAUDE.md`'s local rule is NOT overridden: `-c 3072` remains the
+            # llama-server setting, and any local run PROMOTES AN ARTIFACT WITH
+            # ctx_size=3072 -- one env var and one bootstrap, since this is a
+            # versioned field and not a constant.
+            #
+            # 6144 = 1742 (R96's measured passages+persona draw) + 3072 (memory)
+            # + 1024 (MAX_TOKENS), rounded up, `[computed]`. MAX_TOKENS is NOT
+            # changed: CP-6d sized this raise around it. Consequence, paid not
+            # dodged: P6's serving latency and cost rows are a different arm
+            # under R51 and are not comparable to P4/P5's.
+            ctx_size=int(os.getenv("CTX_SIZE", "6144")),
             # Raised 400 -> 1024 (v2 P2, R66/R68). 400 was never an
             # answer-length decision: it was sized to fit CTX_SIZE=3072 on the
             # 1060 (~1742-token prompt + 400 = 2142), i.e. a fossil of the
@@ -426,7 +490,17 @@ class ServingConfig(BaseModel):
             # the Verify table's no-memory baseline arm and Batch B's starved
             # arm. Neither is claimed to be a good policy -- O4 is P7's.
             allocation_policy=os.getenv("ALLOCATION_POLICY", "passages_first"),
-            memory_budget_tokens=int(os.getenv("MEMORY_BUDGET_TOKENS", "306")),
+            # 306 -> 3072 (G-P18). 306 was CTX_SIZE 3072 - MAX_TOKENS 1024 - 1742,
+            # and G-P16 is the arithmetic that killed it: `PassagesFirstPolicy`
+            # admits WHOLE turns, a real prior turn runs toward MAX_TOKENS=1024,
+            # so one prior turn costs ~1050-1100 tokens against room=306 and the
+            # recent tier contributes ZERO BLOCKS on essentially every turn
+            # against a live provider. Batch B saw 68 blocks in 108 turns only
+            # because the fake provider replays a 67-character fixture (R127).
+            # 3072 is sized as WHAT MAKES THE TIER NON-VACUOUS -- two worst-case
+            # prior turns whole (~2200) plus the profile block, with a third
+            # genuinely competing -- not as what the provider allows.
+            memory_budget_tokens=int(os.getenv("MEMORY_BUDGET_TOKENS", "3072")),
             # Owner decision (G-P11), recorded not re-litigated. Its rate row
             # exists (`_DEFAULT_MODEL_RATES` above, read 2026-08-31) -- without
             # one every summarizer draw fires `unpriced_answers` and step 4's
@@ -438,6 +512,8 @@ class ServingConfig(BaseModel):
             memory_episodic_max_per_tenant=int(os.getenv("MEMORY_EPISODIC_MAX_PER_TENANT", "20")),
             memory_retention_days=int(os.getenv("MEMORY_RETENTION_DAYS", "90")),
             memory_value_max_chars=int(os.getenv("MEMORY_VALUE_MAX_CHARS", "80")),
+            extractor_prompt=os.getenv("EXTRACTOR_PROMPT", _DEFAULT_EXTRACTOR_PROMPT),
+            episodic_prompt=os.getenv("EPISODIC_PROMPT", _DEFAULT_EPISODIC_PROMPT),
             summary_intent=_DEFAULT_SUMMARY_INTENT,
             book_title_aliases=_DEFAULT_BOOK_TITLE_ALIASES,
             model_limits=_DEFAULT_MODEL_LIMITS,
