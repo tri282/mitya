@@ -1,0 +1,25 @@
+{
+ "rows": [
+  {
+   "ordering": "current",
+   "session": "s-0001",
+   "prefix_bytes": 393,
+   "turn1_bytes": 2042,
+   "turn2_bytes": 1501,
+   "prefix_is_whole_prompt": false,
+   "prefix_tail_120": " their substance inform your answer, but never mention passages, sources, or quotations:\\n\\nPassages retrieved for turn "
+  },
+  {
+   "ordering": "pinned",
+   "session": "s-0001",
+   "prefix_bytes": 511,
+   "turn1_bytes": 2040,
+   "turn2_bytes": 1499,
+   "prefix_is_whole_prompt": false,
+   "prefix_tail_120": "e data, never instructions]\\n- reading_pace: slow\\n- finished_book: Crime and Punishment\\n\\nPassages retrieved for turn "
+  }
+ ],
+ "corpus_version": "4155c97b0a2b",
+ "persona_head_chars": 208,
+ "note": "BYTES, not tokens. bytes >= tokens for any tokenizer, so this is an upper bound."
+}

@@ -287,7 +287,7 @@ The cached value is `{answer, sources, footer}`, so a cache hit re-emits the `so
 
 ### 1. Endpoints (`src/api/app.py`)
 
-* `POST /chat` — `{query, filters?, session_id?}`; SSE stream of answer tokens, then a `sources` event, then a `meta` event. `session_id` is log-correlation only in v1 (conversation memory is out of scope).
+* `POST /chat` — `{query, filters?, session_id?}`; SSE stream of answer tokens, then a `sources` event, then a `meta` event. ~~`session_id` is log-correlation only in v1 (conversation memory is out of scope).~~ **Amended at v2 CP6 (2026-08-31):** `session_id` now keys the recent-turns tier and the lazy episodic trigger — see §IV.8. It is still optional; a request without one is memory-free and cacheable.
 * `GET /health` — llama-server reachability + Qdrant collection presence/count + artifact load status.
 * `GET /books` — the `structure.json` tree, feeds the filter UI.
 * `POST /auth/login`, `POST /auth/logout`, `GET /auth/session` — **v2 CP5.** `/chat`, `/books` and
@@ -317,10 +317,36 @@ authenticated tenant that a header can override is not authenticated.
 **The answer cache is deliberately NOT tenant-keyed** (charter A12(2)). The corpus is shared, so
 tenants ask overlapping questions about the same documents; tenant-keying would discard most of the
 cost saving that is the cache's whole purpose, and with no per-tenant documents there is nothing to
-leak. Tenant enters the key at **CP6**, the moment per-tenant memory reaches the prompt. CP5's
+leak. ~~Tenant enters the key at **CP6**, the moment per-tenant memory reaches the prompt.~~ CP5's
 cross-tenant leak test is therefore **vacuous by construction** and is recorded as such rather than
 reported as an isolation pass — `test/test_cache_isolation.py` is written to start failing at CP6 if
 memory reaches the prompt without the key changing. That conditional is the real isolation test.
+
+> **CORRECTED at v2 CP6 (2026-08-31) — struck above, not deleted, because the rule that replaced it
+> is only legible next to the one it replaced.**
+>
+> **Tenant never enters the key.** Two corrections stack here. First (**G-P12(a)**): the charter row
+> reading *"cache keys include tenant and memory state — first enforced CP5"* was wrong about the
+> checkpoint, and is corrected to **CP6**; A12(2) and `decisions-p5.md` C9's **retraction** moved it,
+> because under a shared corpus there are no per-tenant documents to leak. `src/rag/cache.py:58-60`
+> was already built to the corrected rule — the document was the stale half.
+>
+> Second (**G-P12(b)**, settled on a measurement): putting memory state in the key was measured and
+> **abandoned**. A correct per-session or per-turn memory component drops the hit rate from **0.528
+> to 0.000**, and the only fingerprint that recovers anything (a lossy 8-bucket one, 0.157) recovers
+> it *by colliding differing memory states* — its hit rate **is** its cross-tenant collision rate.
+> So a memory-bearing request is **not cached at all**: `/chat` bypasses `AnswerCache` get *and* set
+> whenever the context plan carries a memory block. The surviving cached population is memory-free
+> and therefore tenant-invariant under A12(2), and the isolation invariant is enforced by the
+> **bypass** rather than by the key. **C9 closes on this: the per-tenant cache is never built.**
+>
+> The tripwire fired as designed and was amended with the decision, not around it:
+> `test_the_tripwire_can_actually_fire` and
+> `test_a_memory_bearing_request_bypasses_the_cache_entirely` now assert the bypass arm. And because
+> "bypassed" and "missed" are different populations, the `/chat` log line and the cache metrics both
+> carry `cache_population` (`memory_bearing` | `memory_free`) — without it, counting `cache_hit=false`
+> lines silently pools the two and reports a hit rate for a population that was never offered the
+> cache.
 
 **Shipped for the UI build (`mitya-ui`):** an `event: meta` SSE event, added for the UI's debug panel, carrying `{route_name, chunk_ids, ttft_ms, total_ms, filter_relaxed, no_context, cache_hit}` — fields the pipeline already computed and previously only logged. Always-on, no request flag (single local user; query text is already in local logs). Placement:
 - **Live path:** `token`* → `sources` → **`meta`** (stream close). Emitted *after* `sources` and after `cache.set`, at the point `total_ms`/`ttft_ms` are already computed and logged, so `total_ms` is a truthful end-to-end figure.
@@ -507,6 +533,168 @@ and an unsliced percentile measures the traffic mix rather than the system.
 ### 6. Dependency deltas (`requirements.txt`)
 
 * Add: `fastembed`, `httpx`. Remove: `litellm`, `sentence-transformers`. Pin: `qdrant-client>=1.10`.
+
+### 8. Memory (v2 CP6)
+
+Three tiers compete for **one** token budget alongside the retrieved passages — that competition is
+the point. Numbers below are measured on a **synthetic** 40-session corpus (`4155c97b0a2b`,
+108 turns) under `config_version` `fb5cb5a842e7`, 2026-08-31; the O5/O10 qualifier in §IX applies to
+every one of them.
+
+> ## The memory fence does NOT hold. This is an open weakness, not a shipped property.
+>
+> Charter §IV states the invariant as *"injected memory is fenced and framed as untrusted data with
+> no instruction authority."* **It was measured against a real provider on 2026-08-31 and it is not
+> satisfied.** Memory-mediated indirect injection **succeeded three times**, by more than one
+> mechanism, each against a control attempt that demonstrably succeeded with the fence stripped:
+>
+> * `e3_authority_claim` — the attack claimed authority and the **extractor wrote 2 rows into
+>   `memory_profile`**: `stored=['vermilion-43', 'system administrator']`. Well-formed, short,
+>   schema-valid rows whose *values* were hostile.
+> * `f1_profile_command` — a planted profile row's instruction was **obeyed through the fence**; the
+>   canary `vermilion-51` appears in the answer tail.
+> * `f2_fence_escape` — obeyed.
+>
+> Of 4 valid extractor attempts, 3 were blocked (controls landed 4/4); of 3 valid fence attempts, 1
+> was blocked (controls landed 3/4; a fourth attempt was invalid — its control was dead, so it
+> tested nothing). **These are existence results, not rates.** n is 3 and 4, and a fraction computed
+> from single-digit counts is not a number. Do not quote a percentage from them; what is established
+> is that the fence **fails, reproducibly, and by more than one mechanism**.
+>
+> **Why the structural argument was wrong.** The design held that a typed key with a length-bounded
+> value has nowhere to put an instruction. **The typed schema bounds FORMAT, not CONTENT — it stops
+> a paragraph, it does not stop a sentence.** An 80-character `value` is ample for a hostile clause,
+> and `e3` did not need a paragraph.
+>
+> **What this does not say.** It does not say the fence is worthless: four attempts *were* blocked
+> against live controls. It does not test the episodic tier's fence. And it says nothing about
+> attacks outside this set — the set is a **regression check, not a defense audit**, and a
+> 4-attempt set that finds 3 landings is more likely understating the surface than overstating it.
+>
+> Reproduce: `.venv/bin/python scripts/run_injection_set.py --arm both --json out/p6-injection-real.json`.
+
+**The three tiers.**
+
+* **Recent turns** — verbatim, **process memory only**, dies with the session. Never a table: a
+  verbatim transcript in a database is persisted verbatim user text whatever the TTL, which §IV
+  forbids. Whole turns only; a half-turn is a transcript that lies about what was said.
+* **Episodic** — one **typed** digest per finished session: normalized topic slugs, `{book, part,
+  chapter}` references, turn count, end time. **No free-text column exists anywhere in the memory
+  schema** — an LLM session summary in a text column is free text and can quote the user verbatim.
+* **Semantic profile** — one row per `(tenant, kind, key)`, `kind` being `fact` or `preference`,
+  with a bounded normalized value, coarse `importance`/`confidence` enums, a `permanent` exemption
+  flag and no stored score (the eviction weight is computed at read time from stored primitives, so
+  it cannot go stale). Caps are **per kind** — 10 facts, 20 preferences — so neither class starves
+  the other.
+
+**The honest bound on "structured summaries, never verbatim user text."** The invariant is
+**structural against paragraph-scale recovery** (bounded typed fields, lowercased, whitespace
+collapsed, punctuation stripped at write) and **enforced by test against clause-scale recovery** (an
+adversarial turn, asserted against raw *and* normalized store contents). Claiming "structural"
+without that qualifier would be an invariant defended by a test that cannot fail.
+
+**The allocator is a swappable policy object.** Same inputs (tenant, session, query, budget), same
+output (a `ContextPlan` of blocks with tokens and **provenance** per block, visible on P1's spine).
+Adding a policy is a subclass plus a registry entry; selecting one is the versioned
+`ALLOCATION_POLICY` field and nothing else. The shipped policy (`passages_first`) admits retrieval
+**whole** — passages are never truncated to make room for memory, because cutting a passage
+mid-sentence corrupts the grounding the system exists to provide — and memory takes what is left.
+**P6 built the seam and deliberately did not pick the winner** (O4); CP7 searches it.
+
+**Writes.** The summarizer is an ordinary gateway consumer on `models/gemini-3.1-flash-lite`
+(serving stays `models/gemini-3.5-flash-lite`), so memory's write cost lands in cost attribution and
+counts against quota like any other spend. The write is **in band**: after the final answer token,
+before the stream closes, in the same admission slot. **A failed write never fails the turn** — the
+answer is already delivered; the failure is logged and counted, and memory is left at its previous
+consistent state. Per-turn profile extraction reads the **question only**, never the answer, so
+retrieved corpus text cannot enter the store through that path. The episodic digest is written
+**lazily**: session *k-1* is summarized on the first turn of session *k* for the same tenant, which
+needs no session-end signal, no new endpoint and no client contract — at the stated cost that a
+tenant's **last** session is never summarized. Writes are size- and rate-capped
+(`MAX_WRITES_PER_MINUTE_PER_TENANT`), and both persisted tables carry `writer_model`.
+
+**Retention and purge.** Recent turns are bounded by the session. Both persisted tiers share a
+time-boxed staleness window — `MEMORY_RETENTION_DAYS`, default **90**, an `[estimate]` that is a
+user-data posture and **not a finding** — plus the per-kind count caps, enforced **lazily on the
+write path and at read**, never by a job. Purge is a `DELETE`, valid because **no persisted row
+mixes two tenants' content**; `ON DELETE CASCADE` from `accounts` carries onto both tables. **The
+retention window ships implemented and unexercised**: the frozen corpus crosses no time-boxed
+boundary at any duration, so the window is validated by a unit test with an injected clock and
+**never by a clean run**. Purge is complete only under single-process operation — a second worker
+would hold a second copy of the in-RAM transcripts that no `DELETE` reaches.
+
+**What memory costs, measured.**
+
+| | serving | summarizer | total | per session |
+|---|---|---|---|---|
+| with memory | $0.213968 | $0.022100 | $0.236068 | **$0.005902** |
+| no-memory baseline | $0.177713 | $0.000000 | $0.177713 | **$0.004443** |
+
+**Memory multiplies cost per session by 1.328x.** 62% of the delta is *serving* (the input tokens
+injection adds) and 38% is the write — a memory design that counted only its write cost would
+understate the bill by nearly two thirds. Memory took **44% of all context tokens** (127,609 against
+passages' 162,267). Storage is negligible and bounded by the cap rather than by traffic: 200.3 bytes
+per episodic row, **100.2 bytes per session per tenant** retained. The episodic cap fired 20 times
+in a 40-session run with clean recency eviction — **the first cap in this project to fire against
+real data**. Figures are list-rate shadow pricing on a free tier (`metered: False`): the real
+ceiling is quota, not money.
+
+> **And P6 cannot say what that 1.328x bought.** The phase built a multi-turn success metric, fed it
+> a deliberately starved allocation — one arm withheld 68 memory blocks and 8,547 tokens while the
+> served passages did not change by one byte — and the metric **did not move at all**: delta
+> **0.000** on all four scored families, 95 turns scored of 108. The mechanism is that retrieval is
+> issued on the query alone and never reads the transcript, so a metric scored on *retrieved
+> chapters* cannot see an allocation that changes only which *memory* tiers reach the prompt. The
+> metric was rejected by its own test, and no substitute was bought: authoring per-turn gold would
+> re-freeze the corpus and invalidate P4's provenance, and an LLM judge was already measured unable
+> to arbitrate quality on this project (§VII.2) and is non-gating by policy in any case.
+>
+> **So the memory system ships with its value to answer quality UNMEASURED — not demonstrated.** If
+> memory turned out to add nothing, nothing in this phase would detect it. That is a known,
+> recorded, accepted hole, not a passing grade. The rejected metric is retained as a
+> **retrieval-damage guard**: it cannot show memory helping, and it *can* show a future allocation
+> crowding out the passages block, which is what CP7's non-inferiority check asserts against.
+
+**Per-tier budget utilization, and one zero that must not be misread.**
+
+```
+tier            turns present    tokens     note
+passages            108/108      162,267
+recent_turns         68/108       60,453    ~889 tokens per turn present
+episodic            105/108       67,156    ~640 per turn present; absent only on session 1
+profile               0/108             0   UNEXERCISED BY THE CORPUS -- not "unused"
+```
+
+**`profile` reads zero for a corpus reason, not a tier reason.** The frozen corpus is 108 literary
+questions about Dostoevsky authored for retrieval evaluation; it contains no user preferences and no
+user facts, so `[]` is the *correct* extractor output on every one of its turns — verified by a
+known-answer check in which a fact-bearing turn produced two typed rows and a corpus turn produced
+none. Profile *storage*, eviction, retention and purge are covered by unit tests, and profile
+*injection* by the injection set, which plants rows directly. **Extraction from realistic
+conversational traffic is covered by nothing in this phase**, and no artifact here should be read as
+covering it.
+
+**Context sizing.** `CTX_SIZE` had drifted into meaning two unrelated things: the local arm's 6GB-GPU
+fit, and the hosted path's self-imposed input cap. On the hosted path it was raised to **6144** with
+the memory budget **306 → 3072**, because nothing in the request path starts llama-server and a
+6GB-GPU constraint has no hardware meaning there — while at 306 tokens the whole-turn admission rule
+left the recent-turns tier contributing **zero blocks on essentially every turn** against a live
+provider (a single prior turn measured 708-738 tokens). **The local rule is unchanged: llama-server
+still runs `-c 3072`**, and any local run promotes an artifact carrying `ctx_size=3072`. One
+consequence: P6's serving latency and cost rows are a **new arm** — not comparable to CP4's or CP5's.
+
+**Known limitations, stated so they do not read as passes.**
+
+* The fence does not hold (above). Charter §IV's memory invariant is **open**.
+* **No multi-turn success metric exists**, so no allocation policy can be claimed better than
+  another. O4 is not retired.
+* **Per-tenant fairness is still unresolved** (§IV.2, G-P10). P6 produced no fairness number and
+  none is implied by its silence.
+* The **in-band write's latency cost is unmeasured.** The write occupies the admission slot for its
+  duration; that duration was not timed against CP5's 2.1 s idle baseline.
+* The two summarizer ids are assumed to meter on **separate upstream quota windows**. Our limiter
+  scopes by `(provider, model)` and a full two-arm run produced no 429, but the per-model separation
+  was measured on a *different* provider and remains an inference for this one.
 
 ---
 
@@ -917,7 +1105,7 @@ MDE being part of every claim — the number is the honesty mechanism, not a fix
 
 ## VIII. Out of Scope (v2+)
 
-Semantic cache; conversation memory / `interpretive_bias`; interpretive-restraint hedging metric; any ML query classification; ~~Qdrant server deployment~~; ~~multi-user concurrency~~.
+Semantic cache; ~~conversation memory~~ / `interpretive_bias`; interpretive-restraint hedging metric; any ML query classification; ~~Qdrant server deployment~~; ~~multi-user concurrency~~.
 
 > **"Multi-user concurrency" and "Qdrant server deployment" REVERSED at v2 CP4 (2026-08-30) — struck,
 > not deleted, because the reason each expired is the useful part.**
@@ -937,10 +1125,50 @@ Semantic cache; conversation memory / `interpretive_bias`; interpretive-restrain
 > blocked by it. Server mode answers concurrent *processes*, which is a P5 question, and it fires on
 > a measured trigger rather than a preference.
 
+> **"Conversation memory" REVERSED at v2 CP6 (2026-08-31) — struck, not deleted, for the same
+> reason: the ground it stood on is the useful part.**
+>
+> It was out of scope because v1 served one user, one turn at a time, on a 6GB card whose whole
+> context budget was spoken for by retrieved passages — there was no budget for a transcript and no
+> tenant to attach one to. Both premises expired: generation left the box (CP2), tenant identity
+> became real (CP5), and the hosted path's context ceiling has no 6GB meaning. **Memory now ships**
+> — see §IV.8. What ships is narrower and better specified than "conversation memory" ever was:
+>
+> * **Three tiers, one budget.** Recent turns (verbatim, process memory, dies with the session),
+>   episodic session digests, and a semantic profile — all competing for one token budget *against
+>   the retrieved passages*, which is the point rather than a side effect.
+> * **A swappable allocator.** Same inputs, same output; adding a policy is a subclass, selecting
+>   one is a versioned config field. CP6 built the seam and deliberately did not pick the winner.
+> * **Typed rows, no free text anywhere in the memory schema.** Not a policy against quoting — a
+>   schema with nowhere for a paragraph to go.
+> * **A lazy episodic trigger.** Session *k-1* is summarized on the first turn of session *k*: no
+>   session-end signal exists in the API, and this needs none.
+> * **Retention and purge.** Per-tier windows, a 90-day staleness bound on the persisted tiers
+>   enforced lazily rather than by a job, and per-tenant purge as a `DELETE`.
+>
+> **`interpretive_bias` is NOT reversed and stays out of scope.** It was a separate idea that
+> happened to share this line; nothing in CP6 revives it.
+>
+> **Two things the reversal does not buy, stated because an unstated absence reads as a pass.**
+> The memory fence was measured and **does not hold** (§IV.8) — indirect injection through memory
+> succeeded three times against validated controls, so charter §IV's memory invariant is open, not
+> shipped. And CP6 produced **no multi-turn success metric**: the one candidate with external gold
+> is arm-invariant by construction and was measured at delta 0.000 against a deliberately starved
+> allocation, so memory ships with its value to answer quality unmeasured rather than demonstrated.
+
 ---
 
 ## IX. Residual Risks (summary)
 
+* **The memory fence does not hold (v2 CP6, measured 2026-08-31).** Indirect injection through
+  memory **succeeded three times** against validated unfenced controls — once by getting hostile
+  values written into the profile store, twice by having a planted instruction obeyed through the
+  fence. Existence, not a rate (n=3-4). Charter §IV's *"no instruction authority"* invariant is
+  **open**, and the typed schema bounds format, not content. Full detail and reproduce command in
+  §IV.8. This is the largest open weakness in the serving path.
+* **Memory's value is unmeasured (v2 CP6).** It costs **1.328x per session** and consumes 44% of
+  context tokens; the phase could not build a metric that detects a bad allocation, so no claim is
+  made that memory improves answers. See §IV.8.
 * Persona may ignore or parrot injected context (fine-tune never saw context in prompts) — **materialized** in the P7 eval: groundedness ~2.5/5 and frequent meta-commentary answers, on both A and B. Root cause is the weak fine-tune (bad gemini-2.5-flash training data + old q4 7B), not the recollections framing or prompt plumbing (trace verified clean, §VII.2). Not resolvable at the serving layer; needs a better training-data/model pass. *(Corrected 2026-08-21, R24: the `~2.5/5` figure includes ten empty answers the judge scored 1/1. The risk still materialized — it is the qualitative finding that stands, not the number.)*
 * The Idiot's heading scheme and BK's book count are verified from the files at impl (`structure.json` counts are the tripwire).
 * Latency measured on the real card (§VI); retrieval (~2.25s) and TTFT (~7.9s) exceed pre-build estimates, accepted for a solo local deploy.
