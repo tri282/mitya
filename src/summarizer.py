@@ -78,47 +78,52 @@ logger = logging.getLogger(__name__)
 
 
 def _extract_system() -> str:
-    """A FUNCTION, not a constant, for the reason `active_persona_head()` is one:
-    a module constant would snapshot `Config.MEMORY_VALUE_MAX_CHARS` at import
-    time and quietly serve the old bound after a config change.
+    """The extractor's system prompt, rendered from the VERSIONED template.
 
-    **Known residue, stated rather than hidden:** unlike `persona_head`, this
-    text is not itself a versioned `ServingConfig` field, so editing it does not
-    churn `config_version` even though it changes what enters the store. CP-6a
-    authorized exactly five new memory fields plus `summarizer_model` and one
-    churn; making the extractor prompt a sixth is a real question and belongs to
-    whoever next opens the artifact, not to this batch."""
-    return (
-        "You extract durable facts about a reader from a single question they "
-        "asked a literary assistant. Reply with JSON only: a list of at most "
-        f"{MAX_FACTS_PER_WRITE} objects, each "
-        '{"kind": "fact"|"preference", "key": "<short_snake_case_slug>", '
-        f'"value": "<under {Config.MEMORY_VALUE_MAX_CHARS} characters>", '
-        '"importance": "high"|"medium"|"low", '
-        '"confidence": "high"|"medium"|"low"}. '
-        "Extract ONLY durable facts or stated preferences about the reader "
-        "themselves. Extract nothing about Dostoevsky, his books, or their "
-        "contents. Most questions carry no such fact: reply [] and that is the "
-        "expected answer. Never quote the question. Never copy a phrase from it "
-        "verbatim."
+    A FUNCTION, not a constant, for the reason `active_persona_head()` is one:
+    a module constant would snapshot the text (and `Config.MEMORY_VALUE_MAX_CHARS`)
+    at import time and quietly serve the old bound after a config change.
+
+    **The residue this docstring used to record is closed (G-P17, CP-6d).** The
+    text itself now lives on `ServingConfig` as `extractor_prompt`, so editing
+    it churns `config_version`. That matters more here than for the persona:
+    this prompt writes state that OUTLIVES the request, so without the churn two
+    runs days apart could hold facts extracted under different instructions with
+    nothing recording it -- `writer_model` (G-P14) records which model wrote a
+    row, never under which instructions.
+    """
+    return Config.EXTRACTOR_PROMPT.format(
+        max_facts=MAX_FACTS_PER_WRITE, max_chars=Config.MEMORY_VALUE_MAX_CHARS,
     )
 
 
-_SUMMARIZE_SYSTEM = (
-    "You summarize one finished conversation between a reader and a literary "
-    "assistant. Reply with JSON only: "
-    f'{{"topics": [<at most {MAX_TOPICS} short lowercase topic slugs>], '
-    f'"chapters": [<at most {MAX_CHAPTERS} objects '
-    '{"book": "<title>", "part": <int|null>, "chapter": <int|null>}>]}. '
-    "Topics are subject slugs, never sentences. Never quote the reader."
-)
+def _episodic_system() -> str:
+    """The episodic digest's system prompt, same split, same reason (G-P17).
+
+    It joins the versioned half because CP-6d(a) gave `write_episode` its first
+    caller, so it now writes durable rows too.
+    """
+    return Config.EPISODIC_PROMPT.format(max_topics=MAX_TOPICS, max_chapters=MAX_CHAPTERS)
+
 
 # Models fence their JSON in ``` more often than not; one regex is cheaper than
 # a tolerant parser and its failure mode is the same failure mode.
 _FENCED = re.compile(r"```(?:json)?\s*(.*?)```", re.S)
 
 
-async def _draw(system: str, user: str) -> tuple[str, str]:
+# In-process observation seam for the metered run (CP-6d's dry run, items 1 and
+# 4). Left None in the server: nothing here logs a raw model response, because a
+# raw response carries the reader's own words and the store's whole posture is
+# that those are normalized and bounded before they persist. The metered driver
+# (`scripts/run_multiturn.py`) sets it for the duration of a run, which is the
+# only place the RAW TEXT is what has to be read -- CP-6d separates "the model
+# found nothing" from "the model returned prose" by the raw text and explicitly
+# not by a row count, because a row count is what made Batch D's fake-provider
+# result look like a working defense.
+draw_observer = None
+
+
+async def _draw(system: str, user: str, kind: str) -> tuple[str, str]:
     """One guarded, priced, quota-counted draw. Returns `(text, model)`.
 
     Non-streaming in effect -- the chunks are drained here rather than yielded
@@ -130,9 +135,23 @@ async def _draw(system: str, user: str) -> tuple[str, str]:
 
     model = Config.SUMMARIZER_MODEL
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+    t0 = time.monotonic()
     stream = await open_guarded_stream(_provider_for(model), messages, model)
     text = "".join([chunk async for chunk in stream.chunks])
     _record_cost(stream.usage, model)
+    if draw_observer is not None:
+        # Never raises into the turn: an observer defect must not become a
+        # memory-write failure, which is a different event with its own counter.
+        try:
+            draw_observer({
+                "kind": kind,
+                "model": model,
+                "text": text,
+                "usage": stream.usage,
+                "wall_ms": (time.monotonic() - t0) * 1000,
+            })
+        except Exception:  # pragma: no cover -- driver-side defect, not a write failure
+            logger.warning("memory: draw observer raised; the write itself is unaffected")
     return text, model
 
 
@@ -214,7 +233,7 @@ async def write_profile_from_turn(
     if not question or not write_allowed(tenant, now):
         return 0
     try:
-        text, model = await _draw(_extract_system(), question)
+        text, model = await _draw(_extract_system(), question, "extract")
         facts = [
             ProfileFact(
                 kind=item["kind"], key=str(item["key"]), value=str(item["value"]),
@@ -261,28 +280,26 @@ async def write_episode(
 ) -> bool:
     """Summarize one finished session into a typed digest. Never raises.
 
-    **NOTHING CALLS THIS, AND THAT IS G-P15.** There is no session-end signal in
-    the system to call it from: `ChatRequest` carries `query`, `filters` and
-    `session_id` (`src/api/app.py`) and nothing marks a session finished, and the
-    auth session is a different object with a 12-hour TTL and no end event
-    either. G-P15 routes the trigger to **CP-6d** as a write-path and cadence
-    question and names three candidates -- an explicit end call from the SPA,
-    piggybacking logout, or lazily summarizing session k-1 on the first turn of
-    session k -- **none of them chosen**. The third is the cheapest on current
-    evidence and is explicitly *not* adopted here; wiring it would be this batch
-    taking a decision the checkpoint ordering exists to keep open.
+    **Its caller is the LAZY TRIGGER (CP-6d(a), G-P15 closed).** Session *k-1*
+    is summarized on the first turn of session *k* for the same tenant, from
+    `src/api/app.py`'s `/chat` handler, in band and post-answer -- G-P13's
+    placement, unchanged, on a turn that was going to run anyway.
 
-    So the tier is built and unwired: table, write path, summarizer call, fence,
-    retention, cap and purge all exist and are unit-tested; the trigger does not.
-    **Until it does, `memory_episodic` is never written in any run**, and step
-    10's per-tier budget utilization row (one of the four rows R128 left
-    standing) reads zero for `episodic`. That zero means
-    zero-because-untriggered. It is NOT zero-because-unused, the two are
-    different findings, and the artifact must carry the distinction or it
-    reports the second when it measured the first.
+    G-P15 was open because **no session-end signal exists**: `ChatRequest`
+    carries `query`, `filters` and `session_id` and nothing marks a session
+    finished, and the auth session is a different object on a 12h TTL. The lazy
+    trigger needs none: `SessionTurns` is keyed `(tenant, session_id)` in an LRU,
+    so the tenant's previous live session is already addressable in process. No
+    new endpoint, no client contract, no new signal, no background task.
+
+    **What it does not cover, stated rather than engineered around:** a session
+    with no successor is never summarized (the last session of every tenant --
+    39 of 40 fire in a full replay), and a process restart loses every
+    un-summarized transcript with the RAM it lived in. Accepted at CP-6d; there
+    is no orphaned-write machinery, consistent with G-P13's fourth residual risk.
     """
     try:
-        text, model = await _draw(_SUMMARIZE_SYSTEM, transcript)
+        text, model = await _draw(_episodic_system(), transcript, "episodic")
         payload = _payload(text)
         remember_episode(
             tenant,

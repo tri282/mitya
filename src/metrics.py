@@ -335,6 +335,14 @@ def configure_metrics():
         "mitya_memory_write_failures_total",
         description="Memory writes that failed without failing the turn, by stage (v2 P6, G-P13)",
     )
+    _instruments["memory_write_skips"] = meter.create_counter(
+        "mitya_memory_write_skips_total",
+        description=(
+            "Memory writes SKIPPED before the extractor's draw, by reason "
+            "(v2 P6 Batch E prerequisites, CP-6d(a)). Neither a failure nor an "
+            "empty extraction -- a third thing, which is why it is a third series"
+        ),
+    )
 
     logger.info("metrics: meter configured, %d instruments registered", len(_instruments))
     return meter
@@ -441,6 +449,30 @@ def record_memory_write_failure(stage: str) -> None:
     one series would make that already-blunt signal unreadable."""
     _instruments.get("memory_write_failures", _NULL).add(
         1, {"stage": stage if stage in MEMORY_WRITE_STAGES else UNKNOWN},
+    )
+
+
+MEMORY_WRITE_SKIP_REASONS = ("rate_capped",)
+
+
+def record_memory_write_skip(reason: str) -> None:
+    """A memory write that never reached the extractor (CP-6d(a)).
+
+    **The seventh instance of the pattern this project keeps finding.**
+    `write_allowed()` (`src/memory_store.py`) is consulted BEFORE the provider
+    call, and on a trip `write_profile_from_turn` returns 0 -- the same return
+    as "the extractor correctly found nothing", with no counter and only a
+    WARNING line. In a metered run that reads as a memory system extracting less
+    than expected, which is a claim about the model, not about the cap.
+
+    `reason` is a closed set for the reason every other label here is
+    (R107/R113's cardinality budget): the value is minted in this module, not
+    passed through from a tenant id, a model id or a message. There is
+    deliberately NO tenant label -- P5 put tenant on four instruments and this
+    is not one of them, and the run it exists for is one tenant at a time.
+    """
+    _instruments.get("memory_write_skips", _NULL).add(
+        1, {"reason": reason if reason in MEMORY_WRITE_SKIP_REASONS else UNKNOWN},
     )
 
 

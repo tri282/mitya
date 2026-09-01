@@ -42,6 +42,7 @@ from collections import deque
 from src.config import Config
 from src.db import connect
 from src.memory import KIND_FACT, KIND_PREFERENCE, KINDS, LEVELS, Episode, ProfileFact
+from src.metrics import record_memory_write_skip
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +122,13 @@ def write_allowed(tenant: str, now: float | None = None) -> bool:
     while _write_window and now - _write_window[0][0] >= 60.0:
         _write_window.popleft()
     if sum(1 for _, t in _write_window if t == tenant) >= MAX_WRITES_PER_MINUTE_PER_TENANT:
+        # COUNTED, not merely logged (CP-6d(a)). The caller returns 0 on a trip,
+        # which is byte-identical to "the extractor found nothing" -- the
+        # expected answer on most turns (O-E) -- so without this series a capped
+        # run and a quiet corpus are the same artifact. The counter is here
+        # rather than at the call site because this is where the trip is
+        # detected and `write_allowed` has exactly one caller.
+        record_memory_write_skip("rate_capped")
         logger.warning(
             "memory: tenant %s over the store write cap (%d/min) -- extraction skipped",
             tenant, MAX_WRITES_PER_MINUTE_PER_TENANT,
