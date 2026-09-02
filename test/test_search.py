@@ -331,6 +331,37 @@ def test_duplicate_candidate_stall_stops_without_spinning() -> None:
     assert len(rows) <= 3, f"duplicate-candidate detection must stop quickly, got {len(rows)} rows"
 
 
+def test_divergence_line_renders_an_errored_point_without_crashing() -> None:
+    """Defect 2: `gate_ceiling_usd` is `None` on an errored point (the gate
+    raised before a ceiling was computed) -- `divergence_line()` must render
+    the error, not crash formatting `None` with `:.6f`. Exercised through the
+    same forced-gate-ERROR path CP-7e already uses, at $0.00, no Qdrant."""
+    base = ServingConfig.from_env()
+
+    def failing_gate_runner(version: str) -> dict:
+        raise RuntimeError("forced gate ERROR (zero-spend test)")
+
+    rows = run_search(
+        budget=Budget(max_wall_clock_s=1000.0, max_points=5),
+        price_fn=_fake_price_fn({"base-v0": 1.0}, default=0.1),
+        gate_runner=failing_gate_runner,
+        base_config=base,
+        base_version="base-v0",
+        per_point_wall_clock_s=1.0,
+        family=EvolutionaryFamily(),
+        seed=0,
+        save_fn=_fake_save_fn(),
+        clock=_clock_from([i * 0.1 for i in range(5000)]),
+    )
+    error_rows = [r for r in rows if r.disposition == "error"]
+    assert len(error_rows) == 1
+    row = error_rows[0]
+    assert row.gate_ceiling_usd is None
+    line = row.divergence_line()  # must not raise TypeError
+    assert "ERROR" in line
+    assert "disposition=error" in line
+
+
 def main() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in tests:

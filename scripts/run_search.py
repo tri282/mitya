@@ -28,7 +28,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.config_artifact import active_config_version, active_serving_config, read_pointer  # noqa: E402
 from src.optimizer import run_gate_for_candidate  # noqa: E402
-from src.p7_objective import open_pricing_context, price_config  # noqa: E402
+from src.p7_objective import load_pricing_models, open_pricing_context, price_config  # noqa: E402
 from src.search import Budget, EvolutionaryFamily, GridRandomFamily, SurrogateFamily, run_search  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -49,17 +49,32 @@ def main(max_wall_clock_s: float, max_points: int, per_point_wall_clock_s: float
     budget = Budget(max_wall_clock_s=max_wall_clock_s, max_points=max_points)
     family = _FAMILIES[family_name]()
 
-    with open_pricing_context() as ctx:
-        rows = run_search(
-            budget=budget,
-            price_fn=lambda version: price_config(ctx, version),
-            gate_runner=run_gate_for_candidate,
-            base_config=base_config,
-            base_version=base_version,
-            per_point_wall_clock_s=per_point_wall_clock_s,
-            family=family,
-            seed=seed,
-        )
+    # Defect 1 fix: a pricing context and the gate's own Qdrant client cannot
+    # both be open at once -- local-mode Qdrant permits exactly one client per
+    # store (`data/vector_db/`). `price_fn` therefore opens and closes its
+    # OWN pricing context for every candidate, never spanning a gate run, so
+    # `run_gate_for_candidate` (which opens its own client inside `gate_runner`)
+    # never contends with it. `models` (embedder/bm25/ranker, ~1.2s to load)
+    # and `retrieval_cache` are loaded/created ONCE here and passed into every
+    # open -- only the QdrantClient itself, not the models or the cache, is
+    # re-acquired per candidate.
+    models = load_pricing_models()
+    retrieval_cache: dict = {}
+
+    def price_fn(version: str):
+        with open_pricing_context(models=models, retrieval_cache=retrieval_cache) as ctx:
+            return price_config(ctx, version)
+
+    rows = run_search(
+        budget=budget,
+        price_fn=price_fn,
+        gate_runner=run_gate_for_candidate,
+        base_config=base_config,
+        base_version=base_version,
+        per_point_wall_clock_s=per_point_wall_clock_s,
+        family=family,
+        seed=seed,
+    )
 
     pointer_after = read_pointer()
     if pointer_before != pointer_after:

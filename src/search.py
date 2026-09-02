@@ -221,9 +221,11 @@ class SearchRow:
                 f"best -- screened out by the cost-first funnel (D-7d), no gate run"
             )
         blocked = self.disposition == "blocks"
+        ceiling = (f"{self.gate_ceiling_usd:.6f}" if self.gate_ceiling_usd is not None
+                   else "ERROR (gate raised before a ceiling was computed)")
         line = (
             f"objective_usd={self.objective_usd:.6f} ({self.objective_source}) vs "
-            f"gate_ceiling_usd={self.gate_ceiling_usd:.6f} ({self.gate_blocks_on}) -- "
+            f"gate_ceiling_usd={ceiling} ({self.gate_blocks_on}) -- "
             f"disposition={self.disposition}"
         )
         if blocked:

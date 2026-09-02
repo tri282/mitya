@@ -168,12 +168,22 @@ def retrieve(
     return points
 
 
-def rerank(query: str, points: list[models.ScoredPoint], ranker: Ranker) -> list[models.ScoredPoint]:
-    """FlashRank rerank: fused top-K -> Config.TOP_K_RERANK (3). Always on;
-    RERANK_ENABLED is a static kill-switch only, no runtime latency governor
-    (ruling R11 -- 25 pairs on CPU is ~0.3-0.5s, inside budget)."""
+def rerank(
+    query: str, points: list[models.ScoredPoint], ranker: Ranker, top_k: int | None = None,
+) -> list[models.ScoredPoint]:
+    """FlashRank rerank: fused top-K -> `top_k` (default Config.TOP_K_RERANK, 3).
+    Always on; RERANK_ENABLED is a static kill-switch only, no runtime latency
+    governor (ruling R11 -- 25 pairs on CPU is ~0.3-0.5s, inside budget).
+
+    `top_k` is a parameter, not always `Config.TOP_K_RERANK`, so a caller can
+    request the FULL scored list (`top_k=len(points)`) -- P7's retrieval cache
+    (src/p7_objective.py) does this to cache the FlashRank scoring pass itself
+    (expensive) separately from the final slice (cheap, and the only thing
+    `top_k_rerank` changes)."""
+    if top_k is None:
+        top_k = Config.TOP_K_RERANK
     if not Config.RERANK_ENABLED:
-        return points[:Config.TOP_K_RERANK]
+        return points[:top_k]
     if not points:
         return points
 
@@ -185,7 +195,7 @@ def rerank(query: str, points: list[models.ScoredPoint], ranker: Ranker) -> list
     # objects -- reattach the source ScoredPoint so context.py keeps working
     # with a consistent point type.
     by_id = {p.id: p for p in points}
-    top = [by_id[r["id"]] for r in ranked[:Config.TOP_K_RERANK]]
+    top = [by_id[r["id"]] for r in ranked[:top_k]]
     logger.info("rerank: %d -> %d (model=%s)", len(points), len(top), Config.RERANK_MODEL)
     return top
 

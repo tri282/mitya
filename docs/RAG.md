@@ -1166,6 +1166,19 @@ Semantic cache; ~~conversation memory~~ / `interpretive_bias`; interpretive-rest
   fence. Existence, not a rate (n=3-4). Charter §IV's *"no instruction authority"* invariant is
   **open**, and the typed schema bounds format, not content. Full detail and reproduce command in
   §IV.8. This is the largest open weakness in the serving path.
+* **Retrieval is single-turn, and a follow-up question retrieves on a pronoun (v2 P7, R148).**
+  Retrieval is issued on the **query alone and never reads the transcript** (R127 `[measured]` — the
+  property that made CP-6b's multi-turn metric arm-invariant: 68 memory blocks and 8,547 tokens were
+  withheld and the served passages did not differ by one byte). **Memory does not close this**: it is
+  injected into the prompt for *generation*, and never reaches the retriever. So on *"what happens to
+  him next?"* the retriever embeds and BM25-matches that literal string — no antecedent, nothing for
+  `EntityMap.resolve()` to expand — and the answer is composed in character from passages fetched for
+  a query that names nobody. **No eval row in v2 can see this**: both eval sets are single-turn by
+  construction, so the failure cannot appear in `recall@5`, in the gate, or in any published number.
+  The fix is contextual rewriting / coreference resolution *before* retrieval, which is a serving-path
+  change plus a model call on the latency path, and it needs **multi-turn retrieval gold that does not
+  exist** — a P0-shaped labeling cost, not a knob. **Deferred to v3** (owner, 2026-09-02). Stated here
+  because it is a known hole with no instrument, which is the same category as the fence above.
 * **Memory's value is unmeasured (v2 CP6).** It costs **1.328x per session** and consumes 44% of
   context tokens; the phase could not build a metric that detects a bad allocation, so no claim is
   made that memory improves answers. See §IV.8.
