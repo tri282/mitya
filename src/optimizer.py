@@ -55,7 +55,11 @@ class SpaceEntry:
 
 
 # audit §X.1 (as amended -- `prefetch_limit` moved in from §X.5's "4 -> 3"
-# update) plus §X.6a's "runnable today" table.
+# update) plus §X.6a's "runnable today" table, MINUS the three write-path caps
+# that D-1 item 4 ruled inadmissible (see EXCLUDED). §X.1 lists them IN; D-1 is
+# later and governs. Admitting them here was a defect corrected 2026-09-02
+# after Batch C measured D-1's own objective reading them at 0.000 -- the
+# outcome D-1 had already predicted from R135 and written down.
 #
 # `persona_head` is NOT here, and its absence is the point. §X.1 lists it with
 # "step 3b fence-regression guard -- PRECONDITION" in its guard column, and
@@ -108,32 +112,6 @@ ALLOWED: dict[str, SpaceEntry] = {
             "invariant (§X.1)"
         ),
     ),
-    "memory_episodic_max_per_tenant": SpaceEntry(
-        p1_proposable="ServingConfig field, range 5-20; churns config_version only (§X.1)",
-        p2_behavior_not_belief="size of the accumulating episodic tier -> cost (§X.1)",
-        p3_instrument=(
-            "assembled-prompt estimate (D-1) + non-inferiority guard (§X.1). D-1 residual "
-            "risk, stated not decided: this is a write-path cap and reads 0.000 in every "
-            "read-path instrument (R135) -- only the read-side effect (fewer rows stored, "
-            "fewer injected) is what P3 actually measures."
-        ),
-    ),
-    "memory_profile_max_facts": SpaceEntry(
-        p1_proposable="ServingConfig field, range 5-10; churns config_version only (§X.1)",
-        p2_behavior_not_belief="flat per-tenant cost (§X.1)",
-        p3_instrument=(
-            "assembled-prompt estimate (D-1) + non-inferiority guard (§X.1). Same D-1 "
-            "write-path-cap caveat as memory_episodic_max_per_tenant."
-        ),
-    ),
-    "memory_profile_max_prefs": SpaceEntry(
-        p1_proposable="ServingConfig field, range 10-20; churns config_version only (§X.1)",
-        p2_behavior_not_belief="flat per-tenant cost (§X.1)",
-        p3_instrument=(
-            "assembled-prompt estimate (D-1) + non-inferiority guard (§X.1). Same D-1 "
-            "write-path-cap caveat."
-        ),
-    ),
     "allocation_policy": SpaceEntry(
         p1_proposable=(
             "ServingConfig field, values from src.memory.POLICIES; churns config_version "
@@ -153,6 +131,22 @@ ALLOWED: dict[str, SpaceEntry] = {
 # what keeps this list honest as the artifact grows: a field that lands in
 # neither dict fails the build, loudly, by name.
 EXCLUDED: dict[str, str] = {
+    "memory_episodic_max_per_tenant": (
+        "OUT by D-1 item 4, applied. R135 [measured]: reports 0.000 in EVERY read-path "
+        "instrument -- including D-1's assembled-prompt estimate -- because the cap acts only "
+        "at write time (`src/memory_store.py:185-192,341`) while the reads at `:348,376` are "
+        "uncapped. D-1's words: 'no objective choice fixes that; under D-5's rule they lack "
+        "property P3 and are inadmissible until a write-path instrument exists.' RE-ENTRY: a "
+        "write-path instrument, then a human re-applies P1-P3"
+    ),
+    "memory_profile_max_facts": (
+        "OUT by D-1 item 4, applied. Same write-path-cap blindness as "
+        "memory_episodic_max_per_tenant -- 0.000 in every read-path instrument (R135)"
+    ),
+    "memory_profile_max_prefs": (
+        "OUT by D-1 item 4, applied. Same write-path-cap blindness as "
+        "memory_episodic_max_per_tenant -- 0.000 in every read-path instrument (R135)"
+    ),
     "persona_head": (
         "OUT until Batch D. §X.1 lists it IN with step 3b's fence-regression guard as a "
         "PRECONDITION, not a caveat (phase-7-optimizer.md step 3b; A4). That guard does not "
