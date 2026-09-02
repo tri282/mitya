@@ -248,5 +248,45 @@
     "id": "q-0050",
     "theme": "Ambiguity",
     "query": "Is Stepan Trofimovitch's flight down the high road a real conversion, or his last performance?"
+  },
+  {
+    "id": "q-0051",
+    "theme": "Textual",
+    "query": "What happens in Book II, Chapter 3 of The Brothers Karamazov?"
+  },
+  {
+    "id": "q-0052",
+    "theme": "Textual",
+    "query": "Summarize Book X, Chapter 5 of The Brothers Karamazov."
+  },
+  {
+    "id": "q-0053",
+    "theme": "Textual",
+    "query": "What happens in Part 1, Chapter 12 of The Idiot?"
+  },
+  {
+    "id": "q-0054",
+    "theme": "Textual",
+    "query": "Summarize Part 3, Chapter 7 of The Idiot."
+  },
+  {
+    "id": "q-0055",
+    "theme": "Textual",
+    "query": "What happens in Part 5, Chapter 4 of Crime and Punishment?"
+  },
+  {
+    "id": "q-0056",
+    "theme": "Textual",
+    "query": "Summarize Part 2, Chapter 6 of The Possessed."
+  },
+  {
+    "id": "q-0057",
+    "theme": "Textual",
+    "query": "What happens in Part 1, Chapter 8 of Notes from the Underground?"
+  },
+  {
+    "id": "q-0058",
+    "theme": "Textual",
+    "query": "Summarize Part 2, Chapter 9 of Notes from the Underground."
   }
 ]

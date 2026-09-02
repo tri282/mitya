@@ -1534,5 +1534,365 @@
     ],
     "note": "quotation family (R73/P3 step 10): verbatim span extracted from the indexed chunk for this chapter, so the literal is guaranteed present in the corpus. Tests whether the BM25 leg acts when a rare literal string is available.",
     "family": "quotation"
+  },
+  {
+    "id": "r-0122",
+    "query": "What happens in The Brothers Karamazov part 1 chapter 3?",
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 1,
+        "chapter": 3
+      }
+    ],
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "The Brothers Karamazov",
+      "part": 1,
+      "chapter": 3
+    }
+  },
+  {
+    "id": "r-0123",
+    "query": "In The Brothers Karamazov part 2 chapter 6, what happens?",
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 2,
+        "chapter": 6
+      }
+    ],
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "The Brothers Karamazov",
+      "part": 2,
+      "chapter": 6
+    }
+  },
+  {
+    "id": "r-0124",
+    "query": "The Brothers Karamazov part 3 chapter 9 - what happens?",
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 3,
+        "chapter": 9
+      }
+    ],
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "The Brothers Karamazov",
+      "part": 3,
+      "chapter": 9
+    }
+  },
+  {
+    "id": "r-0125",
+    "query": "Summarize The Brothers Karamazov part 4 chapter 4.",
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 4,
+        "chapter": 4
+      }
+    ],
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "The Brothers Karamazov",
+      "part": 4,
+      "chapter": 4
+    }
+  },
+  {
+    "id": "r-0126",
+    "query": "In The Brothers Karamazov part 5 chapter 2, summarize the chapter.",
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 5,
+        "chapter": 2
+      }
+    ],
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "The Brothers Karamazov",
+      "part": 5,
+      "chapter": 2
+    }
+  },
+  {
+    "id": "r-0127",
+    "query": "Give an overview of The Brothers Karamazov part 6 chapter 1.",
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 6,
+        "chapter": 1
+      }
+    ],
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "The Brothers Karamazov",
+      "part": 6,
+      "chapter": 1
+    }
+  },
+  {
+    "id": "r-0128",
+    "query": "In The Brothers Karamazov part 7 chapter 4, recap the events.",
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 7,
+        "chapter": 4
+      }
+    ],
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "The Brothers Karamazov",
+      "part": 7,
+      "chapter": 4
+    }
+  },
+  {
+    "id": "r-0129",
+    "query": "What happens in The Brothers Karamazov part 9 chapter 7?",
+    "targets": [
+      {
+        "book": "The Brothers Karamazov",
+        "part": 9,
+        "chapter": 7
+      }
+    ],
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "The Brothers Karamazov",
+      "part": 9,
+      "chapter": 7
+    }
+  },
+  {
+    "id": "r-0130",
+    "query": "In The Idiot part 1 chapter 5, what happens?",
+    "targets": [
+      {
+        "book": "The Idiot",
+        "part": 1,
+        "chapter": 5
+      }
+    ],
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "The Idiot",
+      "part": 1,
+      "chapter": 5
+    }
+  },
+  {
+    "id": "r-0131",
+    "query": "The Idiot part 2 chapter 8 - what happens?",
+    "targets": [
+      {
+        "book": "The Idiot",
+        "part": 2,
+        "chapter": 8
+      }
+    ],
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "The Idiot",
+      "part": 2,
+      "chapter": 8
+    }
+  },
+  {
+    "id": "r-0132",
+    "query": "Summarize The Idiot part 3 chapter 3.",
+    "targets": [
+      {
+        "book": "The Idiot",
+        "part": 3,
+        "chapter": 3
+      }
+    ],
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "The Idiot",
+      "part": 3,
+      "chapter": 3
+    }
+  },
+  {
+    "id": "r-0133",
+    "query": "In The Idiot part 4 chapter 10, summarize the chapter.",
+    "targets": [
+      {
+        "book": "The Idiot",
+        "part": 4,
+        "chapter": 10
+      }
+    ],
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "The Idiot",
+      "part": 4,
+      "chapter": 10
+    }
+  },
+  {
+    "id": "r-0134",
+    "query": "Give an overview of Crime and Punishment part 1 chapter 4.",
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 1,
+        "chapter": 4
+      }
+    ],
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "Crime and Punishment",
+      "part": 1,
+      "chapter": 4
+    }
+  },
+  {
+    "id": "r-0135",
+    "query": "In Crime and Punishment part 4 chapter 6, recap the events.",
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 4,
+        "chapter": 6
+      }
+    ],
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "Crime and Punishment",
+      "part": 4,
+      "chapter": 6
+    }
+  },
+  {
+    "id": "r-0136",
+    "query": "What happens in Crime and Punishment part 6 chapter 5?",
+    "targets": [
+      {
+        "book": "Crime and Punishment",
+        "part": 6,
+        "chapter": 5
+      }
+    ],
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "Crime and Punishment",
+      "part": 6,
+      "chapter": 5
+    }
+  },
+  {
+    "id": "r-0137",
+    "query": "In The Possessed part 1 chapter 2, what happens?",
+    "targets": [
+      {
+        "book": "The Possessed",
+        "part": 1,
+        "chapter": 2
+      }
+    ],
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "The Possessed",
+      "part": 1,
+      "chapter": 2
+    }
+  },
+  {
+    "id": "r-0138",
+    "query": "The Possessed part 2 chapter 5 - what happens?",
+    "targets": [
+      {
+        "book": "The Possessed",
+        "part": 2,
+        "chapter": 5
+      }
+    ],
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "The Possessed",
+      "part": 2,
+      "chapter": 5
+    }
+  },
+  {
+    "id": "r-0139",
+    "query": "Summarize Notes from the Underground part 1 chapter 7.",
+    "targets": [
+      {
+        "book": "Notes from the Underground",
+        "part": 1,
+        "chapter": 7
+      }
+    ],
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "Notes from the Underground",
+      "part": 1,
+      "chapter": 7
+    }
+  },
+  {
+    "id": "r-0140",
+    "query": "In Notes from the Underground part 2 chapter 4, summarize the chapter.",
+    "targets": [
+      {
+        "book": "Notes from the Underground",
+        "part": 2,
+        "chapter": 4
+      }
+    ],
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "Notes from the Underground",
+      "part": 2,
+      "chapter": 4
+    }
+  },
+  {
+    "id": "r-0141",
+    "query": "Give an overview of Notes from the Underground part 1 chapter 10.",
+    "targets": [
+      {
+        "book": "Notes from the Underground",
+        "part": 1,
+        "chapter": 10
+      }
+    ],
+    "family": "structural",
+    "expected_route": "STRUCTURAL",
+    "expected_scope": {
+      "book": "Notes from the Underground",
+      "part": 1,
+      "chapter": 10
+    }
   }
 ]
