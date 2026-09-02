@@ -76,9 +76,9 @@ RETRIEVAL_EVAL_PATH = os.path.join("test", "retrieval_eval.json")
 # so `_check_retrieval_fields_cover_allowed` below is a loud, by-name build
 # break -- same shape as `src.optimizer._check_domain_covers_allowed` -- if a
 # field is ever added to ALLOWED without a retrieval-relevance placement here.
-RETRIEVAL_AFFECTING_FIELDS: frozenset[str] = frozenset({"prefetch_limit", "top_k_fused"})
+RETRIEVAL_AFFECTING_FIELDS: frozenset[str] = frozenset({"top_k_fused"})
 RETRIEVAL_IRRELEVANT_FIELDS: frozenset[str] = frozenset({
-    "top_k_rerank", "memory_budget_tokens", "allocation_policy",
+    "memory_budget_tokens",
 })
 
 

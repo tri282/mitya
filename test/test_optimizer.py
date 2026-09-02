@@ -89,7 +89,7 @@ def test_a_hand_added_model_rates_entry_still_fails() -> None:
     because the check runs against source-derived forbidden fields, not
     against ALLOWED's own membership."""
     tampered = dict(ALLOWED)
-    tampered["model_rates"] = ALLOWED["top_k_rerank"]  # any entry; the name is what matters
+    tampered["model_rates"] = ALLOWED["top_k_fused"]  # any entry; the name is what matters
     forbidden = forbidden_instrument_fields()
     assert set(tampered) & forbidden == {"model_rates"}
 
@@ -106,13 +106,13 @@ def test_proposer_rejects_an_override_outside_the_space() -> None:
 
 def test_proposer_emits_exactly_one_candidate_and_changes_only_allowed_fields() -> None:
     base = ServingConfig.from_env()
-    candidate = propose_one(base, {"top_k_rerank": 2})
-    assert candidate.top_k_rerank == 2
+    candidate = propose_one(base, {"top_k_fused": 13})
+    assert candidate.top_k_fused == 13
     diffs = {
         name for name in ServingConfig.model_fields
         if getattr(base, name) != getattr(candidate, name)
     }
-    assert diffs == {"top_k_rerank"}
+    assert diffs == {"top_k_fused"}
     assert diffs <= set(ALLOWED), f"a proposal changed a non-allowlisted field: {diffs}"
 
 

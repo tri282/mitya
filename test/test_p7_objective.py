@@ -50,11 +50,11 @@ def test_an_unplaced_allowed_field_fails_loudly_by_name() -> None:
 
 def test_known_retrieval_affecting_fields() -> None:
     """Locks in the table this task verified against src/rag/retrieve.py:
-    prefetch_limit and top_k_fused change what gets scored; nothing else
+    top_k_fused changes what gets scored; nothing else
     among the current five ALLOWED fields does."""
-    assert RETRIEVAL_AFFECTING_FIELDS == {"prefetch_limit", "top_k_fused"}
+    assert RETRIEVAL_AFFECTING_FIELDS == {"top_k_fused"}
     assert RETRIEVAL_IRRELEVANT_FIELDS == {
-        "top_k_rerank", "memory_budget_tokens", "allocation_policy",
+        "memory_budget_tokens",
     }
 
 

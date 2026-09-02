@@ -311,7 +311,7 @@ def test_duplicate_candidate_stall_stops_without_spinning() -> None:
 
         def next_point(self, trace, base, rng):
             from src.search import Point
-            return Point("top_k_rerank", 2)
+            return Point("top_k_fused", 13)
 
     same_version_save = lambda cfg: "always-the-same-version"  # noqa: E731
 

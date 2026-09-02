@@ -70,16 +70,6 @@ class SpaceEntry:
 # `top_k_structural_excerpts`. Re-admitting it is a human's placement
 # decision after Batch D lands, never automatic.
 ALLOWED: dict[str, SpaceEntry] = {
-    "top_k_rerank": SpaceEntry(
-        p1_proposable="ServingConfig field, range 2-4; churns config_version only (§X.1)",
-        p2_behavior_not_belief=(
-            "passages reranked into the prompt -- the largest single token lever (§X.1)"
-        ),
-        p3_instrument=(
-            "gate quality_1a (recall@5 non-inferiority per family) + retrieval-damage "
-            "tripwire (§X.1)"
-        ),
-    ),
     "top_k_fused": SpaceEntry(
         p1_proposable="ServingConfig field, range 5-25; churns config_version only (§X.1, §X.6a)",
         p2_behavior_not_belief=(
@@ -90,16 +80,6 @@ ALLOWED: dict[str, SpaceEntry] = {
             "pool recall per family, NOT recall@5 -- invariant to this knob by "
             "construction (§X.1)"
         ),
-    ),
-    "prefetch_limit": SpaceEntry(
-        p1_proposable=(
-            "ServingConfig field, range 50-200; churns config_version only "
-            "(§X.5's '4 -> 3' update moved it into §X.1)"
-        ),
-        p2_behavior_not_belief=(
-            "free in local mode -- Qdrant scores all 3,284 points regardless (§X.6a)"
-        ),
-        p3_instrument="pool recall; promotes on non-inferiority since it is free (§X.1)",
     ),
     "memory_budget_tokens": SpaceEntry(
         p1_proposable="ServingConfig field, range 1024-3072; churns config_version only (§X.1)",
@@ -112,17 +92,6 @@ ALLOWED: dict[str, SpaceEntry] = {
             "invariant (§X.1)"
         ),
     ),
-    "allocation_policy": SpaceEntry(
-        p1_proposable=(
-            "ServingConfig field, values from src.memory.POLICIES; churns config_version "
-            "only (§X.1)"
-        ),
-        p2_behavior_not_belief="swaps the allocator -- cost, per R128 -- NEVER quality (§X.1)",
-        p3_instrument=(
-            "retrieval-damage tripwire; the field never carries a quality-improvement "
-            "claim (§X.1)"
-        ),
-    ),
 }
 
 # audit §X.2 (out, including D-6's three placements), §X.3 (records, not
@@ -131,6 +100,41 @@ ALLOWED: dict[str, SpaceEntry] = {
 # what keeps this list honest as the artifact grows: a field that lands in
 # neither dict fails the build, loudly, by name.
 EXCLUDED: dict[str, str] = {
+    "top_k_rerank": (
+        "PINNED AT 3 by owner decision, 2026-09-02, on measurement (R151) rather than on "
+        "assumption. THE TRADE: 3->2 buys 541 prompt tokens = $0.000162/answer, $0.16 per 1k, "
+        "$16.23 per 100k -- and that is a LIST-RATE ESTIMATE ON A FREE TIER (every model_rates "
+        "row is metered:false, R48), so the realised saving today is $0.00. LATENCY IS FLAT: "
+        "~2140 ms at both k, because the cross-encoder scores all top_k_fused candidates "
+        "regardless and this knob only slices the result -- so there is no second currency to "
+        "justify it. QUALITY: `book_named_no_chapter` 0.3000 -> 0.0000 (all 3 of its 10 hits sit "
+        "at reranked position 3, in the passage k=2 drops), primary -1/38. Below every MDE in the "
+        "phase and therefore NOT DETECTABLE -- but the branches are asymmetric: if the effect is "
+        "real a third of one family's grounding is gone, and if it is noise the saving is $0.16 "
+        "per thousand. RE-ENTRY: an eval set large enough to resolve a 3-row family effect"
+    ),
+    "prefetch_limit": (
+        "OUT on measurement (R151): a NO-OP in local mode. Pool recall, served recall and latency "
+        "are byte-identical across 50/100/200 at both top_k_fused=25 and =10, on all five "
+        "families -- zero in every cell. Local-mode Qdrant scores every one of the 3,284 points "
+        "and ignores SearchParams entirely (`src/rag/retrieve.py:105-110`), so RRF sees the same "
+        "ordering whatever the limit says. The audit's 'free in local mode' is confirmed and "
+        "stronger than stated: it is free because it is INERT. Fails D-5's P3 -- an axis whose "
+        "instrument reads it as flat can only waste points. RE-ENTRY: **A1** (Qdrant server mode "
+        "with HNSW), where an approximate index does not score every point and prefetch depth "
+        "would matter. This is a deployment finding, not a claim about the parameter"
+    ),
+    "allocation_policy": (
+        "OUT by owner decision D-8 (2026-09-02). The axis has ONE real value plus a test arm, "
+        "so searching it can only ever propose turning memory off. `PassagesOnlyPolicy`'s own "
+        "docstring (`src/memory.py:534`): 'The trivial second policy -- the TEST of the seam, "
+        "NOT a candidate' -- it exists as the no-memory baseline arm and Batch B's starved arm, "
+        "and it drops memory entirely rather than allocating it. The dry run's cheapest "
+        "candidate (0.002917, 24% under baseline) was exactly that degenerate win, and no gate "
+        "blocks it because the ceiling cannot see memory at all (G-P21). RE-ENTRY: a genuine "
+        "second allocation policy exists (O4 is 'P7's to search', but nobody has written a "
+        "policy to search), then a human re-applies D-5's P1-P3"
+    ),
     "memory_episodic_max_per_tenant": (
         "OUT by D-1 item 4, applied. R135 [measured]: reports 0.000 in EVERY read-path "
         "instrument -- including D-1's assembled-prompt estimate -- because the cap acts only "

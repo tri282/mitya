@@ -51,15 +51,20 @@ logger = logging.getLogger(__name__)
 # than a silently-never-searched axis, D-5's own failure mode applied one
 # layer down.
 
-# (lo, hi) inclusive for an integer field; `None` for `allocation_policy`,
-# whose domain is `src.memory.POLICIES` (read at mutation time so a third
-# policy registered later needs no edit here).
-FIELD_DOMAIN: dict[str, tuple[int, int] | None] = {
-    "top_k_rerank": (2, 4),
-    "top_k_fused": (5, 25),
-    "prefetch_limit": (50, 200),
-    "memory_budget_tokens": (1024, 3072),
-    "allocation_policy": None,
+# An EXPLICIT tuple of legal values per field, not an (lo, hi) range.
+#
+# D-8 (owner, 2026-09-02) named the values E-run(a) may try, and an explicit
+# list is what makes that reviewable: a range of 1024-3072 is 2,049 values
+# nobody read, where `(1024, 2048, 3072)` is three values somebody approved.
+# Production's own value is included in each tuple so the search can return
+# to it -- `_mutate_field` excludes only the CURRENT value, so a candidate
+# can always walk back an axis it moved.
+#
+# Reachable space: 3 x 3 x 3 x 3 = 81 configs, against 19.5M over the full
+# ranges. Widening a tuple is a human's edit, deliberately.
+FIELD_DOMAIN: dict[str, tuple] = {
+    "top_k_fused": (5, 13, 25),
+    "memory_budget_tokens": (1024, 2048, 3072),
 }
 
 
@@ -95,12 +100,7 @@ def _mutate_field(base: ServingConfig, field: str, rng: random.Random) -> object
     where a different one exists."""
     domain = FIELD_DOMAIN[field]
     current = getattr(base, field)
-    if domain is None:  # allocation_policy
-        from src.memory import POLICIES
-        choices = [p for p in POLICIES if p != current] or [current]
-        return rng.choice(choices)
-    lo, hi = domain
-    choices = [v for v in range(lo, hi + 1) if v != current]
+    choices = [v for v in domain if v != current]
     return rng.choice(choices) if choices else current
 
 
@@ -295,6 +295,7 @@ def run_search(
     seed: int = 0,
     save_fn: Callable[[ServingConfig], str] = CA.save,
     clock: Callable[[], float] = time.monotonic,
+    on_row: Callable[["SearchRow"], None] | None = None,
 ) -> list[SearchRow]:
     """Batch C's search loop.
 
@@ -307,6 +308,13 @@ def run_search(
     Never promotes: `save_fn` (`config_artifact.save`) only ever writes a
     versioned config artifact, never `CURRENT_POINTER`; nothing here calls
     `scripts.gate.main(..., promote=True)`.
+
+    `on_row`, if given, is called with each `SearchRow` **as it completes**
+    (D-8(c)). The schedule's step 7 says the search trace IS the evidence, and
+    evidence that only exists when the process exits cleanly has a failure
+    mode: at 38-140s per point an interrupted run would otherwise lose every
+    completed point. Raised exceptions from `on_row` are deliberately NOT
+    caught -- a checkpoint that silently fails is worse than none.
     """
     family = family or EvolutionaryFamily()
     rng = random.Random(seed)
@@ -317,6 +325,13 @@ def run_search(
     best_usd = baseline.mean_usd
 
     rows: list[SearchRow] = []
+
+    def _record(row: SearchRow) -> None:
+        """Append AND checkpoint, in that order (D-8(c))."""
+        rows.append(row)
+        if on_row is not None:
+            on_row(row)
+
     t0 = clock()
     points_spent = 0
     last_candidate_version: str | None = None
@@ -341,7 +356,7 @@ def run_search(
         if cand_version == last_candidate_version:
             stall += 1
             if stall >= 2:
-                rows.append(SearchRow(
+                _record(SearchRow(
                     cand_version, base_version, point.field,
                     getattr(production, point.field), point.value,
                     objective_usd=float("nan"), objective_prompt_tokens=float("nan"),
@@ -357,7 +372,7 @@ def run_search(
         priced = price_fn(cand_version)
         passed_funnel = priced.mean_usd < best_usd
         if not passed_funnel:
-            rows.append(SearchRow(
+            _record(SearchRow(
                 cand_version, base_version, point.field,
                 getattr(production, point.field), point.value,
                 objective_usd=priced.mean_usd, objective_prompt_tokens=priced.mean_prompt_tokens,
@@ -378,7 +393,7 @@ def run_search(
         except Exception as exc:  # a forced gate ERROR (CP-7e) -- fail closed, stop the loop
             elapsed = clock() - t_point
             points_spent += 1
-            rows.append(SearchRow(
+            _record(SearchRow(
                 cand_version, base_version, point.field,
                 getattr(production, point.field), point.value,
                 objective_usd=priced.mean_usd, objective_prompt_tokens=priced.mean_prompt_tokens,
@@ -404,7 +419,7 @@ def run_search(
             gate_ceiling_usd=cost_layer.get("cand"), disposition=disposition,
             family_verdicts=family_verdicts, wall_clock_s=elapsed,
         )
-        rows.append(row)
+        _record(row)
         logger.info("run_search: point %d %s", points_spent, row.divergence_line())
 
         if disposition != "blocks":

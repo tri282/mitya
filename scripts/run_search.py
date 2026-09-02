@@ -20,6 +20,9 @@ by design.
 """
 
 import argparse
+import dataclasses
+import datetime
+import json
 import logging
 import os
 import sys
@@ -32,6 +35,8 @@ from src.p7_objective import load_pricing_models, open_pricing_context, price_co
 from src.search import Budget, EvolutionaryFamily, GridRandomFamily, SurrogateFamily, run_search  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+TRACE_DIR = os.path.join("test", "search")
 
 _FAMILIES = {
     "evolutionary": EvolutionaryFamily,
@@ -65,6 +70,26 @@ def main(max_wall_clock_s: float, max_points: int, per_point_wall_clock_s: float
         with open_pricing_context(models=models, retrieval_cache=retrieval_cache) as ctx:
             return price_config(ctx, version)
 
+    # D-8(c): the trace is written AS THE RUN GOES, never only at the end.
+    # Step 7's own words are that the search trace IS the evidence, and at
+    # 38-140s per point an interrupted run would otherwise lose every
+    # completed point. One JSON object per line, flushed and fsync'd per row,
+    # so a kill -9 between points still leaves every finished point on disk.
+    os.makedirs(TRACE_DIR, exist_ok=True)
+    trace_path = os.path.join(
+        TRACE_DIR, f"{datetime.datetime.now(datetime.UTC).strftime('%Y%m%dT%H%M%SZ')}"
+                   f"-{family_name}-seed{seed}.jsonl")
+    logger.info("run_search: checkpointing every point to %s", trace_path)
+
+    def on_row(row) -> None:
+        with open(trace_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(dataclasses.asdict(row), default=str) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        logger.info("  checkpoint: %s=%s->%s objective_usd=%s disposition=%s",
+                    row.mutated_field, row.mutated_from, row.mutated_to,
+                    row.objective_usd, row.disposition)
+
     rows = run_search(
         budget=budget,
         price_fn=price_fn,
@@ -74,6 +99,7 @@ def main(max_wall_clock_s: float, max_points: int, per_point_wall_clock_s: float
         per_point_wall_clock_s=per_point_wall_clock_s,
         family=family,
         seed=seed,
+        on_row=on_row,
     )
 
     pointer_after = read_pointer()

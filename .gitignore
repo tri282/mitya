@@ -55,3 +55,4 @@ test/gate/*Z-*.json
 # Determinism baselines are per-machine: they are compared against a locally
 # built corpus, so a tracked one would false-positive on every other checkout.
 test/gate/baseline-*.json
+test/search/*.jsonl
