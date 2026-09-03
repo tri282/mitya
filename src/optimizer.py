@@ -100,6 +100,40 @@ ALLOWED: dict[str, SpaceEntry] = {
 # what keeps this list honest as the artifact grows: a field that lands in
 # neither dict fails the build, loudly, by name.
 EXCLUDED: dict[str, str] = {
+    "neighbor_expansion": (
+        "OUT BY SCOPE and, at the pinned top_k_rerank, OUT ON COST. E-run(a) has run and D-9 "
+        "collapsed the search space; Batch H compares three arms directly with no proposer. And the "
+        "cost case the candidate doc claimed does not survive the pin: its 13% saving came from "
+        "trading k 3->1, so with k fixed at 3 the arm ADDS windows -- 3 x (500 + 2 x 400) = 3,900 "
+        "against a 1,500 baseline, +160%, or +40% if all three hits merge into one span -- and "
+        "src/rag/gate.py:312 returns BREAK on ANY cost increase, tolerance zero. Batch H is therefore "
+        "a REPORT-ONLY recall and quality experiment that cannot promote on cost and is not trying "
+        "to. RE-ENTRY: a search that re-opens the space AND either CP-7h repricing chunk_overlap or "
+        "an owner decision reversing the top_k_rerank pin"
+    ),
+    "max_context_tokens": (
+        "OUT: a GUARD, like max_span_tokens, and D-14's rule is that a guard which gets swept is an "
+        "axis. It is BACKFILL's stop condition -- refill by rank until k spans are restored or this "
+        "total is reached -- and it is deliberately a SECOND field rather than a second meaning for "
+        "max_span_tokens, which caps one span. One number carrying two meanings is how "
+        "memory_budget_tokens became a ceiling that did not bind (R136). RE-ENTRY: none as an axis"
+    ),
+    "max_span_tokens": (
+        "OUT: it is a GUARD, not an axis, and D-14's own rule is that a guard which gets swept is an "
+        "axis. It exists to stop the transitive closure running away -- hits at 13,14,15 and 16,17 "
+        "close to 12-18, seven windows at 2,900 tokens against a 1,500 baseline, turning an arm sold "
+        "as -13% into +93%. Fixed at 2000 for the batch and reported with every number it bounds. "
+        "RE-ENTRY: none as an axis; a different VALUE is a human's edit with its own churn"
+    ),
+    "neighbor_collision_policy": (
+        "OUT BY SCOPE, same reason as neighbor_expansion: it is Batch H's arm label, compared "
+        "directly rather than proposed. It is also the one field here whose two values are not "
+        "ordered -- BACKFILL keeps k meaning 'distinct material' and costs more, ALIGN-ONLY keeps k "
+        "meaning 'ids fetched' and lets the prompt narrow silently -- so a cost-minimising proposer "
+        "would always answer align_only for a reason that has nothing to do with grounding. "
+        "RE-ENTRY: a search re-opening the space, and only alongside an instrument that can see "
+        "distinct material rather than token count"
+    ),
     "max_recent_turns": (
         "OUT on D-5's P3: IT HAS NO INSTRUMENT. Its cost is exact and measured (D-18(a): -282 "
         "tokens at 3, -598 at 2, on 12 sessions of real served answers), but the only multi-turn "

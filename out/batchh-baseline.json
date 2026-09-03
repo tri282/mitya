@@ -1,0 +1,793 @@
+{
+ "arm": "baseline",
+ "radius": 0,
+ "policy": "off",
+ "config_version": null,
+ "rows": 97,
+ "wall_s": 93.8,
+ "recall_at_k": 0.4227,
+ "distinct_target_chapters_hit_at_k": 0.4089,
+ "multi_target_rows": 9,
+ "multi_target_coverage": 0.2963,
+ "mean_prompt_tokens": 1535.2,
+ "total_prompt_tokens": 148916,
+ "mean_spans": 3.0,
+ "per_row": [
+  {
+   "id": "r-0001",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1467
+  },
+  {
+   "id": "r-0002",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1550
+  },
+  {
+   "id": "r-0003",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1490
+  },
+  {
+   "id": "r-0004",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1213
+  },
+  {
+   "id": "r-0005",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1620
+  },
+  {
+   "id": "r-0006",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1509
+  },
+  {
+   "id": "r-0007",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1590
+  },
+  {
+   "id": "r-0008",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1525
+  },
+  {
+   "id": "r-0009",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1748
+  },
+  {
+   "id": "r-0010",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1486
+  },
+  {
+   "id": "r-0011",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1479
+  },
+  {
+   "id": "r-0012",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1638
+  },
+  {
+   "id": "r-0013",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1521
+  },
+  {
+   "id": "r-0014",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1573
+  },
+  {
+   "id": "r-0015",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1584
+  },
+  {
+   "id": "r-0016",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1614
+  },
+  {
+   "id": "r-0017",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1641
+  },
+  {
+   "id": "r-0018",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1582
+  },
+  {
+   "id": "r-0019",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1657
+  },
+  {
+   "id": "r-0020",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1616
+  },
+  {
+   "id": "r-0021",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1628
+  },
+  {
+   "id": "r-0022",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1684
+  },
+  {
+   "id": "r-0023",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1580
+  },
+  {
+   "id": "r-0024",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1550
+  },
+  {
+   "id": "r-0025",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1181
+  },
+  {
+   "id": "r-0026",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1530
+  },
+  {
+   "id": "r-0027",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1614
+  },
+  {
+   "id": "r-0028",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1342
+  },
+  {
+   "id": "r-0029",
+   "n_targets": 3,
+   "spans": 3,
+   "hit": true,
+   "coverage": 0.6666666666666666,
+   "tokens": 1532
+  },
+  {
+   "id": "r-0030",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1594
+  },
+  {
+   "id": "r-0031",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1622
+  },
+  {
+   "id": "r-0032",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1485
+  },
+  {
+   "id": "r-0033",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1587
+  },
+  {
+   "id": "r-0034",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1447
+  },
+  {
+   "id": "r-0035",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1632
+  },
+  {
+   "id": "r-0036",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1571
+  },
+  {
+   "id": "r-0037",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1642
+  },
+  {
+   "id": "r-0038",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1548
+  },
+  {
+   "id": "r-0039",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1528
+  },
+  {
+   "id": "r-0040",
+   "n_targets": 2,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1559
+  },
+  {
+   "id": "r-0041",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1531
+  },
+  {
+   "id": "r-0042",
+   "n_targets": 2,
+   "spans": 3,
+   "hit": true,
+   "coverage": 0.5,
+   "tokens": 1596
+  },
+  {
+   "id": "r-0043",
+   "n_targets": 2,
+   "spans": 3,
+   "hit": true,
+   "coverage": 0.5,
+   "tokens": 1432
+  },
+  {
+   "id": "r-0044",
+   "n_targets": 3,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1593
+  },
+  {
+   "id": "r-0045",
+   "n_targets": 2,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1698
+  },
+  {
+   "id": "r-0090",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1562
+  },
+  {
+   "id": "r-0091",
+   "n_targets": 2,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1411
+  },
+  {
+   "id": "r-0092",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1589
+  },
+  {
+   "id": "r-0093",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1509
+  },
+  {
+   "id": "r-0094",
+   "n_targets": 2,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1431
+  },
+  {
+   "id": "r-0095",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1514
+  },
+  {
+   "id": "r-0096",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1559
+  },
+  {
+   "id": "r-0097",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1163
+  },
+  {
+   "id": "r-0098",
+   "n_targets": 2,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1535
+  },
+  {
+   "id": "r-0099",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1554
+  },
+  {
+   "id": "r-0100",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1642
+  },
+  {
+   "id": "r-0101",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1548
+  },
+  {
+   "id": "r-0102",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1440
+  },
+  {
+   "id": "r-0103",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1633
+  },
+  {
+   "id": "r-0104",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1548
+  },
+  {
+   "id": "r-0105",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1631
+  },
+  {
+   "id": "r-0106",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1692
+  },
+  {
+   "id": "r-0107",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1532
+  },
+  {
+   "id": "r-0108",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1624
+  },
+  {
+   "id": "r-0109",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1583
+  },
+  {
+   "id": "r-0110",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1271
+  },
+  {
+   "id": "r-0111",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1369
+  },
+  {
+   "id": "r-0112",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1698
+  },
+  {
+   "id": "r-0113",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1549
+  },
+  {
+   "id": "r-0114",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1514
+  },
+  {
+   "id": "r-0115",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1460
+  },
+  {
+   "id": "r-0116",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1440
+  },
+  {
+   "id": "r-0117",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1672
+  },
+  {
+   "id": "r-0118",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1552
+  },
+  {
+   "id": "r-0119",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1627
+  },
+  {
+   "id": "r-0120",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1454
+  },
+  {
+   "id": "r-0121",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": true,
+   "coverage": 1.0,
+   "tokens": 1667
+  },
+  {
+   "id": "r-0122",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1387
+  },
+  {
+   "id": "r-0123",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1420
+  },
+  {
+   "id": "r-0124",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1387
+  },
+  {
+   "id": "r-0125",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1387
+  },
+  {
+   "id": "r-0126",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1387
+  },
+  {
+   "id": "r-0127",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1420
+  },
+  {
+   "id": "r-0128",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1505
+  },
+  {
+   "id": "r-0129",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1387
+  },
+  {
+   "id": "r-0130",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1612
+  },
+  {
+   "id": "r-0131",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1548
+  },
+  {
+   "id": "r-0132",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1548
+  },
+  {
+   "id": "r-0133",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1620
+  },
+  {
+   "id": "r-0134",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1642
+  },
+  {
+   "id": "r-0135",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1692
+  },
+  {
+   "id": "r-0136",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1642
+  },
+  {
+   "id": "r-0137",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1475
+  },
+  {
+   "id": "r-0138",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1611
+  },
+  {
+   "id": "r-0139",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1488
+  },
+  {
+   "id": "r-0140",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1488
+  },
+  {
+   "id": "r-0141",
+   "n_targets": 1,
+   "spans": 3,
+   "hit": false,
+   "coverage": 0.0,
+   "tokens": 1488
+  }
+ ]
+}

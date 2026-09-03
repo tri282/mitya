@@ -111,7 +111,7 @@ from src.observability import (
     current_tenant,
 )
 from src.pricing import FREE, Cost, cost_usd, is_metered, total_usd
-from src.rag.context import build_context
+from src.rag.context import build_context, expand_spans
 from src.rag.entities import EntityMap
 from src.gateway.guard import BudgetExceeded, Degraded, RequestTooLarge
 from src.gateway.ladder import ContentRefused
@@ -941,9 +941,36 @@ async def chat(
             if not (route_name == "STRUCTURAL" and scope is not None):
                 with tracer.start_as_current_span(STAGE_RERANK) as span, StageTimer(route_name, STAGE_RERANK):
                     span.set_attribute("rerank.points_in", len(points))
-                    points = rerank(body.query, points, state.ranker)
+                    # v2 P7 Batch H: rerank the FULL list, then slice here, because
+                    # BACKFILL needs the ranks BELOW k to refill a merged slot from.
+                    # `top_k` has always been a parameter for exactly this reason --
+                    # src/p7_objective.py already calls it this way. At
+                    # neighbor_expansion=0 the slice is the only thing that happens
+                    # and the result is byte-identical to rerank(...)'s default.
+                    ranked = rerank(body.query, points, state.ranker, top_k=len(points))
+                    points = ranked[:Config.TOP_K_RERANK]
                     span.set_attribute("rerank.points_out", len(points))
                     set_cost(span)
+
+                radius = Config.NEIGHBOR_EXPANSION
+                if radius:
+                    # Fetch the chunks either side of each hit by point id and stitch
+                    # them into contiguous prose (D-13/D-14). DEFAULT route only --
+                    # STRUCTURAL skips rerank and its hard filter already pins the
+                    # chapter, so there is nothing here for it to do.
+                    #
+                    # NOT a cost saving at the pinned top_k_rerank=3: the candidate
+                    # doc's 13% came from trading k 3->1, and with k fixed this ADDS
+                    # windows. src/rag/gate.py:312 BREAKs on any cost increase, so
+                    # this ships default-off and promoting it is a pointer write.
+                    with tracer.start_as_current_span(STAGE_CONTEXT) as span:
+                        points = expand_spans(
+                            state.qdrant, Config.QDRANT_COLLECTION, points, ranked, radius,
+                            Config.MAX_SPAN_TOKENS, Config.NEIGHBOR_COLLISION_POLICY,
+                        )
+                        span.set_attribute("expand.radius", radius)
+                        span.set_attribute("expand.policy", Config.NEIGHBOR_COLLISION_POLICY)
+                        span.set_attribute("expand.spans", len(points))
 
             with tracer.start_as_current_span(STAGE_CONTEXT) as span, StageTimer(route_name, STAGE_CONTEXT):
                 passages_block, sources = build_context(route_name, points, state.summaries, scope)

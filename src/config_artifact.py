@@ -354,6 +354,44 @@ class ServingConfig(BaseModel):
     # the model answer from the prior answer while the Sources list still
     # cites what the contentless query retrieved -- a citation that lies.
     n_prev_queries: int = 0
+    # --- neighbour expansion (v2 P7 Batch H, D-13/D-14) ---
+    # Fetch the chunks either side of each reranked hit by point id and stitch
+    # them into contiguous prose. 0 off, 1 = +/-1, 2 = +/-2.
+    #
+    # Point ids are ints in "global, deterministic parse order"
+    # (src/rag/ingest.py:334), so id+/-1 IS the adjacent chunk in reading order --
+    # and they run ACROSS chapter boundaries, which is why the payload-match
+    # guard is a correctness requirement rather than a quality one: splicing two
+    # chapters makes the programmatic Sources list lie.
+    #
+    # NOT a cost saving at the pinned `top_k_rerank = 3`. The candidate doc's
+    # 13% came from trading k 3->1 and spending it on expansion; with k fixed the
+    # arm ADDS windows (+40% to +160%) and src/rag/gate.py:312 returns BREAK on
+    # any cost increase. Shipped default-off; promoting it is a pointer write.
+    neighbor_expansion: int = 0
+    # Hard ceiling on ONE merged span's rendered tokens (D-14 rule 3). A GUARD,
+    # fixed, never swept -- a guard that gets swept is an axis. Without it the
+    # closure runs away: hits at 13,14,15 and 16,17 merge to 12-18, seven windows
+    # at 500 + 6 x 400 = 2,900 against a 1,500 baseline. 2000 admits a 4-window
+    # span (1,700) and clips a 5-window one.
+    max_span_tokens: int = 2000
+    # What happens when two top-k hits are adjacent and their spans merge -- the
+    # case the candidate doc never specified, and the experiment (D-13(b)).
+    # "align_only": merge, do not refill; k means "ids we fetched" and the prompt
+    # narrows silently. "backfill": merge, then pull the next rank into the freed
+    # slot, in ONE pass; k means "distinct material reaching the prompt".
+    # Total rendered budget across ALL served spans, and the stop condition for
+    # BACKFILL: refill by rank until k spans are restored OR this is reached.
+    # SEPARATE from `max_span_tokens`, which caps ONE span, deliberately: same
+    # number, two meanings, one field is exactly how `memory_budget_tokens`
+    # became a mis-enforced ceiling (R136). Baseline serves 1,535 mean.
+    max_context_tokens: int = 2000
+    # "off" DISABLES the feature; it is not the same as radius 0. Radius 0 with
+    # a live policy is MERGE-ONLY: adjacent hits collapse and their duplicated
+    # chunk_overlap is dropped, adding nothing -- strictly cheaper than baseline
+    # and provably chapter-invariant, the only variant that can register as a
+    # cost improvement rather than a BREAK.
+    neighbor_collision_policy: str = "off"
 
     # --- memory, the persisted tiers (v2 P6 Batch C, CP-6a) ---
     # The summarizer / memory-writer arm. A SEPARATE field from
