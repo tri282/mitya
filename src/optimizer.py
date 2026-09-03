@@ -100,6 +100,28 @@ ALLOWED: dict[str, SpaceEntry] = {
 # what keeps this list honest as the artifact grows: a field that lands in
 # neither dict fails the build, loudly, by name.
 EXCLUDED: dict[str, str] = {
+    "max_recent_turns": (
+        "OUT on D-5's P3: IT HAS NO INSTRUMENT. Its cost is exact and measured (D-18(a): -282 "
+        "tokens at 3, -598 at 2, on 12 sessions of real served answers), but the only multi-turn "
+        "instrument -- `src/memory_metrics.py` family (c) -- scores RETRIEVAL recall, and memory "
+        "never reaches retrieval, so (c) is structurally invariant to this field. Same shape as "
+        "STRUCTURAL's recall@5 tautology. Its real guard is a USE CASE (the two-step anaphoric "
+        "follow-up), not a metric, and a use case with no rows is not a guard. Admitting it would "
+        "let the search minimise a knob nothing can refuse -- and cost-minimisation always "
+        "answers 2. Versioned anyway, because a knob that changes what reaches the prompt must "
+        "churn config_version whoever moves it. RE-ENTRY: multi-turn JUDGED rows, which do not "
+        "exist; cost alone is not a licence to search"
+    ),
+    "n_prev_queries": (
+        "OUT BY SCOPE, not by defect -- and it is the one field here that HAS an instrument. Once "
+        "it ships, prior turns feed retrieval, so `sources` depends on them and family (c) stops "
+        "being invariant: 68 anaphoric turns across ~25 sessions, per family with its own "
+        "denominator (R91/R119). But E-run(a) has run and D-9 collapsed the search space; adding "
+        "an axis after the search closed would reopen a settled result. Batch G scores its three "
+        "arms (0, 1, 2) DIRECTLY via scripts/run_multiturn.py on the $0 fake-generation arm, "
+        "which needs no proposer. RE-ENTRY: any future search that re-opens the space -- this is "
+        "a scheduling exclusion, and the P3 instrument is already named"
+    ),
     "top_k_rerank": (
         "PINNED AT 3 by owner decision, 2026-09-02, on measurement (R151) rather than on "
         "assumption. THE TRADE: 3->2 buys 541 prompt tokens = $0.000162/answer, $0.16 per 1k, "

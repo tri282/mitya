@@ -68,14 +68,15 @@ TIER_PROFILE = "profile"
 
 MEMORY_TIERS = frozenset({TIER_RECENT, TIER_EPISODIC, TIER_PROFILE})
 
-# Process-memory ceiling on the recent-turns store, per session. NOT a versioned
-# serving knob: the injection cap (`Config.MEMORY_BUDGET_TOKENS`) is what decides
-# how much reaches the prompt. At 3072 tokens (G-P18) the injection cap is
-# roughly three whole turns, so this RAM ceiling and that budget now bind at a
-# similar order -- they are still separate names for separate things (N-1), and
-# this one only bounds how much RAM a long session may hold. The first person to
-# tune one will otherwise conflate them.
-MAX_RECENT_TURNS = 4
+# The recent-turns ceiling now lives on `ServingConfig` as `max_recent_turns`
+# (v2 P7 Batch G, D-18). It was a module constant here, and the comment that
+# stood in its place said this was only a RAM ceiling while
+# `Config.MEMORY_BUDGET_TOKENS` was the injection cap. D-18(a) measured that
+# and it is the other way round: `room` resolves to the full 3072 and four
+# turns cost ~1,183 accounted, so the budget never binds at four turns and
+# THIS is the knob that decides how much memory reaches the prompt. The two
+# are still separate names for separate things (N-1); what changed is which
+# one binds. Read through the facade so a version is a value.
 
 # Ceiling on how many sessions the process remembers at once, LRU-evicted.
 # ponytail: one dict, no expiry thread -- a session's turns die with the process
@@ -180,8 +181,11 @@ class SessionTurns:
     the composite key a real boundary rather than a naming convention.
     """
 
-    def __init__(self, max_turns: int = MAX_RECENT_TURNS, max_sessions: int = MAX_TRACKED_SESSIONS):
-        self._max_turns = max_turns
+    def __init__(self, max_turns: int | None = None, max_sessions: int = MAX_TRACKED_SESSIONS):
+        # Resolved at construction, not as a default argument: a default is
+        # evaluated at import and would snapshot whatever config was active
+        # then, which is the versioning defeat this field was moved to fix.
+        self._max_turns = Config.MAX_RECENT_TURNS if max_turns is None else max_turns
         self._max_sessions = max_sessions
         self._sessions: OrderedDict[tuple[str, str], deque[Turn]] = OrderedDict()
 

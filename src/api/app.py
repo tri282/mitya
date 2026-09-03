@@ -842,10 +842,37 @@ async def chat(
         # resolved above, ahead of the cache check) ---
         try:
             active_book = filters.get("book") if filters else None
+            # v2 P7 Batch G (D-18): retrieval used to see only this request, while
+            # 68 of 108 turns in the session corpus are contentless follow-ups
+            # ("why does that matter later on?") -- so 63% of multi-turn requests
+            # retrieved on a string with nothing to retrieve on. The last
+            # `n_prev_queries` QUESTIONS are prepended, oldest first.
+            #
+            # Questions only, never answers, and this string never reaches the
+            # prompt: it goes to embedding and BM25 and nowhere else (~15 tokens
+            # of retrieval input, 0 prompt tokens). Injecting the transcript
+            # instead costs 296 tokens/turn AND lets the model answer from the
+            # prior answer while the programmatic Sources list still cites what
+            # the contentless query returned -- a citation that lies.
+            #
+            # NOT keyed into the cache, and it does not need to be: a request
+            # with prior turns is `memory_bearing` above, which already bypasses
+            # the cache entirely (G-P12(b)). `n_prev_queries` can only fire when
+            # `recent_turns` is non-empty, so it can only fire on requests that
+            # never read or write a cache entry.
+            n_prev = Config.N_PREV_QUERIES
+            retrieval_query = body.query
+            if n_prev and recent_turns:
+                # ponytail: last N questions, joined. A real query rewriter only if
+                # eval shows concatenation losing two-step chains.
+                retrieval_query = "\n".join(
+                    [t.question for t in recent_turns[-n_prev:]] + [body.query]
+                )
             with tracer.start_as_current_span(STAGE_ENTITIES) as span, StageTimer(route_name, STAGE_ENTITIES):
                 expanded_query, resolved_entities = state.entities.resolve(
-                    body.query, active_book=active_book
+                    retrieval_query, active_book=active_book
                 )
+                span.set_attribute("entities.n_prev_queries", n_prev)
                 span.set_attribute("entities.resolved_count", len(resolved_entities))
                 set_cost(span)
 

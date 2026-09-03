@@ -324,6 +324,36 @@ class ServingConfig(BaseModel):
     # N-1: the store holds 30 rows and the allocator injects a handful, and
     # the first person to tune one will conflate them if they share a name.
     memory_budget_tokens: int
+    # How many prior turns the recent tier may hold and therefore inject
+    # (v2 P7 Batch G, D-18). Was `MAX_RECENT_TURNS = 4`, a module constant at
+    # src/memory.py -- which snapshots at import and defeats versioning, the
+    # `persona_head` and summarizer-prompt situation exactly.
+    #
+    # Its own comment called it a RAM ceiling and said `memory_budget_tokens`
+    # was the injection cap. D-18(a) MEASURED that and it is the other way
+    # round: room = min(3072, 5120 - 1564) = 3072, and four turns cost ~1,183
+    # accounted -- even the largest turn observed (476 tok) leaves four turns
+    # at 1,904, under the budget. **The budget never binds at four turns**, so
+    # this field is what decides how much memory reaches the prompt.
+    # Measured deltas: -282 tokens at 3, -598 at 2 (the candidate doc's
+    # "~370" understated it by 60%). 1 is not a legal value -- it breaks the
+    # two-step anaphoric reference.
+    max_recent_turns: int = 4
+    # How many PREVIOUS QUERIES are concatenated into the retrieval query
+    # (v2 P7 Batch G, D-18). 0 is today's behaviour.
+    #
+    # Why this exists: `resolve()` sees only the current request
+    # (src/api/app.py), so retrieval is blind to the conversation -- while 68
+    # of 108 turns in test/session_corpus.json are contentless follow-ups
+    # ("why does that matter later on?"). For 63% of multi-turn requests both
+    # dense and sparse retrieval run on a string with nothing to retrieve on.
+    #
+    # Previous QUERIES, never previous answers, and never into the prompt: the
+    # concatenation reaches embedding and BM25 only (~15 tokens, 0 prompt
+    # tokens). Injecting the transcript instead costs 296 tokens/turn AND lets
+    # the model answer from the prior answer while the Sources list still
+    # cites what the contentless query retrieved -- a citation that lies.
+    n_prev_queries: int = 0
 
     # --- memory, the persisted tiers (v2 P6 Batch C, CP-6a) ---
     # The summarizer / memory-writer arm. A SEPARATE field from
