@@ -137,6 +137,22 @@ from src.rag.router import route
 # request it belongs to, so no call site has to pass one by hand.
 configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
+# Per-turn ceiling on a prepended previous query, in characters (D-19(b),
+# resized D-20). Deliberately NOT a versioned field, on D-14's rule that a guard
+# which gets swept is an axis: it only bites on pathological input, and a third
+# ServingConfig field mid-experiment would churn config_version and invalidate
+# the arms it exists to protect.
+#
+# WAS 400, sized on the corpus-wide MEAN of 177 chars -- the wrong distribution.
+# The turns this cap must never clip are the literal spans, which run to 547
+# chars (`passage_paste` max, and the `anaphora` family's max); 5 of 20 anaphora
+# turn-1 spans exceeded 400, so the cap truncated the strongest retrieval signal
+# at exactly the arm that depends on it, and the first run measured a suppressed
+# effect. Sized now on the MAX authored turn (547) with headroom, which is still
+# an order of magnitude under a pasted essay.
+# ponytail: one constant, no knob. Version it the day someone needs two values.
+_PREV_QUERY_CHAR_CAP = 600
+
 
 # BM25 model id is hardcoded here to match scripts/ingest_corpus.py:45 and
 # scripts/eval_retrieval.py -- it is P2 debt (not lifted into Config), flagged
@@ -863,11 +879,28 @@ async def chat(
             n_prev = Config.N_PREV_QUERIES
             retrieval_query = body.query
             if n_prev and recent_turns:
-                # ponytail: last N questions, joined. A real query rewriter only if
-                # eval shows concatenation losing two-step chains.
-                retrieval_query = "\n".join(
-                    [t.question for t in recent_turns[-n_prev:]] + [body.query]
-                )
+                # THE LIVE QUESTION GOES FIRST, and that ordering is a correctness
+                # requirement rather than a preference (D-19(b)). Nothing in
+                # src/rag/retrieve.py caps query length -- `embedder.embed()` and
+                # `bm25.query_embed()` are called on whatever string arrives and the
+                # encoder truncates SILENTLY FROM THE TAIL. With history prepended,
+                # a long enough prior turn cut the user's actual question out of its
+                # own retrieval, with no error anywhere. The `passage_paste` family
+                # is named for users pasting text and already runs 3x every other
+                # family (mean 177 chars, max 547); an essay pasted with "paraphrase
+                # this" is the same failure with a bigger constant.
+                #
+                # Putting it first costs nothing on either leg: BM25's query side
+                # assigns a flat 1.0 per token, so it is a bag of words and order is
+                # irrelevant there, and the dense leg is near-indifferent. Truncation
+                # now eats history instead of the live question.
+                #
+                # ponytail: last N questions, each capped, current query first. A real
+                # query rewriter only if eval shows concatenation losing two-step chains.
+                history = [
+                    t.question[:_PREV_QUERY_CHAR_CAP] for t in recent_turns[-n_prev:]
+                ]
+                retrieval_query = "\n".join([body.query] + history)
             with tracer.start_as_current_span(STAGE_ENTITIES) as span, StageTimer(route_name, STAGE_ENTITIES):
                 expanded_query, resolved_entities = state.entities.resolve(
                     retrieval_query, active_book=active_book
