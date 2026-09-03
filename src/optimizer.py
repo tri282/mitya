@@ -252,8 +252,11 @@ EXCLUDED: dict[str, str] = {
         "(§X.2, R122)"
     ),
     "prompt_composition": (
-        "deferred v1 A/B decision; judge MDE 0.497 cannot arbitrate it -- G-P22, open, "
-        "recommends deleting composition B rather than searching it (§X.2)"
+        "OUT BY SCOPE, and G-P22 is CLOSED by deletion (Batch D, 2026-09-03). B is gone: the audit "
+        "§X.2 recommended deleting rather than searching it, v1 chose it on +0.111 persona against an "
+        "MDE of 1.176 (noise, withdrawn by R23) and R24 then flipped the sign. A vs C is now the live "
+        "comparison and C is a Batch D ARM scored on block rate and groundedness, not a proposer axis "
+        "-- E-run(a) has run and D-9 collapsed the space. RE-ENTRY: a search that re-opens the space"
     ),
     "extractor_prompt": (
         "[SECURITY] write path with no instrument; reconsider only after step 3b exists (§X.2)"

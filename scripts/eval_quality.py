@@ -11,7 +11,8 @@ structure on disk) and a running llama-server (P5's
 `scripts/start_server.sh`).
 
 For every themed query in `test/quality_eval.json` and every prompt
-composition in `--modes` (default both "A" and "B", ruling R19's A/B), this:
+composition in `--modes` (default both "A" and "C" -- B was deleted in v2 P7
+Batch D, see src/rag/generate.py), this:
 
   1. Builds real retrieval context exactly as `src/api/app.py`'s `/chat`
      handler does -- `router.route()` -> `EntityMap.resolve()` ->
@@ -711,7 +712,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Answer-quality eval + prompt-composition A/B runner (design VII.2).")
     ap.add_argument("--themes", default=os.path.join("test", "quality_eval.json"))
     ap.add_argument("--out", default=os.path.join("plans", "mitya-rag", "05-impl", "quality_ab_results.json"))
-    ap.add_argument("--modes", nargs="+", default=["A", "B"], choices=["A", "B"])
+    ap.add_argument("--modes", nargs="+", default=["A", "C"], choices=["A", "C"])
     ap.add_argument("--limit", type=int, default=None, help="only run the first N themed queries (smoke test)")
     ap.add_argument("--themes-only", nargs="+", default=None,
                     help="only run queries whose theme is in this list (e.g. Ambiguity), for chunked/resumed runs")
