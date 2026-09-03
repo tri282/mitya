@@ -1,0 +1,200 @@
+{
+  "min_draws_per_cell": 1,
+  "per_mode": {
+    "A": {
+      "n_draws": 58,
+      "n_cells": 58,
+      "n_cells_scored": 58,
+      "n_cells_failed": 0,
+      "mean_persona_retention": 5,
+      "mean_groundedness": 3.948,
+      "fabrication_rate": 0.552,
+      "mean_fabricated_events_UNRELIABLE": 1.276,
+      "generation_errors": 0,
+      "judge_errors": 0
+    }
+  },
+  "per_theme": {
+    "Ambiguity": {
+      "A": {
+        "n_cells_scored": 15,
+        "n_cells_failed": 0,
+        "mean_persona_retention": 5,
+        "mean_groundedness": 4.333
+      }
+    },
+    "Motivation": {
+      "A": {
+        "n_cells_scored": 15,
+        "n_cells_failed": 0,
+        "mean_persona_retention": 5,
+        "mean_groundedness": 3.067
+      }
+    },
+    "Philosophy": {
+      "A": {
+        "n_cells_scored": 15,
+        "n_cells_failed": 0,
+        "mean_persona_retention": 5,
+        "mean_groundedness": 3.6
+      }
+    },
+    "Textual": {
+      "A": {
+        "n_cells_scored": 13,
+        "n_cells_failed": 0,
+        "mean_persona_retention": 5,
+        "mean_groundedness": 4.923
+      }
+    }
+  },
+  "worst_cells": {
+    "A": [
+      {
+        "id": "q-0004",
+        "theme": "Motivation",
+        "query": "What made Stavrogin confess his crime to Bishop Tikhon, only to withdraw the confession?",
+        "n_draws": 1,
+        "n_judged": 1,
+        "persona_retention": 5,
+        "groundedness": 1,
+        "fabrication": 1,
+        "fabricated_events_UNRELIABLE": 4,
+        "source_leak": 0.0,
+        "assistant_tell": 0.0,
+        "draw_persona_retention": [
+          5
+        ],
+        "draw_groundedness": [
+          1
+        ],
+        "worst_draw": {
+          "draw": 0,
+          "persona_retention": 5,
+          "groundedness": 1,
+          "fabricated_events": 4,
+          "rationale": "The response maintains a strong Dostoevsky-esque persona but fails the groundedness criteria entirely, as the provided passages contain no mention of a confession to Tikhon or the motivations behind it. Fabricated events include: the act of confessing to Tikhon, the act of withdrawing said confession, the existence of a character named Tikhon, and the specific psychological interaction between them.",
+          "answer_excerpt": "You ask of a soul that has become a void, a bottomless pit, yet one that still feels the agonizing, suffocating weight of its own darkness. Why does such a man approach the threshold of light, only to recoil into the shadows? It is the eternal oscillation of the human spirit, caught between the desp..."
+        }
+      },
+      {
+        "id": "q-0016",
+        "theme": "Philosophy",
+        "query": "What is Kirillov's philosophy of the man-god who conquers the fear of death through suicide?",
+        "n_draws": 1,
+        "n_judged": 1,
+        "persona_retention": 5,
+        "groundedness": 1,
+        "fabrication": 1,
+        "fabricated_events_UNRELIABLE": 4,
+        "source_leak": 0.0,
+        "assistant_tell": 0.0,
+        "draw_persona_retention": [
+          5
+        ],
+        "draw_groundedness": [
+          1
+        ],
+        "worst_draw": {
+          "draw": 0,
+          "persona_retention": 5,
+          "groundedness": 1,
+          "fabricated_events": 4,
+          "rationale": "The response adopts the Dostoevsky persona perfectly but fails the groundedness criteria because the provided passages contain no information about Kirillov's philosophy of the man-god or suicide. The response fabricates the specific philosophical details: the 'murder of God' within the soul, the 'clockwork' metaphor, the 'cold mathematical necessity' of suicide, and the idea of the man-god as a 'rebellion against nature'.",
+          "answer_excerpt": "You ask of the man-god, of that terrible and icy logic which seeks to scale the heavens by the simple, wretched act of ending one’s own pulse. It is a fever, a delirium of the spirit that has forgotten the soil, that has forgotten the simple, weeping prayer of the peasant who knows that salvation is..."
+        }
+      },
+      {
+        "id": "q-0001",
+        "theme": "Motivation",
+        "query": "Why did Raskolnikov convince himself murder was justified?",
+        "n_draws": 1,
+        "n_judged": 1,
+        "persona_retention": 5,
+        "groundedness": 2,
+        "fabrication": 1,
+        "fabricated_events_UNRELIABLE": 4,
+        "source_leak": 0.0,
+        "assistant_tell": 0.0,
+        "draw_persona_retention": [
+          5
+        ],
+        "draw_groundedness": [
+          2
+        ],
+        "worst_draw": {
+          "draw": 0,
+          "persona_retention": 5,
+          "groundedness": 2,
+          "fabricated_events": 4,
+          "rationale": "The response captures the Dostoevsky persona perfectly but relies heavily on external knowledge of the novel's plot and themes (the Napoleon theory, the 'threshold' concept, the 'louse' metaphor, and the 'beyond good and evil' philosophy) which are not present in the provided passages. The passages only mention poverty, misery, and a desire for money as motives, making the response's reliance on the 'Napoleon' theory and 'intellectual arithmetic' a fabrication relative to the provided source text.",
+          "answer_excerpt": "You ask a question that pierces the very marrow of the human condition. To understand why he convinced himself, you must look not at the act itself—that cold, bloody business—but at the fevered, suffocating atmosphere of his own mind. He was a man trapped in a garret that was more like a coffin than..."
+        }
+      },
+      {
+        "id": "q-0002",
+        "theme": "Motivation",
+        "query": "What drove Ivan Karamazov to reject God's harmony even as he loved his brother?",
+        "n_draws": 1,
+        "n_judged": 1,
+        "persona_retention": 5,
+        "groundedness": 2,
+        "fabrication": 1,
+        "fabricated_events_UNRELIABLE": 3,
+        "source_leak": 0.0,
+        "assistant_tell": 0.0,
+        "draw_persona_retention": [
+          5
+        ],
+        "draw_groundedness": [
+          2
+        ],
+        "worst_draw": {
+          "draw": 0,
+          "persona_retention": 5,
+          "groundedness": 2,
+          "fabricated_events": 3,
+          "rationale": "The response maintains a strong Dostoevsky-esque persona but relies heavily on external knowledge of the novel's plot (the 'ticket' metaphor, the 'child's tear' argument, and Ivan's specific theological rebellion) which are not present in the provided passages. The passages only mention Ivan as a writer of theological articles and a 'sensualist' Karamazov, making the specific details about his rejection of God's harmony fabrications relative to the provided source text.",
+          "answer_excerpt": "You ask what drove him—that tormented, brilliant soul—to stand before the threshold of the infinite and declare that the ticket is too dear? It is the Karamazov blood, that base, unbridled, earthly force that pulls at the spirit even while the intellect seeks to soar into the cold, thin air of pure ..."
+        }
+      },
+      {
+        "id": "q-0003",
+        "theme": "Motivation",
+        "query": "Why does Prince Myshkin forgive those who exploit his kindness?",
+        "n_draws": 1,
+        "n_judged": 1,
+        "persona_retention": 5,
+        "groundedness": 2,
+        "fabrication": 1,
+        "fabricated_events_UNRELIABLE": 4,
+        "source_leak": 0.0,
+        "assistant_tell": 0.0,
+        "draw_persona_retention": [
+          5
+        ],
+        "draw_groundedness": [
+          2
+        ],
+        "worst_draw": {
+          "draw": 0,
+          "persona_retention": 5,
+          "groundedness": 2,
+          "fabricated_events": 4,
+          "rationale": "The response captures the Dostoevsky persona perfectly but fails to ground its explanation in the provided text, instead relying on philosophical interpretation. Fabricated events include the specific claims that he feels shame for being a 'catalyst for another's sin,' that he is 'terrified of the isolation that comes with judgment,' that he 'refuses to see anyone as an outsider,' and the assertion that he has 'forgotten how to hate.'",
+          "answer_excerpt": "You ask of forgiveness, but perhaps you should ask instead of the nature of the soul that finds itself incapable of doing anything else. To see the Prince as merely \"forgiving\" is to misunderstand the very marrow of his existence. He does not forgive because he is weak, or because he has calculated ..."
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "config_version": "4e00d19879b8",
+    "corpus_version": "515c707a5d69",
+    "git_sha": "9e1b245ec6ed2d69f4c18883b2b351847eb848ff",
+    "git_dirty": true,
+    "measured_at_utc": "2026-09-03T21:45:28+00:00",
+    "serving_model": "models/gemini-3.1-flash-lite",
+    "prompt_composition": "A",
+    "top_k_rerank": 3
+  }
+}

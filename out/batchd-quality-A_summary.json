@@ -1,0 +1,200 @@
+{
+  "min_draws_per_cell": 1,
+  "per_mode": {
+    "A": {
+      "n_draws": 58,
+      "n_cells": 58,
+      "n_cells_scored": 57,
+      "n_cells_failed": 1,
+      "mean_persona_retention": 5,
+      "mean_groundedness": 3.947,
+      "fabrication_rate": 0.579,
+      "mean_fabricated_events_UNRELIABLE": 1.684,
+      "generation_errors": 1,
+      "judge_errors": 0
+    }
+  },
+  "per_theme": {
+    "Ambiguity": {
+      "A": {
+        "n_cells_scored": 15,
+        "n_cells_failed": 0,
+        "mean_persona_retention": 5,
+        "mean_groundedness": 4.2
+      }
+    },
+    "Motivation": {
+      "A": {
+        "n_cells_scored": 15,
+        "n_cells_failed": 0,
+        "mean_persona_retention": 5,
+        "mean_groundedness": 3.467
+      }
+    },
+    "Philosophy": {
+      "A": {
+        "n_cells_scored": 15,
+        "n_cells_failed": 0,
+        "mean_persona_retention": 5,
+        "mean_groundedness": 3.4
+      }
+    },
+    "Textual": {
+      "A": {
+        "n_cells_scored": 12,
+        "n_cells_failed": 1,
+        "mean_persona_retention": 5,
+        "mean_groundedness": 4.917
+      }
+    }
+  },
+  "worst_cells": {
+    "A": [
+      {
+        "id": "q-0004",
+        "theme": "Motivation",
+        "query": "What made Stavrogin confess his crime to Bishop Tikhon, only to withdraw the confession?",
+        "n_draws": 1,
+        "n_judged": 1,
+        "persona_retention": 5,
+        "groundedness": 1,
+        "fabrication": 1,
+        "fabricated_events_UNRELIABLE": 6,
+        "source_leak": 0.0,
+        "assistant_tell": 0.0,
+        "draw_persona_retention": [
+          5
+        ],
+        "draw_groundedness": [
+          1
+        ],
+        "worst_draw": {
+          "draw": 0,
+          "persona_retention": 5,
+          "groundedness": 1,
+          "fabricated_events": 6,
+          "rationale": "The response maintains a strong Dostoevsky-esque persona but fails the groundedness criteria entirely, as the provided passages contain no mention of Tikhon, the confession, or the specific events described. Fabricated events include: the meeting with Tikhon, the act of confessing, the document detailing child abuse, the withdrawal of the confession, Tikhon's specific reaction/advice, and Stavrogin's suicide by rope.",
+          "answer_excerpt": "Ah, Stavrogin... Nikolay Vsyevolodovitch. That enigma, that abyss walking in the shape of a man. You ask what drove him to the threshold of a holy man, to the feet of Tikhon with those pages of agonizing confession, only to recoil, to tear them back, and to plunge back into the cold, sneering isolat..."
+        }
+      },
+      {
+        "id": "q-0001",
+        "theme": "Motivation",
+        "query": "Why did Raskolnikov convince himself murder was justified?",
+        "n_draws": 1,
+        "n_judged": 1,
+        "persona_retention": 5,
+        "groundedness": 2,
+        "fabrication": 1,
+        "fabricated_events_UNRELIABLE": 4,
+        "source_leak": 0.0,
+        "assistant_tell": 0.0,
+        "draw_persona_retention": [
+          5
+        ],
+        "draw_groundedness": [
+          2
+        ],
+        "worst_draw": {
+          "draw": 0,
+          "persona_retention": 5,
+          "groundedness": 2,
+          "fabricated_events": 4,
+          "rationale": "The response captures the persona perfectly but relies heavily on outside knowledge of the novel's plot and theory (the 'extraordinary man' theory, the specific 'Napoleonic' comparison, the 'louse' metaphor, and the 'arithmetic' justification) which are not present in the provided passages. The passages only mention his poverty, his confession of misery, and his mental state, making the response largely ungrounded in the provided text.",
+          "answer_excerpt": "Ah, you ask about the deepest, most agonizing labyrinth of the human soul—why a man, young, intelligent, and burdened by a terrible, proud misery, could persuade himself that blood might be let upon the earth with a quiet conscience. \n\nUnderstand this: it did not begin in the marketplace or in the h..."
+        }
+      },
+      {
+        "id": "q-0002",
+        "theme": "Motivation",
+        "query": "What drove Ivan Karamazov to reject God's harmony even as he loved his brother?",
+        "n_draws": 1,
+        "n_judged": 1,
+        "persona_retention": 5,
+        "groundedness": 2,
+        "fabrication": 1,
+        "fabricated_events_UNRELIABLE": 4,
+        "source_leak": 0.0,
+        "assistant_tell": 0.0,
+        "draw_persona_retention": [
+          5
+        ],
+        "draw_groundedness": [
+          2
+        ],
+        "worst_draw": {
+          "draw": 0,
+          "persona_retention": 5,
+          "groundedness": 2,
+          "fabricated_events": 4,
+          "rationale": "The persona is excellent, but the response relies heavily on external knowledge of the novel's plot (the 'Grand Inquisitor' arguments, the specific story of the tortured child, the 'sticky leaves' metaphor, and the 'entrance ticket' concept) which are entirely absent from the provided passages. The passages only mention Ivan as a sensualist and an atheist who writes theological articles, making the detailed explanation of his rejection of God a fabrication relative to the source text.",
+          "answer_excerpt": "Ah, you ask about Ivan—my torment, my tragic philosopher, that dear, suffering atheist of mine! How is one to explain him? He is a creature split in two, agonizingly, hopelessly, yet bound to the very earth by ties he both curses and adores. \n\nYou see, Ivan does not reject God out of some cold, acad..."
+        }
+      },
+      {
+        "id": "q-0007",
+        "theme": "Motivation",
+        "query": "Why does Dmitri Karamazov choose exile in Siberia instead of fleeing?",
+        "n_draws": 1,
+        "n_judged": 1,
+        "persona_retention": 5,
+        "groundedness": 2,
+        "fabrication": 1,
+        "fabricated_events_UNRELIABLE": 4,
+        "source_leak": 0.0,
+        "assistant_tell": 0.0,
+        "draw_persona_retention": [
+          5
+        ],
+        "draw_groundedness": [
+          2
+        ],
+        "worst_draw": {
+          "draw": 0,
+          "persona_retention": 5,
+          "groundedness": 2,
+          "fabricated_events": 4,
+          "rationale": "The response captures the persona perfectly but fails on groundedness by attributing Mitya's choice to specific philosophical concepts (the 'weeping child', 'everyone is responsible for everyone', 'uranium mines', and 'resurrection') that are not present in the provided passages. The passages indicate that an escape plan was actually being organized by Ivan and Katerina, contradicting the response's claim that Mitya rejects such plans.",
+          "answer_excerpt": "Ah, you ask about Mitya—wild, passionate, tormented Mitya, whose heart is a battlefield where God and the devil are fighting, and the battlefield is the heart of man. \n\nWhy does he not flee? Why does he reject the carefully laid plans, the secret routes abroad, the dark machinery of escape that othe..."
+        }
+      },
+      {
+        "id": "q-0016",
+        "theme": "Philosophy",
+        "query": "What is Kirillov's philosophy of the man-god who conquers the fear of death through suicide?",
+        "n_draws": 1,
+        "n_judged": 1,
+        "persona_retention": 5,
+        "groundedness": 2,
+        "fabrication": 1,
+        "fabricated_events_UNRELIABLE": 4,
+        "source_leak": 0.0,
+        "assistant_tell": 0.0,
+        "draw_persona_retention": [
+          5
+        ],
+        "draw_groundedness": [
+          2
+        ],
+        "worst_draw": {
+          "draw": 0,
+          "persona_retention": 5,
+          "groundedness": 2,
+          "fabricated_events": 4,
+          "rationale": "The persona is excellent, but the response relies heavily on outside knowledge of Kirillov's specific philosophical arguments (the man-god, the logic of suicide) which are not present in the provided passages. Fabricated events include: Kirillov drinking tea/folding paper, the specific philosophical claim that God is invented out of terror, the idea that he kills himself to become a 'man-god', and the assertion that he is manipulated by Pyotr for murder.",
+          "answer_excerpt": "Ah, you ask about Kirillov! A tormented soul, a dark spirit, yet one who touched upon the very abyss where God and man collide. \n\nLook at him—he sits quietly in his room, drinking tea, folding little bits of paper, yet his mind is wrestling with the ultimate, the cursed question. He has grasped a te..."
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "config_version": "26f394009884",
+    "corpus_version": "515c707a5d69",
+    "git_sha": "9e1b245ec6ed2d69f4c18883b2b351847eb848ff",
+    "git_dirty": true,
+    "measured_at_utc": "2026-09-03T21:17:11+00:00",
+    "serving_model": "models/gemini-3.5-flash-lite",
+    "prompt_composition": "A",
+    "top_k_rerank": 3
+  }
+}

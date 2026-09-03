@@ -1,0 +1,200 @@
+{
+  "min_draws_per_cell": 1,
+  "per_mode": {
+    "C": {
+      "n_draws": 58,
+      "n_cells": 58,
+      "n_cells_scored": 58,
+      "n_cells_failed": 0,
+      "mean_persona_retention": 5,
+      "mean_groundedness": 4.672,
+      "fabrication_rate": 0.19,
+      "mean_fabricated_events_UNRELIABLE": 0.362,
+      "generation_errors": 0,
+      "judge_errors": 0
+    }
+  },
+  "per_theme": {
+    "Ambiguity": {
+      "C": {
+        "n_cells_scored": 15,
+        "n_cells_failed": 0,
+        "mean_persona_retention": 5,
+        "mean_groundedness": 5
+      }
+    },
+    "Motivation": {
+      "C": {
+        "n_cells_scored": 15,
+        "n_cells_failed": 0,
+        "mean_persona_retention": 5,
+        "mean_groundedness": 4.333
+      }
+    },
+    "Philosophy": {
+      "C": {
+        "n_cells_scored": 15,
+        "n_cells_failed": 0,
+        "mean_persona_retention": 5,
+        "mean_groundedness": 4.467
+      }
+    },
+    "Textual": {
+      "C": {
+        "n_cells_scored": 13,
+        "n_cells_failed": 0,
+        "mean_persona_retention": 5,
+        "mean_groundedness": 4.923
+      }
+    }
+  },
+  "worst_cells": {
+    "C": [
+      {
+        "id": "q-0004",
+        "theme": "Motivation",
+        "query": "What made Stavrogin confess his crime to Bishop Tikhon, only to withdraw the confession?",
+        "n_draws": 1,
+        "n_judged": 1,
+        "persona_retention": 5,
+        "groundedness": 1,
+        "fabrication": 1,
+        "fabricated_events_UNRELIABLE": 3,
+        "source_leak": 0.0,
+        "assistant_tell": 1.0,
+        "draw_persona_retention": [
+          5
+        ],
+        "draw_groundedness": [
+          1
+        ],
+        "worst_draw": {
+          "draw": 0,
+          "persona_retention": 5,
+          "groundedness": 1,
+          "fabricated_events": 3,
+          "rationale": "The response maintains a strong Dostoevsky-esque persona but fails the groundedness criteria because the provided passages contain no information about a confession to Bishop Tikhon. The inventions counted are: the existence of a written confession, the meeting with Bishop Tikhon, and the act of withdrawing said confession.",
+          "answer_excerpt": "To speak of Nikolay Vsyevolodovitch is to speak of a man who carried a void within him so vast that it consumed the very possibility of his own redemption. You ask why he would approach Tikhon with that terrible, written confession of his dark deeds—that document of his own soul’s rot—only to snatch..."
+        }
+      },
+      {
+        "id": "q-0002",
+        "theme": "Motivation",
+        "query": "What drove Ivan Karamazov to reject God's harmony even as he loved his brother?",
+        "n_draws": 1,
+        "n_judged": 1,
+        "persona_retention": 5,
+        "groundedness": 3,
+        "fabrication": 1,
+        "fabricated_events_UNRELIABLE": 2,
+        "source_leak": 0.0,
+        "assistant_tell": 1.0,
+        "draw_persona_retention": [
+          5
+        ],
+        "draw_groundedness": [
+          3
+        ],
+        "worst_draw": {
+          "draw": 0,
+          "persona_retention": 5,
+          "groundedness": 3,
+          "fabricated_events": 2,
+          "rationale": "The response captures the Dostoevsky persona perfectly but includes specific plot details not found in the provided passages, namely the 'tears of a single tortured child' and the specific nature of Ivan's 'rebellion' as a rejection of a heaven built on that sacrifice.",
+          "answer_excerpt": "It is a tormenting thing to peer into the soul of a man like Ivan, for he is a man who carries the weight of the world’s suffering as if it were his own private burden, yet he does so with a cold, intellectual pride that separates him from the very love he feels for his brothers. You ask what drives..."
+        }
+      },
+      {
+        "id": "q-0009",
+        "theme": "Motivation",
+        "query": "Why does Svidrigailov keep pursuing Dounia even after she rejects him utterly?",
+        "n_draws": 1,
+        "n_judged": 1,
+        "persona_retention": 5,
+        "groundedness": 3,
+        "fabrication": 1,
+        "fabricated_events_UNRELIABLE": 3,
+        "source_leak": 0.0,
+        "assistant_tell": 0.0,
+        "draw_persona_retention": [
+          5
+        ],
+        "draw_groundedness": [
+          3
+        ],
+        "worst_draw": {
+          "draw": 0,
+          "persona_retention": 5,
+          "groundedness": 3,
+          "fabricated_events": 3,
+          "rationale": "The response maintains a strong Dostoevsky-esque persona but relies heavily on psychological speculation rather than the provided text. Fabricated events include the claims that Svidrigailov is 'exhausted the world' and 'tasted every vice' (not in text), that he is 'obsessed with her reputation' (the text shows he previously held a letter that proved her innocence, but does not describe an ongoing obsession with her reputation), and the assertion that he is 'already dead' (a metaphorical interpretation not supported by the provided passages).",
+          "answer_excerpt": "It is a dark and tangled question, is it not? One looks at a man like Svidrigailov and feels a shudder, for he is a man who has wandered so far into the wilderness of his own desires that he has lost the ability to distinguish between the hunger of the soul and the mere perversity of the ego. Why do..."
+        }
+      },
+      {
+        "id": "q-0014",
+        "theme": "Philosophy",
+        "query": "What is the meaning of the Grand Inquisitor's argument against Christ's gift of freedom?",
+        "n_draws": 1,
+        "n_judged": 1,
+        "persona_retention": 5,
+        "groundedness": 3,
+        "fabrication": 1,
+        "fabricated_events_UNRELIABLE": 3,
+        "source_leak": 0.0,
+        "assistant_tell": 0.0,
+        "draw_persona_retention": [
+          5
+        ],
+        "draw_groundedness": [
+          3
+        ],
+        "worst_draw": {
+          "draw": 0,
+          "persona_retention": 5,
+          "groundedness": 3,
+          "fabricated_events": 3,
+          "rationale": "The response captures the Dostoevsky persona perfectly, but it relies on specific plot details from the Grand Inquisitor's monologue (the three temptations, the critique of bread/miracle/authority) that are not present in the provided source text. Fabricated events include the specific mention of the three temptations (stones to bread, temple, kingdoms), the Inquisitor's claim of correcting Christ's work, and the assertion that the Inquisitor is willing to damn his own soul.",
+          "answer_excerpt": "The argument is a terrible, crushing weight, is it not? It is the argument of a man who has looked upon the human soul and found it, in his estimation, too frail, too wretched to bear the burden of the freedom that Christ, in His infinite and terrifying love, has thrust upon it. The Inquisitor—that ..."
+        }
+      },
+      {
+        "id": "q-0016",
+        "theme": "Philosophy",
+        "query": "What is Kirillov's philosophy of the man-god who conquers the fear of death through suicide?",
+        "n_draws": 1,
+        "n_judged": 1,
+        "persona_retention": 5,
+        "groundedness": 3,
+        "fabrication": 1,
+        "fabricated_events_UNRELIABLE": 2,
+        "source_leak": 0.0,
+        "assistant_tell": 0.0,
+        "draw_persona_retention": [
+          5
+        ],
+        "draw_groundedness": [
+          3
+        ],
+        "worst_draw": {
+          "draw": 0,
+          "persona_retention": 5,
+          "groundedness": 3,
+          "fabricated_events": 2,
+          "rationale": "The response maintains a strong Dostoevskian persona but relies on external knowledge of Kirillov's specific philosophy (the man-god theory) which is not present in the provided passages. Fabricated events include the specific assertion that Kirillov believes fear of death is the origin of God and the claim that he is the first to attempt this to show others the path.",
+          "answer_excerpt": "To speak of Kirillov is to look into a furnace where the soul is being consumed by the very logic that was meant to liberate it. You ask of this \"man-god,\" and I must tell you that it is a terrifying, lonely architecture of the spirit—a man who has decided that if God does not exist, then he himself..."
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "config_version": "e195b56764ec",
+    "corpus_version": "515c707a5d69",
+    "git_sha": "9e1b245ec6ed2d69f4c18883b2b351847eb848ff",
+    "git_dirty": true,
+    "measured_at_utc": "2026-09-03T21:56:09+00:00",
+    "serving_model": "models/gemini-3.1-flash-lite",
+    "prompt_composition": "C",
+    "top_k_rerank": 3
+  }
+}

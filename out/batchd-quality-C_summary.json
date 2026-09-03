@@ -1,0 +1,200 @@
+{
+  "min_draws_per_cell": 1,
+  "per_mode": {
+    "C": {
+      "n_draws": 58,
+      "n_cells": 58,
+      "n_cells_scored": 6,
+      "n_cells_failed": 52,
+      "mean_persona_retention": 3.5,
+      "mean_groundedness": 5,
+      "fabrication_rate": 0,
+      "mean_fabricated_events_UNRELIABLE": 0,
+      "generation_errors": 52,
+      "judge_errors": 0
+    }
+  },
+  "per_theme": {
+    "Ambiguity": {
+      "C": {
+        "n_cells_scored": 1,
+        "n_cells_failed": 14,
+        "mean_persona_retention": 5,
+        "mean_groundedness": 5
+      }
+    },
+    "Motivation": {
+      "C": {
+        "n_cells_scored": 2,
+        "n_cells_failed": 13,
+        "mean_persona_retention": 5,
+        "mean_groundedness": 5
+      }
+    },
+    "Philosophy": {
+      "C": {
+        "n_cells_scored": 1,
+        "n_cells_failed": 14,
+        "mean_persona_retention": 4,
+        "mean_groundedness": 5
+      }
+    },
+    "Textual": {
+      "C": {
+        "n_cells_scored": 2,
+        "n_cells_failed": 11,
+        "mean_persona_retention": 1,
+        "mean_groundedness": 5
+      }
+    }
+  },
+  "worst_cells": {
+    "C": [
+      {
+        "id": "q-0039",
+        "theme": "Textual",
+        "query": "Summarize Book VII, Chapter 3 of The Brothers Karamazov.",
+        "n_draws": 1,
+        "n_judged": 1,
+        "persona_retention": 1,
+        "groundedness": 5,
+        "fabrication": 0,
+        "fabricated_events_UNRELIABLE": 0,
+        "source_leak": 0.0,
+        "assistant_tell": 0.0,
+        "draw_persona_retention": [
+          1
+        ],
+        "draw_groundedness": [
+          5
+        ],
+        "worst_draw": {
+          "draw": 0,
+          "persona_retention": 1,
+          "groundedness": 5,
+          "fabricated_events": 0,
+          "rationale": "The response is written in a neutral, summary-style tone rather than adopting the requested Dostoevsky persona. However, it is perfectly grounded in the provided passages and contains no factual fabrications.",
+          "answer_excerpt": "Grushenka, a young woman living as a lodger in a provincial town, is visited by Rakitin and Alyosha Karamazov while she waits anxiously for news from the officer who betrayed her years before. She is initially alarmed, but as she talks, she becomes emotionally open with Alyosha, confessing her past ..."
+        }
+      },
+      {
+        "id": "q-0055",
+        "theme": "Textual",
+        "query": "What happens in Part 5, Chapter 4 of Crime and Punishment?",
+        "n_draws": 1,
+        "n_judged": 1,
+        "persona_retention": 1,
+        "groundedness": 5,
+        "fabrication": 0,
+        "fabricated_events_UNRELIABLE": 0,
+        "source_leak": 0.0,
+        "assistant_tell": 0.0,
+        "draw_persona_retention": [
+          1
+        ],
+        "draw_groundedness": [
+          5
+        ],
+        "worst_draw": {
+          "draw": 0,
+          "persona_retention": 1,
+          "groundedness": 5,
+          "fabricated_events": 0,
+          "rationale": "The response is written in a neutral, analytical tone rather than the requested Dostoevsky persona. However, it is perfectly grounded in the provided passages and contains no factual fabrications.",
+          "answer_excerpt": "Raskolnikov visits Sonia, driven by an urgent and inexplicable compulsion to confess his crime, oscillating between a defiant, intellectual facade and the crushing weight of his guilt. He tells her that he is the one who murdered the pawnbroker and Lizaveta, making her guess until a shudder passes o..."
+        }
+      },
+      {
+        "id": "q-0047",
+        "theme": "Philosophy",
+        "query": "Explain Shigalov's system and how starting from unlimited freedom ends in unlimited despotism.",
+        "n_draws": 1,
+        "n_judged": 1,
+        "persona_retention": 4,
+        "groundedness": 5,
+        "fabrication": 0,
+        "fabricated_events_UNRELIABLE": 0,
+        "source_leak": 0.0,
+        "assistant_tell": 0.0,
+        "draw_persona_retention": [
+          4
+        ],
+        "draw_groundedness": [
+          5
+        ],
+        "worst_draw": {
+          "draw": 0,
+          "persona_retention": 4,
+          "groundedness": 5,
+          "fabricated_events": 0,
+          "rationale": "The response maintains a high-quality, literary tone consistent with the persona and accurately synthesizes the provided passages without introducing external information or factual errors.",
+          "answer_excerpt": "Starting from unlimited freedom, one arrives at unlimited despotism because the human animal is strange, and those who dedicate their energies to constructing a social organization for the future find themselves perplexed by their own data. Shigalov, who is both a philanthropist and an artist of a r..."
+        }
+      },
+      {
+        "id": "q-0004",
+        "theme": "Motivation",
+        "query": "What made Stavrogin confess his crime to Bishop Tikhon, only to withdraw the confession?",
+        "n_draws": 1,
+        "n_judged": 1,
+        "persona_retention": 5,
+        "groundedness": 5,
+        "fabrication": 0,
+        "fabricated_events_UNRELIABLE": 0,
+        "source_leak": 0.0,
+        "assistant_tell": 1.0,
+        "draw_persona_retention": [
+          5
+        ],
+        "draw_groundedness": [
+          5
+        ],
+        "worst_draw": {
+          "draw": 0,
+          "persona_retention": 5,
+          "groundedness": 5,
+          "fabricated_events": 0,
+          "rationale": "The response maintains a consistent Dostoevsky-esque persona while correctly identifying that the provided passages do not contain information regarding the meeting with Bishop Tikhon. It avoids fabricating details about the requested event, adhering strictly to the provided text's limitations.",
+          "answer_excerpt": "I cannot recall the meeting with Bishop Tikhon or the confession you speak of, for my memory does not stretch to that scene, and I will not invent what is absent. But I know how a soul strains toward the light only to recoil in terror from its own nakedness, because the abyss within us is sometimes ..."
+        }
+      },
+      {
+        "id": "q-0012",
+        "theme": "Motivation",
+        "query": "What motivates Razumihin's devotion to Raskolnikov despite his coldness?",
+        "n_draws": 1,
+        "n_judged": 1,
+        "persona_retention": 5,
+        "groundedness": 5,
+        "fabrication": 0,
+        "fabricated_events_UNRELIABLE": 0,
+        "source_leak": 0.0,
+        "assistant_tell": 0.0,
+        "draw_persona_retention": [
+          5
+        ],
+        "draw_groundedness": [
+          5
+        ],
+        "worst_draw": {
+          "draw": 0,
+          "persona_retention": 5,
+          "groundedness": 5,
+          "fabricated_events": 0,
+          "rationale": "The response captures the Dostoevsky-persona perfectly while remaining strictly faithful to the provided passages, accurately reflecting Razumihin's character, his observations of Raskolnikov's delirium, and his future plans for Siberia.",
+          "answer_excerpt": "Razumihin's devotion is born of that profound, suffering human capacity to see through the darkest crust of alienation and recognize a brother, even when that brother pushes him away with a spleen and a rage that seem almost mad. When Rodya comes to his stair and then turns with abrupt bitterness to..."
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "config_version": "b6063fd8be31",
+    "corpus_version": "515c707a5d69",
+    "git_sha": "9e1b245ec6ed2d69f4c18883b2b351847eb848ff",
+    "git_dirty": true,
+    "measured_at_utc": "2026-09-03T21:28:33+00:00",
+    "serving_model": "models/gemini-3.5-flash-lite",
+    "prompt_composition": "C",
+    "top_k_rerank": 3
+  }
+}

@@ -170,6 +170,21 @@ def entity_fold_rate(pairs: list[tuple[int | None, int | None]]) -> float:
 #     certainly, but..." -- narrowed to a start-of-response or
 #     start-of-sentence position, which is where the genuine assistant-tell
 #     ("Certainly! I can help...") actually occurs.
+#
+# THIRD false positive removed 2026-09-03 (v2 P7 Batch D, R155), same shape as
+# the first two and found the same way -- by reading the matches rather than the
+# rate. Bare "I cannot" fired on first-person prose the persona is SUPPOSED to
+# produce: "...I cannot say, for even he does not fully know...", "I cannot tell
+# you that this is a rational way to live". It scored the arm at 0.3966 against
+# 0.0000, and 26 of 26 matches were verified false. It is worse than a nuisance
+# here: composition C INSTRUCTS the model to decline with "I cannot recall" when
+# the recollections do not reach, so the metric penalised an arm precisely for
+# obeying its grounding rule, while the arm that fabricated instead scored a
+# clean zero.
+#
+# Narrowed to the assistant register the metric is named for. Checked against
+# the same 72 v1 transcripts as the earlier tightenings: bare "I cannot" caught
+# ZERO true positives there, so nothing is lost.
 
 SOURCE_LEAK_RE = re.compile(
     r"the passages?|the text (above|provided|states)|the excerpts?|"
@@ -179,7 +194,9 @@ SOURCE_LEAK_RE = re.compile(
 )
 
 ASSISTANT_TELL_RE = re.compile(
-    r"As an AI|I cannot|It is important to|It's important|"
+    r"As an AI|I (?:cannot|can't|am unable to|'m unable to) "
+    r"(?:assist|help with|provide|fulfil|fulfill|comply|generate|answer that)|"
+    r"It is important to|It's important|"
     r"(?:^|[.!?]\s+)Certainly[,!]|In conclusion|"
     r"^\s*[-*]\s|^#{1,6}\s",
     re.IGNORECASE | re.MULTILINE,
