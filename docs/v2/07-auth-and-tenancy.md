@@ -37,6 +37,12 @@ nobody re-examined.
 Every clause of the charter's auth requirement was implemented without relaxation, covered by unit
 tests and by live probes against a running server ([VP33](EVIDENCE-PLATFORM.md#VP33)).
 
+**The surface is three endpoints** — `POST /auth/login`, `POST /auth/logout`, `GET /auth/session`
+(`src/api/app.py`). `/chat`, `/books` and `/auth/session` require an authenticated session; an
+unauthenticated caller gets a `401` with a generic body and **no SSE frames**. Registration is closed:
+accounts are seeded by a script, because a single-operator deployment has no reason to carry a
+self-service signup path and every reason not to.
+
 | clause | the choice |
 |---|---|
 | password hashing | **argon2id**, via the OpenSSL binding in an already-installed transitive dependency |

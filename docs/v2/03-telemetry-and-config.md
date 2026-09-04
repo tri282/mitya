@@ -159,6 +159,16 @@ the same configuration, while the scores were plausible enough to have been beli
 arm, promote a configuration for it.** Adding an environment override that bypassed the artifact would
 reintroduce the defect the artifact closed.
 
+**The one override that exists is deliberately process-scoped.** `MITYA_CONFIG_VERSION` pins a single
+process to a named version, which is what makes a side-by-side comparison possible at all without
+moving the pointer everyone else reads. It overrides the pointer, never the artifact — the artifact is
+still the thing that resolves, so the provenance block still records which version actually ran.
+
+**Trace export is opt-in the same way.** With no `OTEL_EXPORTER_OTLP_ENDPOINT` the SDK builds spans
+and drops them, so a development run needs no collector and no docker; `OTEL_ENABLED=false` is the
+stronger switch that installs no provider and no instrumentation at all. Two levels, because "I do not
+want to run a collector" and "I do not want the overhead" are different requests.
+
 Provenance stamping on every eval run follows from the same argument: config version, corpus version,
 git SHA, **whether the tree was dirty**, timestamp, serving model, composition. The dirty flag matters
 more than it looks — a measurement taken on an uncommitted tree is not reproducible from its SHA, and

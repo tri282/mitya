@@ -81,9 +81,13 @@ contents no longer hash to its filename, or an unavailable argon2id.
 | Endpoint | Purpose |
 |---|---|
 | `POST /chat` | `{query, filters?, session_id?}` + session cookie → an SSE stream of the answer |
-| `POST /login`, `POST /logout` | Opaque session cookie, rotated on login; `HttpOnly` + `Secure` + `SameSite=Lax` |
+| `POST /auth/login`, `POST /auth/logout` | Opaque session cookie, rotated on login; `HttpOnly` + `Secure` + `SameSite=Lax` |
+| `GET /auth/session` | The current session's identity. Requires an authenticated session |
 | `GET /health`, `GET /ready` | Dependency and readiness status. **Readiness is config-only** — "configured and credentialed", not "the provider is reachable" |
 | `GET /books`, `GET /metrics`, `/` | The parse output verbatim; the Prometheus scrape; `StaticFiles(frontend/dist)`, mounted **last** |
+
+`/chat`, `/books` and `/auth/session` require an authenticated session; an unauthenticated caller
+gets a `401` with a generic body and **no SSE frames**.
 
 The SSE stream is named events with JSON payloads: `token` (many), then `sources`, then `meta`. The
 cache path also emits `done`; **the default path emits no terminal event**

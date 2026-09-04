@@ -27,7 +27,9 @@ bimodal distribution caused by a set-ordering defect in the entity map, measured
 ran the wrong retrieval path for structural rows. `0.7250` (29/40) / `MRR = 0.5287` was in turn
 superseded 2026-08-29 (Q4): two rows misclassified `primary` by a legacy family-key gap were
 STRUCTURAL-routed guaranteed hits, reclassified in `family_of()`. Current: `recall@5 = 0.7105`
-(27/38), `MRR = 0.5039` on the `primary` family. See `docs/RAG.md` §VII.1 — the full ablation is
+(27/38), `MRR = 0.5039` on the `primary` family. See
+[`docs/v2/EVIDENCE-PLATFORM.md#VP4`](docs/v2/EVIDENCE-PLATFORM.md#VP4) for the derivation and
+[`docs/v1/11-ablation.md`](docs/v1/11-ablation.md) for the withdrawal — the full ablation is
 withdrawn, not merely restated.)*
 
 **Serving** — **5.0GB / 6.0GB VRAM** at 4096 ctx with full offload (967MiB free). TTFT ~7.9s,

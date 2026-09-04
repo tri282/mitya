@@ -6,6 +6,12 @@ section anchors here and state no figure of their own.
 **Contract:** anchor IDs `E1`–`E30` are frozen. They are never renumbered; a superseded section is
 marked superseded in place.
 
+**Citations to `docs/RAG.md`, `docs/DESIGN.md` and `docs/FINE_TUNE.md`** are **provenance, not
+navigation**: they name the file a number was read from at the time it was recorded. Those three
+documents were superseded by this set and removed from the tree; they remain readable at tag `v1`
+and in every commit before the removal. Do not rewrite these citations to point at the new docs —
+a provenance record that names its actual source is the point.
+
 **Provenance tags**
 
 | tag | meaning |

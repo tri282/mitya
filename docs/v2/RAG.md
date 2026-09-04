@@ -79,7 +79,8 @@ noise. Sparse is fastembed's BM25: the document side emits term-frequency weight
 half is computed server-side, which is why the collection declares the IDF modifier.
 
 **The collection.** One Qdrant collection, `dostoevsky`, in **local embedded mode** against
-`data/vector_db/` — no server process. Two named vectors per point. Each point's payload —
+`data/vector_db/` — no server process. `qdrant-client>=1.10` is pinned, because the Query API and
+server-side native fusion below are what that floor buys. Two named vectors per point. Each point's payload —
 `{book, part, chapter, canonical_entities, text}` — is the contract with everything downstream: hard
 filters read the three structural fields, context assembly reads `text`, and the Sources list is
 built from those same three fields, so a citation shown to a user is derived from the object

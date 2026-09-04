@@ -52,6 +52,13 @@ the two may not be merged). Promoted pointer **`b6063fd8be31`** (composition C).
 ---
 
 <a id="VM1"></a>
+
+**Citations to `docs/RAG.md`, `docs/DESIGN.md` and `docs/FINE_TUNE.md`** are **provenance, not
+navigation**: they name the file a number was read from at the time it was recorded. Those three
+documents were superseded by this set and removed from the tree; they remain readable at tag `v1`
+and in every commit before the removal. Do not rewrite these citations to point at the new docs —
+a provenance record that names its actual source is the point.
+
 ## VM1 — What CP6 built: three tiers, one budget, one fence
 
 Three memory tiers compete for **one** token budget alongside the retrieved passages. That

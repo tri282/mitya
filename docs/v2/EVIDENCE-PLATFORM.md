@@ -30,6 +30,13 @@ measurement). A number that cannot be sourced is omitted, never guessed.
 ---
 
 <a id="VP1"></a>
+
+**Citations to `docs/RAG.md`, `docs/DESIGN.md` and `docs/FINE_TUNE.md`** are **provenance, not
+navigation**: they name the file a number was read from at the time it was recorded. Those three
+documents were superseded by this set and removed from the tree; they remain readable at tag `v1`
+and in every commit before the removal. Do not rewrite these citations to point at the new docs —
+a provenance record that names its actual source is the point.
+
 ## VP1 — The eval sets, their versions, and what a version is
 
 **A9 — append-only sets with immutable row ids.** A version is *the set of ids present*; any two
