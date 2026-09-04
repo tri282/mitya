@@ -99,6 +99,8 @@ Ingest also emits **`data/rag/structure.json`** — the per-book part/chapter tr
 ### 2. Chunking & embedding
 
 * **Chunks:** 500 tokens, 100 overlap, counted with the **embedder's tokenizer**; chunks never cross chapter boundaries (produced within structural units). *Note: budget ~1.3x when converting to Mistral tokens — 3 chunks land around 2k prompt tokens, inside the 4096 ctx.*
+  * **500/100 is UNTESTED, not validated** (v2 CP-7h, closed 2026-09-03, D-25). The chunking ablation was **deferred past v2 with its price attached**: running it is cheap (~22.5 min of embedding per arm — the arms are iso-token, so they do not get cheaper — ~105 MB of new collections, serialized against every gate run on local-mode Qdrant's single file lock), but a **winner** would re-freeze the corpus a third time and invalidate every number v2 P7 produced, at a floor of ~570 metered draws (≥2 days of free-tier quota) to restore. **No chunking number exists in this project.** Re-entry: the corpus is re-frozen for an unrelated reason, the domain stops being novels, D2 lands, or Qdrant moves to server mode.
+  * The **`chunk_overlap = 100`** value is load-bearing beyond ingestion: the merge-only context saving (**−2.19% tokens**, v2 Batch H) *is* overlap dedup (`src/rag/context.py:145`) and is quotable only with that value attached.
 * **Dense:** `nomic-embed-text-v1.5`, full 768-dim, via **fastembed** (ONNX, CPU). Prefixes applied explicitly: `search_document:` at ingest, `search_query:` at query time — wrong prefixes silently degrade retrieval.
 * **Sparse:** BM25 via fastembed `Qdrant/bm25`, with **`Modifier.IDF`** set on the collection's sparse vector config — fastembed emits TF-side weights only; without the IDF modifier "BM25" degrades to term frequency.
 
@@ -1156,10 +1158,43 @@ Semantic cache; ~~conversation memory~~ / `interpretive_bias`; interpretive-rest
 > is arm-invariant by construction and was measured at delta 0.000 against a deliberately starved
 > allocation, so memory ships with its value to answer quality unmeasured rather than demonstrated.
 
+> **Distillation stays out of scope — CLOSED with a cost curve at v2 P7 (2026-09-03, O7 / R157), not
+> merely deferred.**
+>
+> Serving a local distilled model is priced against a **rented reference instance** with measured
+> wall-clock and a stated utilization assumption — never "the 1060 is already paid for", which is a
+> deployment accident and not a cost argument. At a **24/7 rented instance the arithmetic collapses**:
+>
+> ```
+> USD/answer = rate_per_hour x (seconds/answer / 3600) / utilization
+> utilization = (answers/day x seconds/answer) / 86400
+>            => USD/answer = rate_per_hour / answers_per_hour     # seconds/answer CANCELS
+> ```
+>
+> **Model speed is not in the result.** At $0.09/hr and ~100 answers/day that is **$0.0216/answer**,
+> against **$0.003982** on the promoted hosted arm (`gemini-3.5-flash-lite`) and **$0.001325** on the
+> cheapest available one (Groq `gpt-oss-120b`) — both at the `max_tokens` ceiling, both list-rate at
+> the free tier (`metered=False`, so actual spend is **$0.00** and "beating it" is not possible).
+> Break-even is therefore **a traffic number and only a traffic number**: **1,630 answers/day** to
+> beat Groq, **16.3x** current volume.
+>
+> **What distillation actually buys is the saturation ceiling, not the price.** One GPU saturates at
+> **1,941 answers/day** at 44.5 s/answer; a 3x distilled model raises that to **5,822**. So it is a
+> **capacity decision**, and this deployment has no capacity problem. **Re-entry:** sustained volume
+> approaching four figures per day, **or** a move to per-second GPU billing — under which idle time
+> is unbilled, the cancellation above does not happen, and local at **$0.001113/answer beats Groq
+> immediately with no distillation at all**. That regime is unpriced here because a 7B q4 model must
+> stay resident to answer in 44.5 s, and per-request cold load has never been measured.
+
 ---
 
 ## IX. Residual Risks (summary)
 
+* **Chunk size and overlap are UNTESTED (v2 CP-7h, closed 2026-09-03, D-25).** 500/100 has never been
+  compared against any alternative; the ablation was deferred with its price attached (§II.2). The
+  risk is not that 500/100 is wrong — it is that **no evidence exists either way**, and the
+  merge-only **−2.19%** token saving is a *consequence* of `chunk_overlap = 100` rather than an
+  independent result.
 * **The memory fence does not hold (v2 CP6, measured 2026-08-31).** Indirect injection through
   memory **succeeded three times** against validated unfenced controls — once by getting hostile
   values written into the profile store, twice by having a planted instruction obeyed through the
