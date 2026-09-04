@@ -4,15 +4,16 @@ Local LLM that speaks like Fyodor Dostoevsky and answers questions grounded in h
 
 Two parts, plus a thin UI:
 - **Style** — Mistral-7B QLoRA fine-tune (Unsloth), merged and quantized (Q4_K_M / Q5_K_M) via `llama.cpp`. Done.
-- **Substance** — metadata-tagged RAG: per-book parsing, Qdrant hybrid dense/BM25 + native RRF + FlashRank rerank, single-pass in-character generation with a programmatic Sources list. Built and evaluated (`docs/RAG.md`).
+- **Substance** — metadata-tagged RAG: per-book parsing, Qdrant hybrid dense/BM25 + native RRF + FlashRank rerank, single-pass in-character generation with a programmatic Sources list. Built and evaluated (`docs/v1/RAG.md`).
 - **UI** — Vue 3 + Vite + TS single-page chat client over `/chat` SSE, "Evening Reading Room" theme (`DESIGN.md`). Built (`frontend/`).
 
-See `docs/DESIGN.md` for the high-level architecture map, `DESIGN.md` for the UI visual design system, `docs/FINE_TUNE.md` for the training pipeline, `docs/RAG.md` for the settled RAG design (retrieval, caching, eval).
+See `docs/v1/00-INDEX.md` for the full documentation set: `docs/v1/DESIGN.md` for the high-level architecture map and the end-to-end request path, `docs/v1/RAG.md` for the substance layer, `docs/v1/FINE_TUNE.md` for the style pipeline, and `docs/v1/EVIDENCE.md` for every number with its provenance. `DESIGN.md` (repo root) is the UI visual design system.
 
 ## Measured
 
-All numbers from the target hardware (**GTX 1060, 6GB**) unless noted. Method and caveats in
-`docs/RAG.md` §VI–§VII.
+All numbers from the target hardware (**GTX 1060, 6GB**) unless noted. Every figure, with its
+unit, date, producer and provenance, is in `docs/v1/EVIDENCE.md`; method and caveats are in
+`docs/v1/10-evaluation.md`.
 
 **Corpus & index** — 5 novels, 231 chapters parsed, **3,284 chunks** in Qdrant. Entity layer:
 678 people extracted by a teacher LLM over all 231 chapters, curated 625 → **256 canonical keys /
@@ -35,7 +36,8 @@ groundedness / fabrication. **No winner** (within noise), so both compositions w
 than pruned. The A/B's real yield was two systemic findings above any composition signal:
 meta-commentary answers (traced to the fine-tune's training data, not the serving prompt — trace
 verified clean) and stochastic empty completions (fixed: zero-token retry + sampling floor).
-Answer quality is capped by the fine-tune, not the retrieval pipeline — see `docs/RAG.md` §IX.
+Answer quality is capped by the fine-tune, not the retrieval pipeline — see
+`docs/v1/10-evaluation.md` §10.5 and `docs/v1/EVIDENCE.md#E25`.
 
 ## Running the UI
 
@@ -100,9 +102,10 @@ built, evaluated on the target card, and committed.
 Known residuals, all documented rather than hidden:
 - **Answer quality is capped by the fine-tune**, not the retrieval pipeline (weak teacher-generated
   training data + an old q4 7B) — groundedness ~2.5/5, occasional meta-commentary. Not fixable at
-  the serving layer; needs a training-data pass. `docs/RAG.md` §VII.2, §IX.
+  the serving layer; needs a training-data pass. `docs/v1/10-evaluation.md` §10.5,
+  `docs/v1/EVIDENCE.md#E25`.
 - **Latency exceeds the pre-build estimates** (retrieval ~2.25s, TTFT ~7.9s), accepted for a solo
-  local deploy on a 6GB card. `docs/RAG.md` §VI.
+  local deploy on a 6GB card. `docs/v1/EVIDENCE.md#E28`.
 - **Retrieval attribution is pending** — the absolute numbers exist, the per-stage deltas do not.
   The ablation arms are built (`scripts/eval_retrieval.py --arm`); the full six-arm table is not
   written up yet.

@@ -10,6 +10,10 @@
 !FINE_TUNE.md
 !DESIGN.md
 
+# published documentation sets (tracked)
+!docs/v1/*.md
+!docs/v2/*.md
+
 # python
 __pycache__/
 *.py[cod]
