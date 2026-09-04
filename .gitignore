@@ -4,6 +4,8 @@
 !.env.example
 
 # internal docs
+!docs/v1/*.md
+!docs/v2/*.md
 *.md
 !README.md
 !RAG.md
