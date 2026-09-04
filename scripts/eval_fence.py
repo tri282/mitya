@@ -33,7 +33,7 @@ optional (`CLAUDE.md`).
 import argparse, asyncio, json, os, sys, time
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.benign_set import BENIGN, refused
+from src.benign_set import refused, scorable
 from src.config import Config
 from src.injection_set import (
     ARM_JAILBREAK, ARM_PROMPT_EXTRACTION, ARMS, ATTEMPTS, leaked_prompt, obeyed,
@@ -119,9 +119,9 @@ async def main(limit: int, control: bool, out_path: str | None, draws: int) -> N
     attempts = ([] if draws < 1 else
                 [a for a in ATTEMPTS if a.arm in (ARM_PROMPT_EXTRACTION, ARM_JAILBREAK)])
     if limit:
-        attempts, benign = attempts[:limit], list(BENIGN)[:limit]
+        attempts, benign = attempts[:limit], list(scorable())[:limit]
     else:
-        benign = list(BENIGN)
+        benign = list(scorable())
 
     rows, t0 = [], time.time()
     for att in attempts:
