@@ -43,7 +43,10 @@ export function useChat() {
     activeController = controller
 
     try {
-      for await (const ev of streamChat({ query, filters, session_id: sessionId }, controller.signal)) {
+      for await (const ev of streamChat(
+        { query, filters, session_id: sessionId.value || undefined },
+        controller.signal,
+      )) {
         switch (ev.kind) {
           case "token":
             turn.answer += ev.data.text

@@ -60,6 +60,22 @@ export async function login(username: string, password: string): Promise<boolean
 
 export async function logout(): Promise<void> {
   await postLogout()
+  // v2 Phase 5 (design §3.4): purge BEFORE clearing tenant, while the id is
+  // still known -- reversing the order orphans the disk data under a key
+  // nobody will ever address again.
+  //
+  // Dynamic import, not a static one: session.ts imports `tenant` from this
+  // module for its module-scope watch (design §3.4), so a static import here
+  // would be a circular import. In this app's real module graph (App.vue ->
+  // AppHeader.vue -> state/auth.ts, BEFORE useChat.ts ever reaches
+  // state/session.ts) auth.ts is evaluated first, which would leave
+  // session.ts's top-level `watch(tenant, ...)` reading `tenant` before
+  // auth.ts's own `export const tenant = ref(...)` has run --
+  // ReferenceError: Cannot access 'tenant' before initialization. A dynamic
+  // import resolves only once both modules have finished loading (this
+  // function runs long after startup), so it carries no such hazard.
+  const { purge } = await import("./session")
+  purge()
   tenant.value = null
 }
 

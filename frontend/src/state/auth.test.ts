@@ -16,6 +16,7 @@
 // a mock server would be more machinery than subject.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { nextTick } from "vue"
 
 function jsonResponse(status: number, body: unknown): Response {
   return {
@@ -101,5 +102,31 @@ describe("auth state", () => {
     await auth.refresh()
     await auth.logout()
     expect(auth.tenant.value).toBeNull()
+  })
+
+  // v2 Phase 5 (session-persistence, design §3.4/§6): logout() must purge
+  // both storage keys for the signed-out tenant BEFORE clearing `tenant`,
+  // and a storage failure must never block sign-out.
+  it("purges both storage keys and still clears the tenant when localStorage.removeItem throws", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(200, { tenant: "tenant-a" })))
+    const auth = await import("./auth")
+    // In the real app state/session.ts is imported (and its module-scope
+    // watch(tenant, ...) registered) before any tenant transition, via
+    // useChat.ts at App.vue setup. Import it here too so the watcher can
+    // adopt "tenant-a" below -- otherwise `currentTenant` stays null and
+    // purge() no-ops before ever touching storage.
+    await import("./session")
+    await auth.refresh()
+    await nextTick() // let the watch callback (adopt) run
+
+    const removeItemSpy = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new Error("storage disabled")
+    })
+
+    await expect(auth.logout()).resolves.toBeUndefined()
+    expect(auth.tenant.value).toBeNull()
+    // Both tenant-scoped keys were attempted, in spite of the throw.
+    expect(removeItemSpy).toHaveBeenCalledWith("mitya.session.v1.tenant-a")
+    expect(removeItemSpy).toHaveBeenCalledWith("mitya.transcript.v2.tenant-a")
   })
 })
