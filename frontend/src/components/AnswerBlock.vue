@@ -42,6 +42,15 @@ const paragraphs = computed(() => toParagraphs(props.turn.answer))
 const isEmptyComplete = computed(
   () => props.turn.state === "complete" && paragraphs.value.length === 0,
 )
+
+// The two empty-answer causes are NOT the same event. isEmptyComplete above is
+// "a turn closed with no prose"; this is "no model was ever asked" -- the
+// retrieval-only rung emits sources + meta + done and no `token` at all
+// (src/api/app.py:993-1010), so the answer is empty for a reason the shipped
+// copy gets wrong on every clause.
+const isRetrievalOnly = computed(
+  () => props.turn.state === "complete" && props.turn.meta?.rung === "retrieval_only",
+)
 </script>
 
 <template>
@@ -56,7 +65,16 @@ const isEmptyComplete = computed(
         turn.state === 'interrupted'
       "
     >
-      <p v-if="isEmptyComplete" class="answer-block__empty">
+      <!-- The retrieval-only cause wins: on that rung "considered your question"
+           and "ask it differently" are both false -- nothing considered it, and
+           rephrasing cannot reach a generator that is not available. Wording
+           for the mechanism is the server's own (app.py:1005); it names no
+           model, no provider and no GPU, so A3 cannot make it false. -->
+      <p v-if="isRetrievalOnly" class="answer-block__notice">
+        Mitya is not answering just now — generation is unavailable. These are the passages your
+        question reached.
+      </p>
+      <p v-else-if="isEmptyComplete" class="answer-block__empty">
         Mitya considered your question but had nothing to say. Perhaps ask it differently.
       </p>
       <template v-else>
