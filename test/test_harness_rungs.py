@@ -28,7 +28,16 @@ def _sse(event: str, data: str) -> str:
     return f"event: {event}\ndata: {data}\n\n"
 
 
-def _stream_body(cache_hit: bool, rung: str) -> str:
+def _stream_body(cache_hit: bool, rung: str, memory_bearing: bool = False) -> str:
+    """A `meta` body in the CURRENT server shape, `memory_bearing` included.
+
+    mitya-v2-ui Phase 2 added that key to all three server `meta` branches
+    (`src/api/app.py:817,1041,1300`). It is carried here deliberately and the
+    harness is deliberately NOT taught to read it: design §5 states the
+    harness reads named keys and is inert to an added one, so the assertion
+    worth having is that this client still parses every field it DOES read
+    when a new one arrives beside them. `ChatResult` gains no field.
+    """
     return (
         _sse("token", '{"text": "answer"}')
         + _sse("sources", '{"sources": [], "footer": ""}')
@@ -36,8 +45,12 @@ def _stream_body(cache_hit: bool, rung: str) -> str:
             "meta",
             '{"request_id": "r", "route_name": "DEFAULT", "cache_hit": %s, "cost_usd": 0.0, '
             '"cost_metered": false, "model": "fake", "no_context": false, '
-            '"filter_relaxed": false, "chunk_ids": [], "rung": "%s"}'
-            % ("true" if cache_hit else "false", rung),
+            '"filter_relaxed": false, "chunk_ids": [], "memory_bearing": %s, "rung": "%s"}'
+            % (
+                "true" if cache_hit else "false",
+                "true" if memory_bearing else "false",
+                rung,
+            ),
         )
         + _sse("done", "{}")
     )
@@ -66,7 +79,10 @@ def test_force_procedure_documents_every_rung_including_unreachable_ones() -> No
 
 def test_force_primary_over_http() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
-        body = _stream_body(cache_hit=False, rung="primary_model")
+        # memory_bearing=True: the live branch's realistic shape for a turn
+        # that carried memory, and the case where cache_hit is False FOR THAT
+        # REASON rather than for a miss.
+        body = _stream_body(cache_hit=False, rung="primary_model", memory_bearing=True)
         return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body.encode())
 
     async def run():
@@ -76,6 +92,10 @@ def test_force_primary_over_http() -> None:
     result = asyncio.run(run())
     assert result.rung == "primary_model", result.rung
     assert result.cache_hit is False
+    # §5, both directions: an added meta key changes nothing the harness reads.
+    assert result.model == "fake", result.model
+    assert result.route == "DEFAULT", result.route
+    assert result.cost_usd == 0.0, result.cost_usd
 
 
 def test_force_cached_over_http_second_call_is_a_hit() -> None:
@@ -96,6 +116,11 @@ def test_force_cached_over_http_second_call_is_a_hit() -> None:
     assert second.rung == "cached_answer", second.rung
     assert second.cache_hit is True
     assert calls["n"] == 2
+    # The cached branch emits memory_bearing=False BY CONSTRUCTION -- a hit is
+    # unreachable when memory-bearing (`src/api/app.py:725-727`) -- and the
+    # fixture's default says so. Same inertness check as above.
+    assert second.model == "fake", second.model
+    assert second.cost_metered is False, second.cost_metered
 
 
 if __name__ == "__main__":

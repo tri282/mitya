@@ -720,6 +720,11 @@ async def chat(
         profile_facts = memory_store.profile(tenant)
         episodes = memory_store.episodes(tenant)
         memory_bearing = bool(recent_turns or profile_facts or episodes)
+        # Computed ONCE. Three `meta` branches publish this value and all three
+        # close over this local; none recomputes it and none infers it from
+        # `cache_hit`. If a refactor ever moves an emit site out of this scope,
+        # PASS the value -- a second evaluation site is the defect this whole
+        # comment block exists to prevent.
 
         with tracer.start_as_current_span(STAGE_CACHE) as span, StageTimer(route_name, STAGE_CACHE):
             cached = (
@@ -803,6 +808,13 @@ async def chat(
                         "filter_relaxed": False,
                         "no_context": not cached["sources"],
                         "cache_hit": True,
+                        # Why this request neither read nor wrote the answer
+                        # cache -- the bypass predicate itself (:687-722), not
+                        # an inference from cache_hit. Always False here by
+                        # construction: a hit is unreachable when memory-bearing
+                        # (:725-727), which is what makes the field readable as
+                        # the explanation for a cache_hit:false on a repeat.
+                        "memory_bearing": memory_bearing,
                         # Ladder tier this request was served at (P4 Batch A0).
                         "rung": rung.value,
                         # Producing arm (v2 P2 step 9, R51): under per-request
@@ -1024,6 +1036,9 @@ async def chat(
                     "filter_relaxed": filter_relaxed,
                     "no_context": no_context,
                     "cache_hit": False,
+                    # The bypass predicate, computed once at :722. See the
+                    # cached branch for why it rides beside cache_hit.
+                    "memory_bearing": memory_bearing,
                     "rung": rung.value,
                     # Nothing generated, so nothing billed and no producing arm
                     # to name. `model` is None rather than
@@ -1280,6 +1295,9 @@ async def chat(
                 "filter_relaxed": filter_relaxed,
                 "no_context": no_context,
                 "cache_hit": False,
+                # The bypass predicate, computed once at :722. See the cached
+                # branch for why it rides beside cache_hit.
+                "memory_bearing": memory_bearing,
                 # Ladder tier this request was served at (P4 Batch A0).
                 "rung": rung.value,
                 "cost_usd": cost.usd,
