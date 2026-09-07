@@ -80,6 +80,22 @@ function onKeydown(e: KeyboardEvent): void {
         <dd>{{ meta.no_context }}</dd>
         <dt>cache_hit</dt>
         <dd>{{ meta.cache_hit }}</dd>
+        <!-- Adjacent to cache_hit because they are ONE reading: cache_hit
+             false + memory_bearing true means the cache was never consulted
+             (app.py:687-732); both false means consulted and missed. -->
+        <dt>memory_bearing</dt>
+        <dd>{{ meta.memory_bearing }}</dd>
+        <!-- Verbatim, no label map: a translation table here is a second
+             vocabulary that silently disagrees with src/gateway/ladder.py the
+             first time a rung is added. -->
+        <dt>rung</dt>
+        <dd>{{ meta.rung }}</dd>
+        <dt>model</dt>
+        <dd>{{ meta.model ?? "—" }}</dd>
+        <!-- One row, not two. Per-site ?? guards throughout: chatStream.ts:46
+             is a cast, not a validator, and an older server is supported. -->
+        <dt>tokens</dt>
+        <dd>{{ meta.prompt_tokens ?? "—" }} / {{ meta.completion_tokens ?? "—" }}</dd>
         <dt>request_id</dt>
         <dd>{{ meta.request_id }}</dd>
         <dt>tenant</dt>

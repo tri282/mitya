@@ -12,7 +12,9 @@ import type { Health } from "../api/types"
 const status = ref<"ok" | "degraded" | "unknown">("unknown")
 
 // Phase 7 addition: retain the last full /health body so HealthIndicator's
-// degraded tooltip can show the actual llama_server/qdrant subsystem detail
+// degraded tooltip can show the actual generation/qdrant subsystem detail
+// (mitya-v2-ui Phase 3: it was llama_server until A3 made that line say only
+// "not serving generation"; the tooltip now names the serving arm)
 // (design §III.2) instead of just the collapsed status string. Not polled on
 // an interval -- still populated only by the same mount-time/post-503-504
 // poll() calls as `status` (DECIDE C7).

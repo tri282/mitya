@@ -37,7 +37,14 @@ const subsystemDetail = computed(() => {
     typeof health.qdrant === "string"
       ? health.qdrant
       : `${health.qdrant.collection} (${health.qdrant.count})`
-  return `llama_server: ${health.llama_server} · qdrant: ${qdrant}`
+  // A3 froze the local arm out of the request path, so `llama_server` is a
+  // subsystem line whose hosted value is literally "not serving generation
+  // (provider=...)" -- true, and useless in a tooltip. `generation` is the arm
+  // that actually served (app.py:524-528, and :531-534's comment anticipates
+  // exactly this fix). Nothing else about this component changes: three
+  // states, no interval poll, never a red banner (C7).
+  const gen = health.generation
+  return `generation: ${gen.model} via ${gen.provider} — ${gen.status} · qdrant: ${qdrant}`
 })
 </script>
 

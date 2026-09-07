@@ -62,6 +62,12 @@ describe("useChat", () => {
             filter_relaxed: false,
             no_context: true,
             cache_hit: false,
+            // Ordinary miss: consulted the cache and missed. The bypass case
+            // (memory_bearing true) reads cache_hit false for a DIFFERENT
+            // reason -- that distinction is the whole point of the field.
+            memory_bearing: false,
+            rung: "primary_model",
+            model: "gemini-2.5-flash",
             cost_usd: 0,
             cost_metered: false,
           },
@@ -133,6 +139,11 @@ describe("useChat", () => {
             filter_relaxed: false,
             no_context: false,
             cache_hit: true,
+            // False by construction on a hit: a hit is unreachable when
+            // memory-bearing (src/api/app.py:725-727).
+            memory_bearing: false,
+            rung: "cached_answer",
+            model: "gemini-2.5-flash",
             cost_usd: 0,
             cost_metered: false,
           },

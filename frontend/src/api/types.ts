@@ -33,6 +33,20 @@ export interface SourcesEvent {
 }
 
 // NEW — see design §IV.
+// Mirrors src/gateway/ladder.py:24-44, one-for-one. Only three are reachable
+// on a meta-emitting path: UNAVAILABLE ("503") is an HTTP 503 and carries no
+// meta at all, CHEAPER is unreachable by construction (ladder.py:123-126, one
+// generation arm), and REFUSED is a per-attempt outcome next_rung() never
+// returns. The other three are typed because the wire can carry them the day
+// the ladder gains an arm; nothing in this client branches on them.
+export type Rung =
+  | "primary_model"
+  | "cheaper_model"
+  | "cached_answer"
+  | "retrieval_only"
+  | "content_refused"
+  | "503"
+
 export interface MetaEvent {
   // P1 step 1's join key. Paste it into Jaeger and the whole stage tree
   // resolves -- it IS the OTel trace id in hex, not a parallel identifier.
@@ -58,6 +72,29 @@ export interface MetaEvent {
   filter_relaxed: boolean
   no_context: boolean
   cache_hit: boolean
+  // True when this request carried recent turns, profile rows or episodic
+  // digests, and therefore neither READ nor WROTE the answer cache
+  // (app.py:687-732). It is why a memory-bearing request always reports
+  // cache_hit:false; without it the bypass and an ordinary miss are the same
+  // bytes. Renders beside cache_hit because the two are one reading.
+  memory_bearing: boolean
+  // Ladder tier this request was served at (app.py:817, :1041, :1300).
+  rung: Rung
+  // The producing arm (app.py:812, :1298). `null` on retrieval_only and ONLY
+  // there: nothing generated, so there is no arm to name (app.py:1028-1031).
+  // This field, not any static string, is what the UI may say about which
+  // model answered -- the local arm is off the request path (A3).
+  model: string | null
+  // Live generation path only (app.py:1291-1292); ABSENT on the cached and
+  // retrieval-only branches, and null when the provider reported no usage.
+  // Absent stays absent -- a 0 here would read as a free draw rather than an
+  // unreported one.
+  prompt_tokens?: number | null
+  completion_tokens?: number | null
+  // NOT TYPED, deliberately: meta.context_plan (app.py:1301) is
+  // ContextPlan.attributes(), an allocator-internal shape that
+  // docs/v2/08-memory.md §4 keeps as a seam. It is dropped by the same
+  // unknown-field rule that makes every field above safe to add.
   // P1 step 3. `null` means UNPRICED -- the serving path could not obtain
   // token counts -- and is NOT the same as 0. `cost_metered: false` means
   // nobody bills for these tokens (local inference), so the figure is honest
@@ -80,7 +117,14 @@ export interface Source {
 
 // GET /health
 export interface Health {
+  // Still the wire shape, so still typed -- but no longer DISPLAYED (§3.6).
+  // Its hosted value is the literal string "not serving generation
+  // (provider=...)" (app.py:531-536), which is true and useless.
   llama_server: string
+  // app.py:524-528. The arm that actually serves. This is what the degraded
+  // tooltip narrates now: A3 froze the local arm out of the request path, so
+  // llama_server is a subsystem line, not the answer to "what served this".
+  generation: { model: string; provider: string; status: string }
   qdrant: { collection: string; count: number } | string
   artifacts: { entities_loaded: number; summaries_loaded: number; structure_loaded: number }
   status: "ok" | "degraded"
