@@ -1,0 +1,137 @@
+# Grafana-managed alert rules for the Mitya operator plane.
+#
+# Provisioned as FILES, not clicks: ops/grafana/provisioning is mounted
+# :ro,Z (docker-compose.yml), so a rule edited in the Grafana UI cannot
+# persist and a rule that matters cannot live only in someone's browser.
+#
+# THE SELECTION PRINCIPLE, because it is the judgment and not the syntax:
+# on a solo local box a SYSTEM failure is visible to the one person driving
+# it within seconds -- the browser shows the error, the answer never arrives.
+# What is NOT visible is a number that has quietly stopped meaning anything.
+# This project's own accumulated finding is that the instrument was wrong more
+# often than the system was, and that no defect was ever caught by a clean run
+# (docs/v2/12-instruments.md). So all three rules below alert on the
+# INSTRUMENT, and every threshold is structural -- a comparison against zero,
+# or a constant read straight off the source -- because the gate discipline
+# here is no hand-set threshold anywhere (docs/v2/DESIGN.md §8).
+#
+# Rules deliberately NOT written, named so the choice is legible:
+#   * error ratio > N%, p95 latency > Ns -- both need a tuned number, and both
+#     duplicate what the person running the demo already sees in the browser.
+#   * spend > $X -- a budget alert for a system whose spend panel is already
+#     labelled provisional.
+#   * cache hit ratio dropped -- EXPECTED steady state under memory adoption
+#     (a memory-bearing request bypasses the cache by design), so this would
+#     fire on correct behaviour.
+#   * scrape target down -- the one system rule worth having, but `up` is not
+#     a mitya_* series; the runbook covers it in prose, where it belongs.
+#
+# NO contact point and NO notification policy is provisioned, deliberately.
+# The artifact is the alert STATE in Grafana's Alerting UI, beside the
+# dashboard each rule is about. A delivery path is the Alertmanager-shaped
+# thing this deployment excludes.
+#
+# See docs/RUNBOOK-OBSERVABILITY.md for what to do when one of these fires.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: instrument-integrity
+    folder: Mitya
+    interval: 1m
+    rules:
+      # ---------------------------------------------------------------- 1 --
+      - uid: mitya-unpriced-answers
+        title: Spend became unpublishable (unpriced answer served)
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: mitya-prometheus
+            model:
+              refId: A
+              instant: true
+              expr: sum(increase(mitya_unpriced_answers_total[15m])) > 0
+        # LOAD-BEARING: with no unpriced answer the series does not exist and
+        # the query returns EMPTY, not 0 -- the same missing-numerator shape
+        # that made two dashboard panels read "No data" instead of 0%
+        # (docs/v2/12-instruments.md §2). NoData here means "the condition is
+        # false", and saying so explicitly is the whole guard.
+        noDataState: OK
+        execErrState: Error
+        # Each rule's damping window is already inside its own expression. A
+        # `for:` on top would make the alert's meaning two numbers instead of
+        # one, which is how a rule stops being explainable.
+        for: 0m
+        labels: { plane: operator, kind: instrument-integrity }
+        annotations:
+          summary: An answer was served on a model with no MODEL_RATES row.
+          description: >-
+            Not a cost alert. UNPRICED means somebody billed us and the rate table has no row for
+            that model, so every spend aggregate covering this window is provisional (G5) and must
+            not be published as a cost. Note the three-way contract: null is unpriced and
+            unpublishable, 0.0 with metered=false is honest but is not a price, and only 0.0 with
+            metered=true is a real charge of zero. Fix: add the rate row to Config.MODEL_RATES --
+            the smallest remedy of the three rules here. See docs/RUNBOOK-OBSERVABILITY.md.
+
+      # ---------------------------------------------------------------- 2 --
+      - uid: mitya-red-counters-blind
+        title: RED counters blind while the request path executes
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: mitya-prometheus
+            model:
+              refId: A
+              instant: true
+              # Stages are being timed and not one request is being recorded.
+              expr: sum(rate(mitya_stage_duration_seconds_count[10m])) > 0 and sum(rate(mitya_request_duration_seconds_count[10m])) == 0
+        noDataState: OK
+        execErrState: Error
+        for: 0m
+        labels: { plane: operator, kind: instrument-integrity }
+        annotations:
+          summary: Stage durations are recording while the request counter is not.
+          description: >-
+            This is the VP10 signature exactly. During a total generation outage all six
+            pre-generation stages recorded their durations and NO request was recorded at all, so
+            the error-ratio panel read 0.000 while nothing was being served -- the dashboard looked
+            healthy through an outage. That is repaired by the single _abort() helper
+            (src/api/app.py:664), which is precisely why this rule is worth provisioning: it is a
+            REGRESSION TRIPWIRE for a repair, and the only rule here that would have caught the
+            original defect without a human watching a dashboard during an outage. The window is
+            10m rather than 5m because a long in-flight stream legitimately records its stages
+            before its request completes; ten minutes of stage activity with zero completions is
+            not that. See docs/RUNBOOK-OBSERVABILITY.md.
+
+      # ---------------------------------------------------------------- 3 --
+      - uid: mitya-stage-histogram-overflow
+        title: Stage histogram pinned at its top bucket edge
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: mitya-prometheus
+            model:
+              refId: A
+              instant: true
+              expr: histogram_quantile(0.99, sum by (stage, route, le) (rate(mitya_stage_duration_seconds_bucket[15m]))) >= 30
+        noDataState: OK
+        execErrState: Error
+        for: 0m
+        labels: { plane: operator, kind: instrument-integrity }
+        annotations:
+          summary: A stage p99 has reached the largest finite histogram boundary (30s).
+          description: >-
+            histogram_quantile() returns the largest finite boundary when the quantile falls in the
+            +Inf bucket, and the largest finite boundary of STAGE_DURATION_BUCKETS is 30
+            (src/metrics.py:192-195). The 30 here is READ OFF THAT SOURCE CONSTANT, not tuned --
+            if the boundaries change, this rule changes with them. This has happened before: an
+            earlier bucket set topped out at 5s and both generate stages reported exactly 5.0000s
+            at p50/p95/p99, so the two most expensive stages in the pipeline were the two the
+            instrument could not measure. TWO READINGS, BOTH ACTIONABLE, and the panel cannot tell
+            them apart: either a stage genuinely took 30s or more, or the histogram has overflowed
+            and the p99 panel is no longer reporting a latency at all. See
+            docs/RUNBOOK-OBSERVABILITY.md.
