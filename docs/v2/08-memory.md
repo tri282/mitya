@@ -184,7 +184,10 @@ the curve has no knee.
 So: **memory-bearing requests bypass the cache entirely, the tenant never enters the key, and the
 per-tenant cache is never built.** The tripwire CP5 wrote — designed to start failing the moment
 per-tenant memory reached the prompt — fired, and was amended *with* the decision to assert the bypass
-rather than the key component, keeping its own can-this-test-fail companion.
+rather than the key component, keeping its own can-this-test-fail companion. The bypass predicate is
+now observable from the client too — the debug row's `memory_bearing` field mirrors the server's own
+`recent_turns or profile_facts or episodes` local (`mitya-v2-ui` topic, `status/mitya-v2-ui/STATUS.md`);
+nothing about the tiers above changes.
 
 Two things this closes honestly. The charter row claiming cache keys include tenant and memory state
 was **corrected in place**: the tenant does not enter the key and never will. And the surviving cache

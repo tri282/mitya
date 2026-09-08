@@ -133,9 +133,10 @@ services:
       # `:ro,Z` for the same SELinux reason as prometheus above.
       #
       # This mount REPLACES the image's whole /etc/grafana/provisioning tree,
-      # so the `alerting/` and `plugins/` subdirectories exist (empty, with a
-      # .gitkeep) purely because Grafana logs a read error for each one it
-      # cannot find. Nothing provisions alerts or plugins here.
+      # so the `plugins/` subdirectory exists (empty, with a .gitkeep) purely
+      # because Grafana logs a read error for the ones it cannot find.
+      # `alerting/` is no longer one of them: it provisions three rules from
+      # ops/grafana/provisioning/alerting/mitya-instrument-integrity.yml.
       - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro,Z
       - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro,Z
       - grafana-data:/var/lib/grafana

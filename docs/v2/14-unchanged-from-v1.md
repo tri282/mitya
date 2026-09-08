@@ -153,9 +153,10 @@ would settle it ([VO9](EVIDENCE-OPTIMIZER.md#VO9)).
 
 ## Also unchanged
 
-- **The Vue SPA.** Explicitly out of scope for every batch. It has a cost: a product decision about a
-  degraded serving rung was taken without the client render the rule required, because nobody looked
-  ([VP30](EVIDENCE-PLATFORM.md#VP30)). **Read:** `docs/v1/09-frontend.md`.
+- **The Vue SPA.** No longer out of scope: the `mitya-v2-ui` topic gave the ladder's `RETRIEVAL_ONLY`
+  rung a client render (§3.3 of that design), closing the gap a product decision was once taken
+  without ([VP30](EVIDENCE-PLATFORM.md#VP30)). **Read:** `docs/v1/09-frontend.md` (annotated, not
+  rewritten — see its superseded-line markers) and `docs/v2/DESIGN.md` §5.4.
 - **The fine-tune.** Not retrained, not re-quantized, not deleted — v2 excludes weight training by
   charter, and the local arm was frozen out of the request path when serving moved to hosted APIs.
   **Read:** `docs/v1/02-finetune.md`, `docs/v1/FINE_TUNE.md`.

@@ -84,7 +84,10 @@ thing is what caught it.
 
 The transcript is UI-only state, persisted to `localStorage` under one key, written on a 200 ms
 debounce, and **never sent back to `/chat`** — v1 has no conversation memory
-([E19](EVIDENCE.md#E19)).
+([E19](EVIDENCE.md#E19)). **Superseded by the `mitya-v2-ui` topic**: storage is now tenant-scoped
+across two keys (`mitya.session.v1.<tenant>`, `mitya.transcript.v2.<tenant>`, the debounce and
+50-turn cap unchanged), and the session id **is** sent back to `/chat` — see `design.md` §3.4 in
+that topic and `status/mitya-v2-ui/STATUS.md`.
 
 Its behaviour under pressure is the part that needed design:
 
@@ -97,7 +100,10 @@ Its behaviour under pressure is the part that needed design:
 - **A corrupt or non-array stored value loads as empty** rather than crashing at boot. Storage is a
   cache of the transcript, not its source of truth.
 
-The session id is generated once per page load and used for **log correlation only**.
+The session id is generated once per page load and used for **log correlation only**. **Superseded**:
+the `mitya-v2-ui` topic persists the session id per tenant, adopts it across reloads, and sends it on
+the wire as `session_id`, so it now carries server-side memory continuity, not only log correlation
+— see `design.md` §3.4 in that topic and `status/mitya-v2-ui/STATUS.md`.
 
 ---
 

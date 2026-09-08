@@ -352,7 +352,7 @@
     {
       "type": "timeseries",
       "title": "Empty completions and quota rejections",
-      "description": "Empty = every EMPTY_RETRIES attempt came back with no token (measured residual ~2.0% at EMPTY_RETRIES=4). Quota has no live call site on /chat at P1 — it is the offline teacher/judge path today, and the panel is here for P2's gateway.",
+      "description": "Empty = every EMPTY_RETRIES attempt came back with no token (measured residual ~2.0% at EMPTY_RETRIES=4). Quota now has a live call site on /chat: src/gateway/guard.py:201-204 records mitya_quota_rejections_total on QuotaExhausted (the older \"no live call site at P1\" description is stale).",
       "datasource": {
         "type": "prometheus",
         "uid": "mitya-prometheus"

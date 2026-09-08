@@ -234,7 +234,7 @@ session and from nothing else.
 16. **Generation.** The **first token is pulled before the response body opens**, so a transport failure, a refusal or a size rejection becomes a typed status rather than a hung 200. After the first token the 200 is committed and a failure becomes a terminal SSE `error` event.
 17. **Streaming out.** `token` events carry prose only. `sources` follows the last token, built in code from retrieval metadata and never parsed out of the answer. `meta` is emitted last, after the cache write.
 18. **Post-answer write.** Path ④, inside the same admission slot.
-19. **Back in the browser.** `token` appends, `sources` replaces the turn's source list, `meta` fills a debug row and never gates rendering.
+19. **Back in the browser.** `token` appends, `sources` replaces the turn's source list, `meta` fills a debug row and never gates rendering — the debug row now also carries the rung, the arm and the memory-bearing predicate (`mitya-v2-ui` topic, `status/mitya-v2-ui/STATUS.md`).
 
 ### 5.3 What crosses each boundary
 
@@ -266,7 +266,7 @@ resolved scope whose summary is missing falls back to DEFAULT at route time.
 | `PRIMARY` | generation configured and credentialed | The full path above |
 | `CHEAPER` | — | **Unreachable by construction**: readiness folds primary and cheaper into one flag, and routing was closed as not-adopted ([VP16](EVIDENCE-PLATFORM.md#VP16)) |
 | `CACHED` | generation unavailable, cache hit | The stored answer |
-| `RETRIEVAL_ONLY` | generation unavailable, no cache hit | **An HTTP 200 with an empty answer body and the source ids.** The decision to serve 503 instead is recorded and **not implemented** |
+| `RETRIEVAL_ONLY` | generation unavailable, no cache hit | An HTTP 200 with an empty answer body and the source ids. **The client (`mitya-v2-ui` topic) now renders a specific notice for this rung instead of a bare empty turn** — observed under an unset provider credential, `status/mitya-v2-ui/STATUS.md`. The decision to serve 503 instead is recorded and **not implemented** |
 | `UNAVAILABLE` | retrieval also unavailable | 503 |
 
 Because readiness is a config read rather than a live probe, **the ladder descends when the
