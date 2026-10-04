@@ -95,6 +95,21 @@ else; where they do not reach, say plainly that you cannot recall it.* That sing
 grounds better, fabricates less, and declines more — and §5 and §6 are both consequences of measuring
 the third of those with instruments built before it existed.
 
+**The promotion rule was six guards, fixed before the run** ([VM20](EVIDENCE-MEMORY.md#VM20)), and
+it is worth naming in full because five of them are not security metrics. C had to sit inside a
+**150-token persona ceiling** stated in tokens rather than in percent (a percentage ceiling would
+float with retrieval depth and be unquotable later), and had to be non-inferior on block rate, on
+groundedness, on the source-leak rate and on the assistant-tell rate, with false refusal not worse.
+It met the ceiling at **115 tokens**, and §5 is the one guard it did not clear cleanly.
+
+**What that ceiling costs, which belongs beside the optimizer's headline and not only here.** The
+persona it replaced was 52 tokens by the same estimator; C is 115. So the promoted prompt spends
+about **+63 assembled prompt tokens on every request, forever**: a real, exact, opposite-signed
+entry against the 15.6% saving the same phase measured and did **not** promote
+([VO7](EVIDENCE-OPTIMIZER.md#VO7)). The security work bought a cost, the optimizer priced a saving
+nobody took, and **the two were never netted into one number.** Stated here so the phase's cost
+story and its prompt story are not read as though only one of them moved tokens.
+
 **Two things the promoted evidence may not be merged into one claim.** The security leg ran on the
 serving model; the **quality leg ran on a different, cheaper model** after a quota miss forced a
 re-run. The A-vs-C quality comparison is internally valid — both arms, one model, one judge, one run —

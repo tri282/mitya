@@ -4,9 +4,10 @@ This document does one job: convert *"we never wrote that down"* into *"we decid
 it."* Everything below is a v1 subsystem that v2 left alone, with the reason it was left and a
 pointer to the v1 document that describes it.
 
-**Two of these are not endorsements.** Chunking is **untested, not validated**, and the neighbour
-expansion axis was left at zero because it **measured out at zero**. Both are stated precisely below
-rather than folded into "unchanged".
+**Three of these are not endorsements.** Chunking is **untested, not validated**; the neighbour
+expansion axis was left at zero because it **measured out at zero**; and the fused pool depth is the
+one retrieval knob that did **not** stay unchanged. All three are stated precisely below rather than
+folded into "unchanged".
 
 **v1 lives on branch `main`.** Read a document with `git show main:docs/v1/<file>`; v1 evidence
 anchors are cited as `[E6 (v1)]`.
@@ -118,7 +119,11 @@ served spans `[E15 (v1)]`. The stack is unchanged and every knob on it was exami
 - `prefetch_limit` is a **no-op in local mode** — zero movement in pool recall, served recall or
   latency across its whole domain, on every family ([VO5](EVIDENCE-OPTIMIZER.md#VO5)).
 - `top_k_fused` turned out to be a **latency axis, not a cost axis**, and the optimizer's cost story
-  is one knob elsewhere ([VO5](EVIDENCE-OPTIMIZER.md#VO5), [VO7](EVIDENCE-OPTIMIZER.md#VO7)).
+  is one knob elsewhere ([VO5](EVIDENCE-OPTIMIZER.md#VO5), [VO7](EVIDENCE-OPTIMIZER.md#VO7)). **This
+  is the one knob on the stack that did not stay put**: the serving artifact carries it at **10**,
+  down from v1's 25, at a measured 2.3× on retrieval wall clock and 0.04% of cost
+  ([VO6](EVIDENCE-OPTIMIZER.md#VO6), [VO9](EVIDENCE-OPTIMIZER.md#VO9)). The fused *pool depth* moved;
+  the fusion itself did not.
 - Rerank itself was not re-tuned but was **attributed for the first time**: it is the retrieval
   budget, entirely, at several times the whole retrieval latency target
   ([VP7](EVIDENCE-PLATFORM.md#VP7)). v1's design justification for its cost was wrong by roughly 5×,
@@ -138,12 +143,16 @@ inverts and expansion costs more, which is what the measurement then showed: rad
 double the tokens, and the aligned one bought a gain that is **zero by construction**
 ([VO9](EVIDENCE-OPTIMIZER.md#VO9)).
 
-**What shipped is merge-only.** Separating the radius from the merging exposed an arm nobody had
-proposed: consolidating *adjacent already-retrieved* spans and de-duplicating their overlap, at
+**What was promoted is merge-only.** Separating the radius from the merging exposed an arm nobody
+had proposed: consolidating *adjacent already-retrieved* spans and de-duplicating their overlap, at
 identical recall and coverage on every row, monotonically cheaper with zero rows dearer
 ([VO9](EVIDENCE-OPTIMIZER.md#VO9)). *Serving two adjacent chunks with their overlap duplicated was
-always waste; the expansion framing concealed a defect.* One condition travels with that saving: it
-**is** the chunk-overlap dedup, so it is worth nothing at zero overlap.
+always waste; the expansion framing concealed a defect.* Two conditions travel with that saving. It
+**is** the chunk-overlap dedup, so it is worth nothing at zero overlap. And it is **not reached on
+the request path as shipped**: the separation landed in `src/rag/context.py` and not at the call
+site, which still guards the whole expansion step on a non-zero radius, so at the promoted radius 0
+the merge never runs and the promoted policy is inert ([VO9](EVIDENCE-OPTIMIZER.md#VO9)). The value
+is in the artifact; the behaviour is not in the path.
 
 The expansion radius itself ships at **0**, and the backfill policy ships **off** — its effect sits
 below its own detection floor, on a single discordant row, and this data cannot size the set that
@@ -164,5 +173,6 @@ would settle it ([VO9](EVIDENCE-OPTIMIZER.md#VO9)).
 ---
 
 **The honest summary of this page:** the retrieval stack barely moved, and that is a result rather
-than an omission. Every knob on it was either measured and left, or priced and deferred with the
-price on the record. The one that was neither — chunking — says so in its own section.
+than an omission. Every knob on it was either measured and left, measured and cut once
+(`top_k_fused`, 25 → 10), or priced and deferred with the price on the record. The one that was none
+of those, chunking, says so in its own section.

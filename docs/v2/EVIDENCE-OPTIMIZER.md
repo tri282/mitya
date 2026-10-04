@@ -32,12 +32,31 @@ not a delta. Tags used here:
 
 | pointer | what it is | when it was production |
 |---|---|---|
-| `fb5cb5a842e7` | the pre-P7 serving config, corpus manifest `515c707a5d69`, `chunk_tokens=500`, `models/gemini-3.5-flash-lite` | through the parallel track, E-run(a), E-run(c), Batches G/H |
+| `fb5cb5a842e7` | the pre-P7 serving config, corpus manifest `515c707a5d69`, `chunk_tokens=500`, `models/gemini-3.5-flash-lite`, `top_k_fused=25`, `prompt_composition=A` | through the parallel track, E-run(a), E-run(c), and up to Batch G's build |
 | `52cd8bfa1108` | E-run(c)'s **candidate** config (`memory_budget_tokens=1024`, `top_k_fused=10`) | never — measured, never promoted (D-10) |
-| `b6063fd8be31` | composition C (D-24) | from Batch D's close, 2026-09-03, to the end of the phase |
+| `8e97e38de285` | Batch G's close: `max_recent_turns` versioned at 4, `n_prev_queries` added at 0. Otherwise `fb5cb5a842e7` | from Batch G's build to Batch H's, 2026-09-03 |
+| `26f394009884` | Batch H's close: `neighbor_collision_policy=align_only`, `neighbor_expansion=0`, `max_span_tokens=2000`, `max_context_tokens=2000`, **and `top_k_fused` 25 → 10** | from Batch H's build to Batch D's close, 2026-09-03 |
+| `b6063fd8be31` | composition C (D-24), on top of `26f394009884` | from Batch D's close, 2026-09-03, to the end of the phase |
 
-A cost figure tagged `[baseline: v2 P7 production config]` in VO5-VO8 is against `fb5cb5a842e7`.
-The only pointer move in P7 was for a **prompt**, not for a cost candidate.
+A cost figure tagged `[baseline: v2 P7 production config]` in VO5-VO8 is against `fb5cb5a842e7`,
+which is what "production" meant while those figures were taken. **It is not what the pointer reads
+now.** `[read from source: config/serving/CURRENT and the named artifacts, 2026-09-08]`
+
+**Correction, and it is load-bearing for the phase's own headline.** This log previously stated that
+*the only pointer move in P7 was for a prompt, not for a cost candidate*. **That is false.** The
+pointer moved **four times** in the phase, and two of those moves carried retrieval and memory values
+that are live today. What survives of the original sentence is narrower and still true: **the 15.6%
+cost candidate was never promoted** (`b6063fd8be31` reads `memory_budget_tokens: 3072`), and no
+pointer move was made *in order to* take a cost saving.
+
+**`top_k_fused = 10` is the one E-run verdict that reached the request path, and its promotion is
+undocumented.** D-9(b) records 10 as *"the recorded choice"* on reranker headroom and states in the
+same decision that nothing is promoted by it. Every Batch H arm artifact was nonetheless authored at
+`top_k_fused=10` (`a3165515bbf7`, `bb700db0332e`, `26f394009884`, `269c1ccd06c0`, `9dd77ae447a0`,
+`d13e404952e2`), and the pointer move that closed Batch H carried the value into serving without
+naming it. **No source read for this document records that move as an event with a rationale.** The
+value is reported here because the artifact is authoritative about what is served; the missing
+record is reported as missing rather than reconstructed. `[read from source]`
 
 **2. P7 is authoritative.** P7 is v2's final phase and its readings supersede earlier ones. Where
 a register disagrees, the superseded value is shown ~~struck~~, not deleted, with one line on why.
@@ -71,8 +90,9 @@ RECORD); `plans/mitya-v2/02-decide/decisions-p7.md` (D-1..D-25);
 <a id="VO2"></a>
 ## VO2 — The search space, and how it was restricted
 
-**The starting surface.** `ServingConfig.model_fields` holds **30 fields**
-(`scripts/check_audit_partition.py`, 2026-09-01, `[measured]`). The audit's §X partitioned them
+**The starting surface.** `ServingConfig.model_fields` held **30 fields** when the audit partitioned
+it (`scripts/check_audit_partition.py`, 2026-09-01, `[measured]`); Batches G and H later added six,
+and the closing surface is **36** (see *The space after the run* below). The audit's §X partitioned them
 into four lists — in, out, records-not-knobs, calibration — and the partition was **disjoint but
 not exhaustive**: 8 in / 12 out / 5 records / 1 calibration = 26, leaving **4 unplaced**
 (`phase-7-audit.md` §X.5, P-23, 2026-09-01, `[measured]`). `prefetch_limit` was placed IN on
@@ -102,18 +122,29 @@ construction**, not by classification. `[reasoned]`
 restricted is the **domain**. `FIELD_DOMAIN` in `src/search.py` holds an explicit tuple per field,
 production's own value included so the search can walk an axis back.
 
-| axis | production | legal values, E-run(a) |
+| axis | production *at E-run(a)* | legal values, E-run(a) |
 |---|---|---|
 | `memory_budget_tokens` | 3072 | 1024, 2048, 3072 |
-| `top_k_fused` | 25 | 5, 13, 25 |
+| `top_k_fused` | 25 *(10 today, VO1)* | 5, 13, 25 |
 | `top_k_rerank` | 3 | 2, 3, 4 |
 | `prefetch_limit` | 50 | 50, 100, 200 |
 | `allocation_policy` | `passages_first` | **excluded** — D-8(a) |
 
-**Reachable space: 3⁴ = 81 configs, against 19.5M over the full ranges**
-(`src/search.py:60-68`, `[read from source]`). Widening a tuple is a human's edit.
+**Reachable space at E-run(a): 3⁴ = 81 configs, against 19.5M over the full ranges**
+(`src/search.py`, `[read from source]`). Widening a tuple is a human's edit.
 `_check_domain_covers_allowed()` makes an allowlisted field with no domain — and a domain entry
 with no allowlist row — a loud build break.
+
+**As the phase closed, `FIELD_DOMAIN` holds two entries**, `top_k_fused: (5, 13, 25)` and
+`memory_budget_tokens: (1024, 2048, 3072)`, so the space reachable today is **3 × 3 = 9**, not 81.
+`[read from source, 2026-09-08]`
+
+**And the "production's own value included" property has lapsed on one axis.** The serving artifact
+carries `top_k_fused` at **10** (VO1, VO9) and the domain tuple is `(5, 13, 25)`, so a future run
+could not walk that axis back to the value it is actually serving.
+`_check_domain_covers_allowed()` checks that the allowlist and the domain agree with **each other**,
+in both directions. It does not check either against the promoted artifact, so this drift is not a
+build break. Recorded as a gap in the guard. `[read from source]`
 
 **`allocation_policy` was excluded before the run, on a dry-run result (D-8(a)).** Its cheapest
 candidate was `passages_only` at **objective $0.002917 against a $0.003983 baseline — 24% under**
@@ -124,7 +155,13 @@ allocate, it deletes memory. Left in, E-run(a)'s headline would have been *"the 
 because `computed_cost_usd` cannot see memory at all** (VO4).
 
 **The space after the run (D-9).** Four of five axes left on measurement, not assumption. The
-allowlist ends the phase at **2 IN / 28 OUT = 30**, partition exhaustive. Per-axis verdicts are in
+allowlist read **2 IN / 28 OUT = 30** at that point, partition exhaustive. **Batches G and H then
+added six fields** (`max_recent_turns`, `n_prev_queries`, `neighbor_expansion`,
+`neighbor_collision_policy`, `max_span_tokens`, `max_context_tokens`), each born OUT under D-5's
+default-deny rule and each placed by hand, so the partition at the end of the phase is
+**2 IN / 34 OUT = 36**, still exhaustive and still disjoint
+(`[read from source, 2026-09-08]`). The 30-field figure above is the 2026-09-01 measurement and is
+not the current surface. Per-axis verdicts are in
 VO5; the exclusion reasons are recorded in `src/optimizer.py`'s `EXCLUDED` dict, one paragraph per
 field, each with a re-entry condition. `[read from source]`
 
@@ -381,8 +418,11 @@ Timing decomposition on `primary` (n=38), `top_k_rerank` held at 3:
    project's own rule they are **noise readings, not findings**. The deterministic and trustworthy
    columns are **time** and **pool recall**.
 
-**`top_k_fused = 10` is the recorded choice; 5 remains equally admissible on today's evidence**
-(owner, 2026-09-02, D-9(b)). They are quality-identical on every family and differ only on `primary`
+**`top_k_fused = 10` is the recorded choice, and it is the value the serving artifact now carries
+(VO1); 5 remains equally admissible on today's evidence** (owner, 2026-09-02, D-9(b)). *The
+rerank-share and wall-clock figures in the two tables above are therefore per-arm readings, not
+production readings: the shipped config sits on the `10` row (917 ms, rerank 72.1%) and the 87.1%
+row is the depth that was production when the sweep ran.* They are quality-identical on every family and differ only on `primary`
 pool recall and ~350 ms. Pool recall is **not a served metric** — only the reranked top-3 reaches the
 prompt, and both settings produce the same top-3. What it measures is **headroom**:
 
@@ -415,13 +455,20 @@ checkpoints and these sweeps are its evidence.
 
 | config | `objective_usd` | prompt tok | saving |
 |---|---|---|---|
-| production (3072, fused 25, rerank 3) | 0.003982 | 4,739.7 | 0.00% |
+| production-at-the-time (3072, fused 25, rerank 3), `fb5cb5a842e7` | 0.003982 | 4,739.7 | 0.00% |
 | **ACCEPTED** (1024, fused 10, rerank 3) | **0.003360** | **2,667.7** | **15.61%** (−2,072.1 tok) |
 | budget only (1024, fused 25, rerank 3) | 0.003362 | 2,672.7 | 15.57% (−2,067.0 tok) |
 | fused only (3072, fused 10, rerank 3) | 0.003980 | 4,734.7 | 0.04% (−5.1 tok) |
 
 **15.57 of the 15.61 points are `memory_budget_tokens` alone. `top_k_fused = 10` contributes 0.04%
 — five tokens. The cost story is one knob.**
+
+*Row-label caveat, added 2026-09-08:* the baseline row above is labelled `production` because
+`fb5cb5a842e7` was the pointer when the run happened. **It is not the shipped config now.** The
+pointer has since taken `top_k_fused = 10` (VO1, VO9) while keeping `memory_budget_tokens` at 3072,
+which is the `fused only` row of this table, not the `production` row. Read against today's artifact
+the remaining unrealised saving is the budget half, **15.57%**, and nothing in this table should be
+read as a statement about what is served.
 
 **Supersession, inside P7.** E-run(a) reported ~~18.7%~~ (R150, best found: `top_k_fused=5,
 top_k_rerank=2, memory_budget_tokens=1024`, $0.003236). **That config also carried
@@ -503,7 +550,10 @@ is sizing, not what happened.
 provenance stamp and are not detectably incomparable. **No half-set fraction is quotable against the
 published 0.7105 without its `mask_id` and n.** `[read from source]`
 
-**Nothing E-run measured was promoted (D-10).** `CURRENT_POINTER` moved only for composition C.
+**The E-run *saving* was not promoted, and is not promoted now (D-10).** The shipped artifact reads
+`memory_budget_tokens: 3072`. `CURRENT_POINTER` did **not** move only for composition C. It moved
+four times, and one of those moves carried E-run(a)'s `top_k_fused = 10` into serving (VO1). What
+follows is about the saving, which no pointer move took.
 The reason is not caution: **no quality verdict exists for the saving.** E-run(a)'s guard returned
 `delta = 0.0000, b=0, c=0, mde=null` on every family — **zero by construction, not by measurement** —
 and every accepted change is invisible to it:
@@ -606,6 +656,17 @@ reads 0/20 and `n=2` reads 3/20, against a promotion threshold of 10/20 fixed be
 promote"*. **Verdict: `n_prev_queries` ships at 0** (D-20). The field stays **versioned** — a knob
 that changes what reaches retrieval must churn `config_version` whoever moves it, and defaulting it
 off is not the same as deleting it.
+
+**Batch G's other deliverable, which is easy to lose behind the blindness finding: `max_recent_turns`
+is now a versioned field and ships at 4.** It had been the module constant `MAX_RECENT_TURNS` in
+`src/memory.py`, so no artifact recorded which value produced any number, the same defect class as
+the persona text before ownership moved onto `ServingConfig` (VP20's C5). Versioning it churns
+`config_version`, and that churn was the point rather than a side effect. Both fields are on the
+promoted artifact `b6063fd8be31` at `max_recent_turns: 4`, `n_prev_queries: 0`
+(`[read from source, 2026-09-08]`). Its cost is exact in both directions (−282 at three turns, −598
+at two) and **its quality effect has no instrument at all**: metric (c) is retrieval recall and
+memory never reaches retrieval, so D-18(h) records it as a documented impossibility rather than an
+untaken decision.
 
 **4. The authored instrument is weaker than the organic one, and that is the finding.**
 
@@ -775,22 +836,67 @@ measured on the rendered block, never computed from window arithmetic** — *the
 the cost mechanism, so computing it would be estimating the result under test.* That is R136's
 mis-enforced ceiling verbatim, and the phase declined to build a second one. `[reasoned]`
 
-**What ships (D-21(g)):**
+**What ships (D-21(g)), verified against `config/serving/b6063fd8be31.json`, 2026-09-08,
+`[read from source]`:**
 
 | field | value | why |
 |---|---|---|
-| `neighbor_collision_policy` | **`align_only`** | merge-only, promoted on measurement |
+| `neighbor_collision_policy` | **`align_only`** | merge-only, promoted on measurement, **but inert on the request path, below** |
 | `neighbor_expansion` | **0** | the radius measures out at nothing |
 | `max_span_tokens` | 2000 | guard, inert at radius 0, kept for the day radius returns |
 | `max_context_tokens` | 2000 | guard, backfill's stop condition |
 
+**The promoted merge is not reached in serving, and this was found after the phase closed.**
+`src/rag/context.py:142-147` documents the separation the batch bought: *policy `"off"` is the
+disabled state, NOT radius 0 … radius 0 with merging still ON is MERGE-ONLY.* **The call site did not
+follow.** `src/api/app.py:967-968` reads `radius = Config.NEIGHBOR_EXPANSION` and then `if radius:`,
+and that guard wraps the **only** call to `expand_spans()` in the codebase (`app.py:979`; a
+repo-wide grep finds no other serving call site). At the promoted `neighbor_expansion: 0` the
+expansion step never executes, so no spans are merged, no `chunk_overlap` is de-duplicated, and
+`neighbor_collision_policy: align_only` selects nothing. **The radius and the merging are still one
+switch where it counts.** `[read from source, 2026-09-08]`
+
+**Consequence for the −2.19%.** The figure is correct as measured: `scripts/eval_neighbor_expansion.py`
+calls `expand_spans()` directly, so the arms are real and comparable to each other. What is not
+correct is any present-tense reading of it as a saving the served path is taking. **It is a promoted
+value with an unrealised effect**, and Batch F's *"prints the saving with that condition attached or
+does not print it"* now has a second condition beside `chunk_overlap = 100`.
+
+**Three paths disagree about whether adjacent served spans are merged**, which is the sharper form of
+the defect:
+
+| path | calls `expand_spans()` | merged as shipped? |
+|---|---|---|
+| serving (`src/api/app.py:979`) | only under `if radius:` | **no**, radius is 0 |
+| fence / benign evaluation (`scripts/eval_fence.py:178`) | **unconditionally**, with the artifact's policy | **yes** |
+| quality evaluation (`scripts/eval_quality.py:612`) | never, `build_context()` only | **no** |
+
+So Batch D's two legs assembled their passages blocks by different rules, and neither pair matches
+the request path exactly. This is the project's own *the harness ran a pipeline production does not
+run* pattern (VP4) recurring at the end of the phase, and it was caught the way the others were: by
+reading the call site rather than the config. **Recorded, not repaired; the fix is outside this
+document's write surface.** `[read from source, 2026-09-08]`
+
 **Cost (O8).** `$0.00`, five arms, ~8 minutes of wall clock, no provider call.
 
-**Baseline provenance caveat.** R154 and D-21 record *"one config promotion per arm"* but do **not**
-name the pointer the baseline arm ran under. Batch H closed on the same day as Batch D; whether its
-baseline is `fb5cb5a842e7` or the post-D-24 `b6063fd8be31` is **not stated in any source read for
-this document.** The arms are internally comparable to each other, which is what the claim needs;
-the absolute 1,535-token figure is not anchored to a named pointer.
+**Baseline provenance, previously recorded as unresolved and now settled from the artifacts.**
+R154 and D-21 record *"one config promotion per arm"* without naming the pointer the baseline arm
+ran under, and this log previously left the question open between `fb5cb5a842e7` and
+`b6063fd8be31`. **It is neither.** The six arm artifacts all entered the repository in Batch H's own
+commit and all carry `prompt_composition: A` and **`top_k_fused: 10`**:
+
+| arm | artifact | radius | policy |
+|---|---|---|---|
+| baseline | `a3165515bbf7` (and `bb700db0332e`, identical but for `max_context_tokens`) | 0 | `off` |
+| merge-only | `26f394009884` | 0 | `align_only` |
+| merge+backfill | `269c1ccd06c0` | 0 | `backfill` |
+| r1-align | `9dd77ae447a0` | 1 | `align_only` |
+| r1-backfill | `d13e404952e2` | 1 | `backfill` |
+
+Two consequences. The arms are internally comparable, which is what the claim needs, and the
+**1,535-token baseline is a `top_k_fused = 10` figure**, not a figure at the 25 that
+`fb5cb5a842e7` was serving, so it is anchored now and it is not anchored to pre-P7 production.
+`[read from source, 2026-09-08]`
 
 ---
 
@@ -1031,6 +1137,12 @@ an **integer identical on every row of a config**. `[computed]`
 **Neither E-run candidate is promoted** (D-10; `CURRENT_POINTER` = `b6063fd8be31`). They are on the
 curve as *measured reachable* costs, not as what serves.
 
+*One row-shape note, added 2026-09-08.* The $0.003982 / 4,739.7-token shape is the fused-25 prompt.
+The promoted artifact carries `top_k_fused: 10` with the memory budget unchanged, which is VO7's
+`fused only` row: **4,734.7 tokens, $0.003980**, five tokens and two ten-thousandths of a cent
+below the row above. The curve is unaffected at this precision; the label *"the promoted serving
+arm"* names the model, and the prompt shape behind it is 5 tokens smaller than printed.
+
 **The arithmetic that closes the question.** R60 priced local as
 `instance_rate × seconds_per_answer / utilization` and observed that distillation moves the numerator
 while utilization is set by traffic. **Substituting the definition of utilization makes the point
@@ -1238,7 +1350,12 @@ lands in the same place: **cost exact, quality claim unavailable.** `[read from 
   **there is no verdict at all**, because the guard is invariant to every axis that moved (VO7).
 - **Retrieval blindness ships unrepaired, by decision** — 63% of multi-turn requests retrieve on a
   contentless string; `n_prev_queries` ships at 0 (D-20, R153, VO8).
-- **Nothing E-run measured is promoted.** `CURRENT_POINTER` moved only for composition C.
+- **The 15.6% saving is not promoted.** The shipped artifact reads `memory_budget_tokens: 3072`.
+  **The rest of that sentence, as it stood, was wrong:** `CURRENT_POINTER` did not move only for
+  composition C. It moved four times, and Batch H's move carried E-run(a)'s `top_k_fused = 10` into
+  serving with no promotion record of its own (VO1).
+- **Merge-only's promoted saving is not being realised.** The policy field is promoted and the call
+  site guards the whole step on a non-zero radius, so at radius 0 nothing merges (VO9).
 - **No `rerank_enabled` decision**, and **G-P13's in-band write-latency delta** against CP5's 2.1 s
   baseline was never produced (VO6).
 - **No realised cost, and none can exist on this deployment.** `mitya_answer_cost_usd` has taken
@@ -1274,11 +1391,17 @@ row can see (R148). **None of the four licenses work.**
 
 **Closed 2026-09-03.** Registers R134-R157. Decisions D-1..D-25. Batches A/B/C/C-fix, E-run(a),
 E-run(c), G, H, D closed; CP-7a..CP-7j closed; Batch F is the record itself. `CURRENT_POINTER` =
-**`b6063fd8be31`** (composition C, D-24).
+**`b6063fd8be31`** (composition C, D-24), reached by four moves whose contents are itemised in VO1.
+
+**Two corrections made after the close, against the shipped artifact and the request path** (see
+VO1 and VO9): the fused pool depth ships at **10** and its promotion is undocumented; and the
+promoted merge-only policy is **inert in serving**, because the call site still welds the merge to a
+non-zero expansion radius. Neither changes a measured number in this log; both change what may be
+said in the present tense.
 
 **The headline, in the form CP-7g licensed:**
 
-> **P7 cut the cost of a served answer by a measured 15.6%, out of sample, and did not promote it.**
+> **P7 measured a 15.6% cut in the cost of a served answer, out of sample, and did not promote it.**
 > The saving generalizes (search 15.61%, held-out 15.63%, gap **−0.2%**, R152) and is **denominated
 > in the ranking cost number, not the gate's**. It is unpromoted because **no quality verdict exists
 > for it** — `quality_1b` is empty by design and A7 forbids a judge in CI. What *did* promote is a

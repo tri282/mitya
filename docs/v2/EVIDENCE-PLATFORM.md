@@ -603,8 +603,16 @@ CP2  -> 0c57c9877544 (generation-model field)  -> cdad13a756dc (rate rows)
      -> 4c9c75e14ba7 (persona onto the artifact; default arm switched)
      -> 93e354c4067f (Groq arm)                -> f2a6708c8f54 (MAX_TOKENS 400 -> 1024)
 CP3  f2a6708c8f54 (gate calibration, R77)
-CP6+ 2d1b59e676de -> fb5cb5a842e7 (G-P18 raise) -> b6063fd8be31 (composition C promoted)
+CP6+ 2d1b59e676de -> fb5cb5a842e7 (G-P18 raise)
+CP7  -> 8e97e38de285 (Batch G: max_recent_turns versioned at 4, n_prev_queries at 0)
+     -> 26f394009884 (Batch H: align_only, radius 0, the two span guards, top_k_fused 25 -> 10)
+     -> b6063fd8be31 (composition C promoted)
 ```
+
+*The CP7 lineage was previously written as one step from `fb5cb5a842e7` to `b6063fd8be31`. It is
+four pointers, and the two intermediate ones carry serving values that are live today; see
+[VO1](EVIDENCE-OPTIMIZER.md#VO1). `[read from source: config/serving/CURRENT and git history,
+2026-09-08]`*
 
 **Amended 2026-08-31 (G-P18):** `Config.CTX_SIZE` is **6144** on the hosted serving path, and the
 memory budget rose 306 → 3072. `CLAUDE.md`'s local `-c 3072` rule is **unchanged** and now scoped to

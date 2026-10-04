@@ -58,7 +58,10 @@ measurement, not a delta.
 
 **2. P7 is authoritative, and superseded numbers are struck rather than deleted.** P7 was the final
 phase; where an earlier register disagrees, P7's reading wins and the old value stays visible with
-the reason. Standing examples: `max_tokens` 400 → 1024 (`18570f5`) is a **measurement break** and no
+the reason. **One rank above P7: the shipped code and the promoted artifact.** Where a document
+describes present behaviour and `config/serving/CURRENT`, the artifact it names, or `src/` says
+otherwise, the artifact and the code win and the document is corrected. That is how the fused depth
+of 10 and the unreached merge-only step below entered this set. Standing examples: `max_tokens` 400 → 1024 (`18570f5`) is a **measurement break** and no
 cost figure compares across it; the **session** corpus was re-frozen twice
 (`4155c97b0a2b` → `49b525f2a131` → `be54610a7f78`) while the **document** corpus `515c707a5d69`
 never changed — two objects under one rule, and earlier drafts conflated them; the false-refusal
@@ -86,6 +89,8 @@ over-refusals.
 | *"78% more secure"* | **FALSE SUMMARY.** Extraction is unmoved at 1/8 on every arm | [VM15](EVIDENCE-MEMORY.md#VM15) |
 | Cost objective | Ranks on one number, **gates on another**, and a third records nothing | [VO3](EVIDENCE-OPTIMIZER.md#VO3) |
 | The saving | **15.6%**, holds out of sample (gap −0.2%) — and **not promoted**, no quality verdict exists | [VO7](EVIDENCE-OPTIMIZER.md#VO7) |
+| What the pointer actually carries | `b6063fd8be31`: composition C, fused depth **10** (was 25), `align_only`, expansion radius **0**, `n_prev_queries` **0**, turn cap **4**, memory budget **3072** | [VO1](EVIDENCE-OPTIMIZER.md#VO1), [VO9](EVIDENCE-OPTIMIZER.md#VO9) |
+| Merge-only | Promoted on measurement (**−2.19%**, zero rows dearer) and **not reached on the request path**: the call site still guards it on a non-zero radius | [VO9](EVIDENCE-OPTIMIZER.md#VO9) |
 | Retrieval blindness | **63%** of multi-turn requests retrieve on a contentless string — ships unrepaired | [VO8](EVIDENCE-OPTIMIZER.md#VO8) |
 | Chunking | **Untested, not validated.** CP-7h closed as a priced deferral | [VO11](EVIDENCE-OPTIMIZER.md#VO11) |
 | Distillation | Closed on arithmetic: model speed **cancels**; break-even is **1,630 answers/day** against the cheapest hosted arm | [VO12](EVIDENCE-OPTIMIZER.md#VO12) |

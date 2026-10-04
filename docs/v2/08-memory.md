@@ -93,6 +93,27 @@ indicative, and it does **not** change the local rule — a llama-server run sti
 at the smaller context. The raise is enabling, not a quality bet: it makes a shipped tier exercised at
 all, which is a statement about the instrument, not about answers.
 
+**The later phase then measured the raised budget and found it does not bind, which reframes this
+section rather than contradicting it** ([VO8](EVIDENCE-OPTIMIZER.md#VO8)). On the session corpus a
+turn costs about 296 tokens and four turns about 1,183 accounted, so at the raised budget the
+allocator's room is never the constraint: **even the largest turn observed leaves four turns under
+it**. Dropping the budget from 3072 to 2048 changes **nothing served**, and dropping it to 1024 binds
+only by admitting three turns instead of four, which is the *turn cap* reached under a worse label.
+**The two knobs are not independent axes.** The knob that actually decides what memory reaches the
+prompt is the turn cap, exactly at **−282 tokens at three turns and −598 at two**, where the
+proposing document had predicted about −370, understating it by 60%.
+
+That is why the raise is still the right call and still not a quality bet: it removed a ceiling that
+was silently emptying the tier, and what replaced the ceiling as the binding constraint is a count of
+turns, not a count of tokens.
+
+**The turn cap is now a versioned field.** It had been a module constant, which meant no artifact
+recorded which value produced any number, the same defect class as the persona text before it moved
+onto the artifact. It ships at **4**, its cost is exact in both directions, and **it has no quality
+instrument at all**: the metric that would score it reads retrieval recall, and memory never reaches
+retrieval (§12, and [VO8](EVIDENCE-OPTIMIZER.md#VO8)). Recorded as a documented impossibility rather
+than as an untaken decision.
+
 ## 6. The lazy episodic trigger
 
 Session *k−1* is summarized on the first turn of session *k* for the same tenant.

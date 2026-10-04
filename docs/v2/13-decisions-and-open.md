@@ -83,9 +83,11 @@ material while doing it.
 The useful finding came out of the same run and nobody had proposed it: the expansion radius and the
 merging of adjacent spans were one switch, so **merge-without-expansion was unreachable**. Separated,
 it is identical to baseline row by row and strictly cheaper on every row that changes — a monotone
-improvement, exact and counted, with no MDE to clear. It ships. The condition travels with it: the
-saving **is** chunk-overlap deduplication, so it is quotable only with the overlap value attached and
-is worth nothing at overlap zero.
+improvement, exact and counted, with no MDE to clear. It was promoted. Two conditions travel with it:
+the saving **is** chunk-overlap deduplication, so it is quotable only with the overlap value attached
+and is worth nothing at overlap zero; and **the request path does not reach it**, because the
+separation landed in the context module and not at the call site that still guards the whole step on
+a non-zero radius ([VO9](EVIDENCE-OPTIMIZER.md#VO9)). See the open item below.
 
 ### Qdrant server mode — deferred again
 
@@ -166,6 +168,23 @@ Plainly, and without softening. An unstated absence reads as a pass.
 - **Chunking, untested.** 500/100 was read from source in v1 and never measured. **No chunking number
   exists in this project** ([VO11](EVIDENCE-OPTIMIZER.md#VO11)).
 
+- **The promoted merge-only saving is not being realised, and the promoted policy field is inert.**
+  The library separated radius from merging; the request path did not. It reads the radius and
+  guards the only call to the expansion step on it, so at the promoted radius of zero the merge
+  never runs and the promoted `align_only` policy changes nothing served
+  ([VO9](EVIDENCE-OPTIMIZER.md#VO9)). Three code paths now disagree about whether adjacent served
+  spans are merged: the serving path does not, the fence and benign evaluation harness does
+  unconditionally, and the quality harness never calls the step at all. This is the project's own
+  *harness runs a pipeline production does not run* pattern
+  ([VP4](EVIDENCE-PLATFORM.md#VP4)) recurring at the very end of the phase. **Found by reading the
+  call site against the artifact, after the phase closed. Recorded, not repaired.**
+
+- **The `top_k_fused` promotion has no promotion record.** The serving artifact carries 10; the
+  decision that accepted 10 states that nothing is promoted by it; the pointer move that carried it
+  is Batch H's, whose own record is about merge-only. The value is not in dispute, since the
+  artifact says what is served, but the *event* is undocumented, and this set states that rather than
+  inventing a rationale for it ([VO1](EVIDENCE-OPTIMIZER.md#VO1)).
+
 - **Smaller, carried, and each load-bearing somewhere.** The `retrieval_only` rung's product decision —
   users get a 503 rather than the empty HTTP 200 it serves today — is **decided and not built**, with
   two riders unsettled ([VP30](EVIDENCE-PLATFORM.md#VP30)). Pool recall is computed by the eval harness
@@ -200,12 +219,18 @@ every axis that moved. This is the charter's own named failure mode arriving on 
 optimizer minimizing cost under an insensitive guard is structurally incentivized toward invisible
 degradation, and it found the cheapest thing the gate cannot see.
 
-**What did promote is a prompt.** Composition C cut injection violations by a factor of four and came
+**What promoted for a quality reason is a prompt.** Composition C cut injection violations by a factor of four and came
 back **superior** on groundedness, well outside that run's MDE
 ([VM18](EVIDENCE-MEMORY.md#VM18)) — after the measurement showed **the shipped prompt had no fence at
 all**: the shipped arm is *set-identical* to an unfenced control, the same nine of sixteen attempts
 landing on both ([VM14](EVIDENCE-MEMORY.md#VM14)). Removing the prohibiting sentences changes nothing
 because they were never doing anything.
+
+**The two results point opposite ways on cost and are not netted.** The promoted persona is 115
+tokens against the 52 it replaced, so the prompt that shipped costs about **+63 assembled prompt
+tokens per request** ([VM20](EVIDENCE-MEMORY.md#VM20)), while the −2,072-token saving measured in the
+same phase was not taken. Each figure is exact on its own arm; **no single number combines them**, and
+this set does not manufacture one.
 
 Alongside it, the alternative headline the platform work earned: **generation stopped being the
 bottleneck and retrieval became it.** Reranking is the overwhelming majority of the retrieval path,

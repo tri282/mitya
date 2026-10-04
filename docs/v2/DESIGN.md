@@ -44,7 +44,7 @@ run; it no longer sizes the request path.
 | `src/rag/entities.py` | Loads the curated entity map and expands a query with canonical names and aliases | scan returns occurrence order, not a `set` |
 | `src/rag/router.py` | Pure-function routing between DEFAULT and STRUCTURAL | intent keywords moved onto the config artifact |
 | `src/rag/retrieve.py` | Dense + sparse prefetch in one round trip, native RRF fusion, FlashRank rerank | — |
-| `src/rag/context.py` | Formats the passages block and the Sources list | adjacent served spans merged, overlap de-duplicated |
+| `src/rag/context.py` | Formats the passages block and the Sources list | `expand_spans()` added beside the formatter: merges adjacent served spans and de-duplicates their overlap. **Not reached at the shipped expansion radius of 0**; see §5.2 step 12 |
 | `src/rag/generate.py` | Composes the prompt and streams tokens through the gateway | composition C |
 | `src/rag/cache.py` | Exact-match answer cache | keyed also on config and corpus version; **bypassed by memory-bearing requests** |
 | `src/api/app.py` | FastAPI: SSE endpoint, auth routes, health and readiness, filter tree, static mount | auth, admission, typed errors, the ladder |
@@ -158,7 +158,7 @@ session and from nothing else.
                                         ▼
   ┌──────────────────────────────────────────────────────────────────────────┐
   │ build_context()   src/rag/context.py                                     │
-  │ adjacent spans merged, overlap de-duplicated                             │
+  │ (expand_spans() merges adjacent spans: NOT reached at radius 0)          │
   │ passages block  +  Sources list (built in code, never generated)         │
   └─────────────────────────────────────┬────────────────────────────────────┘
                                         │ ◀── retrieval lock released here
@@ -227,7 +227,7 @@ session and from nothing else.
 9. **Query expansion and retrieval (DEFAULT).** `EntityMap.resolve()` appends canonical names and aliases in occurrence order; one Qdrant round trip carries a dense and a BM25 sparse prefetch under the same hard filter, fused server-side by native RRF.
 10. **Rerank (DEFAULT).** FlashRank, a CPU cross-encoder, reads query and passage together and cuts the fused pool to the served spans. It is nearly the whole retrieval latency budget ([VP7](EVIDENCE-PLATFORM.md#VP7)).
 11. **Summary lookup (STRUCTURAL).** Path ②, rejoining at context assembly.
-12. **Context assembly.** The passages block, each span labelled in its own novel's part vocabulary; **adjacent served spans merged and their overlap de-duplicated**; the Sources list deduped on the same triple. The lock is released here.
+12. **Context assembly.** The passages block, each span labelled in its own novel's part vocabulary, and the Sources list deduped on the same triple. The lock is released here. **The merge of adjacent served spans is a separate step and does not run as shipped:** `expand_spans()` lives beside the formatter in the same module, but the call site guards it with `if radius:` on the versioned expansion radius, which the promoted artifact carries at **0**. So the promoted `neighbor_collision_policy: align_only` is inert on the request path, and the passages block contains the reranked hits unmerged, with any shared chunk overlap duplicated. Recorded as a known defect ([`13-decisions-and-open.md`](13-decisions-and-open.md) §2), not as behaviour.
 13. **Allocation.** The active policy admits the passages block **whole** and gives the three memory tiers what is left of one token budget, each block fenced and framed as data, with provenance per block.
 14. **Prompt composition.** Composition C: persona, a precedence marker naming each block and declaring it data, the memory block, the conversation block, a reinforcement tail. The user turn carries the question only.
 15. **The gateway.** One function maps the model id onto a vendor. The rate limiter reserves input plus maximum output against the `(provider, model)` window; the spend breaker prices the worst case; the fault injector wraps the adapter when enabled. The adapter targets the vendor's **native** API.

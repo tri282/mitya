@@ -56,9 +56,18 @@ search's silence about them is not evidence, and several of the phase's largest 
 work deliberately run *outside* the loop for that reason.
 
 The value domain is restricted the same way — an explicit tuple per axis, production's own value
-included so the search can walk an axis back — which takes the reachable space from millions of
-configurations to **81** ([VO2](EVIDENCE-OPTIMIZER.md#VO2)). Widening a tuple is a human's edit; this
-is not a bandit over an unbounded box.
+included so the search can walk an axis back, which took the reachable space from millions of
+configurations to **81** at E-run(a), over four admitted axes
+([VO2](EVIDENCE-OPTIMIZER.md#VO2)). Widening a tuple is a human's edit; this is not a bandit over an
+unbounded box.
+
+**Both of those sentences are past tense now, and the difference is worth stating.** After the run
+retired four axes the allowlist ends the phase at **two** fields, so the space reachable today is
+`3 × 3 = 9`, not 81. And the *production's own value included* property no longer holds on
+`top_k_fused`: the serving artifact ships that field at **10** (§10) while `FIELD_DOMAIN` still reads
+`(5, 13, 25)`, so a future run could not walk that axis back to the value it is actually serving. The
+build break that guards the allowlist checks that every admitted field **has** a domain, not that its
+domain contains production. Recorded here as a gap in the guard, not repaired by this document.
 
 **One axis was excluded before the run, on a dry-run result, and it is the clearest justification the
 allowlist has.** `allocation_policy`'s cheapest legal value does not *allocate* memory — it deletes
@@ -116,7 +125,9 @@ back is sharper than null, and the collapse is the result:
 - **`top_k_fused` — the wrong currency entirely.** It turned out to be a **latency** axis, not a
   cost one. Cutting it from 25 to 10 is a **2.3× reduction in retrieval wall clock** and **0.04% of
   cost** ([VO6](EVIDENCE-OPTIMIZER.md#VO6), [VO7](EVIDENCE-OPTIMIZER.md#VO7)). The reason is that
-  retrieval proper is flat; every millisecond saved is reranker work not done.
+  retrieval proper is flat; every millisecond saved is reranker work not done. **10 is the value the
+  serving artifact now carries** ([VO9](EVIDENCE-OPTIMIZER.md#VO9)), which is the one E-run verdict
+  that reached the request path, and §10 records how it got there.
 
 That leaves **one** cost axis: the memory budget. And one axis with three legal values is a sweep,
 not a search. E-run(a) closed there.
@@ -211,9 +222,19 @@ narrowed the served material while doing it.
 
 What promoted is an arm nobody proposed. The expansion function returned early at radius 0, so
 **merging adjacent spans without expanding them was unreachable** — radius and merging were one
-switch. Separated, merge-only is identical to baseline on recall and coverage row by row, and
-cheaper on a quarter of rows with **zero rows dearer**. It was found by reading a token column and
-asking why a consolidation cost more.
+switch. Separated *in the library*, merge-only is identical to baseline on recall and coverage row by
+row, and cheaper on a quarter of rows with **zero rows dearer**. It was found by reading a token
+column and asking why a consolidation cost more.
+
+**And the separation stopped at the library.** `src/rag/context.py` now treats the two as
+independent and says so in its own comment: policy `"off"` is the disabled state, radius 0 with
+merging on is merge-only. The **request path did not follow**: `src/api/app.py:967-968` reads the
+radius and guards the only call to the expansion function with `if radius:`, so at the promoted
+`neighbor_expansion: 0` that function never runs and the promoted `neighbor_collision_policy:
+align_only` **is inert in serving**. The measured −2.19% is real on the instrument that measured it
+and **is not currently being realised on the request path**
+([VO9](EVIDENCE-OPTIMIZER.md#VO9)). Recorded as a live defect, not repaired here; the fix is one
+guard at one call site.
 
 **Its saving *is* chunk-overlap dedup.** Serving two adjacent chunks with their overlap duplicated
 was always waste; the expansion framing concealed a plain defect. It is therefore quotable **only
@@ -288,15 +309,39 @@ unavailable.**
 
 ## 10. What actually promoted
 
-`CURRENT_POINTER` moved **once** in the whole phase, and it moved for a **prompt** — composition C,
-which is [`09-prompt-security.md`](09-prompt-security.md)'s to argue. Batch H's merge-only landed as
-a config default. **Nothing E-run measured was promoted.**
+`CURRENT_POINTER` moved **four times** in the phase, and the record has to name all four because
+three of them carry serving values that are live today:
+`fb5cb5a842e7` → `8e97e38de285` (Batch G, which versioned `max_recent_turns` and added
+`n_prev_queries` at 0) → `26f394009884` (Batch H: merge-only, the two span guards, **and
+`top_k_fused` 25 → 10**) → `b6063fd8be31` (composition C, which is
+[`09-prompt-security.md`](09-prompt-security.md)'s to argue)
+([VO1](EVIDENCE-OPTIMIZER.md#VO1)). Only the last was promoted *for* a prompt.
 
-A search that promotes nothing is not a failed search if it retires four axes on measurement, prices
-a fifth's saving exactly, and finds the two defects — retrieval blindness and duplicated overlap —
-that no config candidate would have surfaced. What it is not is a story about an optimizer that found
+**So the sentence "nothing E-run measured was promoted" is true of the saving and false of the
+fused depth.** The 15.6% candidate was not promoted and is not promoted now: the shipped artifact
+reads `memory_budget_tokens: 3072`. But `top_k_fused` **is** shipped at 10, the value E-run(a)
+measured and the owner accepted on reranker headroom, and it entered the pointer inside Batch H's
+promotion rather than through a promotion of its own. **No source read for this set records that
+move as an event with a rationale**. The decision record accepts the value and says nothing is
+promoted by it; the Batch H commit promotes a pointer whose arms were all authored at 10 already.
+The value is stated here because the artifact is authoritative about what is served; the missing
+promotion record is stated as missing rather than reconstructed.
+
+Batch H's merge-only landed as a config default, and §7 records that the call site does not reach
+it.
+
+A search that promotes almost nothing is not a failed search if it retires four axes on measurement,
+prices a fifth's saving exactly, and finds the two defects (retrieval blindness and duplicated
+overlap) that no config candidate would have surfaced. What it is not is a story about an optimizer that found
 a saving. The headline the phase closed on: **a measured 15.6% saving, out of sample, deliberately
 not shipped, because the system cannot yet say what it costs in quality.**
+
+One arithmetic consequence belongs here rather than only in the prompt document. The promoted
+persona is 115 tokens against the 52 it replaced, so **the phase's one promoted prompt spends about
++63 assembled prompt tokens per request** while the −2,072-token saving it priced went untaken
+([`09-prompt-security.md`](09-prompt-security.md) §3). Both numbers are exact, they point opposite
+ways, and **no document nets them**, because the two were measured on different arms for different
+questions. Recorded so the phase's cost story is not read as though only the optimizer moved tokens.
 
 The refusals held to the end: no re-run, **no widening the space to make something pass**, and no
 quoting a number measured on one arm for another.

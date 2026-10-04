@@ -118,12 +118,21 @@ run at $0.00 with no gate involved ([VO6](EVIDENCE-OPTIMIZER.md#VO6)).
 
 What it established:
 
-**The reranker is the request path.** At production settings it is **87.1% of retrieval wall clock**
-([VO6](EVIDENCE-OPTIMIZER.md#VO6)) — and that figure agrees within three points with v1's GPU-era
-measurement [E28 (v1)] and with a v2 measurement taken by a different instrument on a different
-machine. Three instruments, two years, two machines, one answer. Retrieval proper is flat; every
-millisecond saved on the fused-list depth is reranker work not done, which is why cutting that depth
-is a **2.3×** latency win for four hundredths of a percent of cost.
+**The reranker is the request path.** At the fused depth of 25 that was production when the sweep
+ran, it is **87.1% of retrieval wall clock** ([VO6](EVIDENCE-OPTIMIZER.md#VO6)), and that figure
+agrees within three points with v1's GPU-era measurement [E28 (v1)] and with a v2 measurement taken
+by a different instrument on a different machine. Three instruments, two years, two machines, one
+answer. Retrieval proper is flat at ~260 ms; every millisecond saved on the fused-list depth is
+reranker work not done, which is why cutting that depth is a **2.3×** latency win for four
+hundredths of a percent of cost.
+
+**That cut has since shipped, so the 87.1% is a historical reading and the current one is lower.**
+The serving artifact carries the fused depth at **10**, where the same sweep measures the retrieval
+path at **917 ms with the reranker at 72.1%** of it ([VO6](EVIDENCE-OPTIMIZER.md#VO6),
+[VO9](EVIDENCE-OPTIMIZER.md#VO9)). Rerank is still the majority of the path and still the largest
+measured inefficiency; the share is smaller because the pool it scores is smaller. Quoting 87.1% as
+a present-tense property of the shipped config would be quoting a number measured on one arm for
+another, which is the error this project keeps catching.
 
 **Generation stopped being the bottleneck and retrieval became it.** That is the v1→v2 delta in one
 sentence, and it is measured rather than asserted. It is also the strongest argument for a decision
@@ -135,10 +144,11 @@ therefore cannot score a change to reranking at all ([VO14](EVIDENCE-OPTIMIZER.m
 fused pool, and run more than an order of magnitude faster. A pooled latency number would have
 averaged that in and reported an improvement that a third of traffic already had.
 
-**The headroom argument is a prediction, not a measurement.** The chosen fused depth is not the
-cheapest admissible one; the cheaper setting is quality-identical on every family and differs only in
-how much room the reranker has left to find anything a future improvement might recover. That is an
-argument about future work, priced at a few hundred milliseconds, and it is labelled as such.
+**The headroom argument is a prediction, not a measurement.** The chosen fused depth (**10**, the
+value now shipped) is not the cheapest admissible one; **5** is quality-identical on every family
+and differs only in how much room the reranker has left to find anything a future improvement might
+recover (81% of its ceiling at 10 against 93% at 5). That is an argument about future work, priced at
+about **350 ms**, and it is labelled as such ([VO6](EVIDENCE-OPTIMIZER.md#VO6)).
 
 **One half of the latency picture was never produced.** The in-band write-latency delta for the
 memory path, against the auth phase's baseline, does not exist ([VO15](EVIDENCE-OPTIMIZER.md#VO15)).

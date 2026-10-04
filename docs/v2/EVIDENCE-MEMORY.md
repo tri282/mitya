@@ -1001,6 +1001,15 @@ run.**
 | assistant-tell rate | **MET** — **0.0000** both arms, after the metric defect in [VM19](#VM19) was fixed — `[baseline: v2 P0 recorded threshold 0.083]` |
 | **false-refusal not worse** | **NOT DEMONSTRATED** — ~~FAILED at 0.2069~~, amended, [VM17](#VM17) |
 
+**The ceiling was met and it was still a cost, which the guard table does not show.** The persona
+`persona_head` replaced is 208 characters, **52 tokens** under `estimate_tokens()`'s char/4
+(`src/limits.py:45-48`); composition C's is 463 characters, **115 tokens**. So the promoted prompt
+adds **+63 assembled prompt tokens to every request**
+(`[computed, 2026-09-08, from config/serving/fb5cb5a842e7.json and b6063fd8be31.json]`). D-17(d)
+required the phase to report the interaction between that spend and the optimizer's saving; the
+saving was never promoted, so **the two exact figures point opposite ways and are never combined
+into one number** ([VO7](EVIDENCE-OPTIMIZER.md#VO7)). Recorded rather than netted.
+
 **Reported, never adjudicated (D-17(f)):** `fabricated_events` 1.276 → 0.362, outside its MDE of
 0.421; `persona_retention` at a ceiling on all 116 cells.
 

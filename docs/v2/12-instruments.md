@@ -109,6 +109,16 @@ all of them while production finds them at rank 1. It had already published v1's
 figure: **that number was never the retriever's recall on those rows, it was the recall of a pipeline
 production does not run**. Caught by reading the harness against the serving path.
 
+**Three evaluation paths disagreed with the request path, and with each other, about span merging.**
+The final phase promoted a policy that merges adjacent served spans and de-duplicates their overlap.
+The serving path guards the whole step on a non-zero expansion radius, which the promoted config
+sets to zero, so it never runs there; the fence and benign-set harness calls the step
+**unconditionally**, so it does run there; and the quality harness never calls it at all
+([VO9](EVIDENCE-OPTIMIZER.md#VO9)). Three assemblies of the passages block, one promoted value, and
+the artifact reads the same in all three. This is the *harness ran a pipeline production does not
+run* defect below, arriving at the end of the phase instead of the start, and it was caught the same
+way: by reading the call site against the config rather than trusting the config.
+
 **The gate's own retrieval arm never loads the reranker.** It scores the top of the fused list
 directly, so a candidate differing only in whether reranking is enabled moved cost substantially and
 **not a single rank** ([VP24](EVIDENCE-PLATFORM.md#VP24)) — a reading that any rerank knob is
@@ -303,7 +313,8 @@ Stated as rules, because each one is a defect that has already been paid for.
   listing what it never measured.
 
 **The count, for scale: four instrument defects at CP0, two on the operator plane at CP1, six at CP5,
-three at CP6, four at CP7, plus the harness and gate defects in between.** Against them, the product
+three at CP6, five at CP7 (the fifth found after the phase closed, by re-reading the request path
+against the promoted artifact), plus the harness and gate defects in between.** Against them, the product
 defects the project actually suffered are few enough to name — cross-process nondeterminism in entity
 resolution, and a harness that ran the wrong path — and **both were invariant-class, caught with no
 statistics involved** ([VP22](EVIDENCE-PLATFORM.md#VP22)). **That asymmetry is the single most

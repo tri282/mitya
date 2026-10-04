@@ -99,7 +99,9 @@ unclaimed ([VM5](EVIDENCE-MEMORY.md#VM5)). See [`08-memory.md`](08-memory.md).
 
 **CP7 — the optimizer.** A default-deny allowlist over the versioned config, an explicit value domain
 per axis, an evolutionary search, and a gate that must not block. Four of five candidate axes did not
-survive measurement. It also produced the largest user-visible defect the phase found: retrieval
+survive measurement, and the one cost saving it priced was **not** promoted; what did reach the
+serving artifact is the fused depth at 10, Batch H's merge-only policy and its two span guards, and
+composition C. It also produced the largest user-visible defect the phase found: retrieval
 never sees the conversation ([VO8](EVIDENCE-OPTIMIZER.md#VO8)). See
 [`10-optimizer.md`](10-optimizer.md) and [`11-cost-and-performance.md`](11-cost-and-performance.md).
 
@@ -121,9 +123,9 @@ Every v1 subsystem, and what v2 did to it. `unchanged` means v2 deliberately lef
 | Offline artifacts — entity map | **changed** | Content untouched; `EntityMap._scan()` returned a `set`, making expansion order — and therefore the served chunks — vary by process. Fixed to occurrence order | [02](02-measurement-contract.md), `docs/v1/05-offline-artifacts.md` |
 | Offline artifacts — chapter summaries | **unchanged** | Full coverage carried forward as-is ([E12 (v1)]) | `docs/v1/05-offline-artifacts.md` |
 | Router (STRUCTURAL / DEFAULT) | **unchanged** | Same two routes, same conjunction rule. Its intent-keyword set moved out of the module onto the versioned artifact, because a knob the optimizer may search cannot be a module constant | [03](03-telemetry-and-config.md), `docs/v1/06-retrieval.md` |
-| Hybrid retrieval + RRF fusion | **unchanged** | Two legs, native RRF, same prefetch. The BM25 leg was finally shown to carry a callable effect — on a query family v1's set did not contain | [10](10-optimizer.md), `docs/v1/06-retrieval.md` |
-| Rerank (FlashRank, [E15 (v1)]) | **unchanged** | Not re-tuned; *attributed* for the first time, and it is ~84% of the retrieval path ([VP7](EVIDENCE-PLATFORM.md#VP7)). `top_k_rerank` measured out pinned at 3 | [03](03-telemetry-and-config.md), [10](10-optimizer.md) |
-| Context assembly | **changed** | Adjacent served chunks are now merged and their overlap de-duplicated. Neighbour *expansion* measured out at zero and ships off | [10](10-optimizer.md) |
+| Hybrid retrieval + RRF fusion | **unchanged, one depth cut** | Two legs, native RRF, same prefetch. The BM25 leg was finally shown to carry a callable effect, on a query family v1's set did not contain. The **fused pool depth** is the one value that moved: 25 → **10**, measured as a latency axis worth 2.3× at 0.04% of cost ([VO6](EVIDENCE-OPTIMIZER.md#VO6)) | [10](10-optimizer.md), `docs/v1/06-retrieval.md` |
+| Rerank (FlashRank, [E15 (v1)]) | **unchanged** | Not re-tuned; *attributed* for the first time, and it is ~84% of the retrieval path at the pre-cut fused depth ([VP7](EVIDENCE-PLATFORM.md#VP7)), 72.1% of a 917 ms path at the shipped depth of 10 ([VO6](EVIDENCE-OPTIMIZER.md#VO6)). `top_k_rerank` measured out pinned at 3 | [03](03-telemetry-and-config.md), [10](10-optimizer.md) |
+| Context assembly | **changed in the module, not yet on the path** | The merge of adjacent served chunks and the de-duplication of their overlap was built and promoted, but the request path guards the whole step on a non-zero expansion radius, so at the promoted radius of 0 it does not run ([VO9](EVIDENCE-OPTIMIZER.md#VO9)). Neighbour *expansion* measured out at zero and ships off | [10](10-optimizer.md), [13](13-decisions-and-open.md) |
 | Prompt composition | **changed** | Composition C promoted: violations fall and groundedness rises outside its MDE. v1's A/B result was withdrawn at CP0 | [09](09-prompt-security.md), [02](02-measurement-contract.md) |
 | Generation | **changed** | Off the GPU onto two hosted providers; token ceiling 400 → 1024 ([VP18](EVIDENCE-PLATFORM.md#VP18)); hosted context raised to match ([VP9](EVIDENCE-PLATFORM.md#VP9)). The local arm survives as a subclassed adapter, never the default | [04](04-provider-gateway.md) |
 | Cache | **changed** | L1 exact-match survives, keyed additionally on config and corpus version; memory-bearing requests bypass it entirely. A semantic L2 was built as a probe and **refuted**; a provider prefix cache cannot engage | [04](04-provider-gateway.md), [08](08-memory.md) |

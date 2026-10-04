@@ -128,9 +128,18 @@ faster, which is why any latency or cost comparison must hold the route mix fixe
 **Context assembly.** `build_context()` is a pure formatter: it retrieves nothing and decides nothing
 about ranking. It produces **the passages block**, each span numbered and labelled with its own
 `(book, part, chapter)` in that novel's own part vocabulary, and **the Sources list**, deduped on the
-same triple with rank order preserved. v2 added one thing: **adjacent served spans are merged and
-their overlap de-duplicated**. Neighbour *expansion* is a separate switch and ships at zero
-([VO9](EVIDENCE-OPTIMIZER.md#VO9)).
+same triple with rank order preserved, and v2 did not change it.
+
+What v2 *added* is a separate step in the same module, `expand_spans()`, which merges adjacent served
+spans and de-duplicates their overlap; it was measured identical to baseline on recall and coverage
+row by row and cheaper on 28 of 97 rows, and its policy field was promoted to `align_only`
+([VO9](EVIDENCE-OPTIMIZER.md#VO9)). **It does not run as shipped.** The call site guards the step on
+the versioned neighbour-expansion radius, and the promoted artifact carries that radius at **0**, so
+merging and overlap dedup are unreachable on the request path and the promoted policy is inert.
+Neighbour *expansion* itself ships at zero because it measured out at zero
+([VO9](EVIDENCE-OPTIMIZER.md#VO9)); the merge underneath it ships promoted and unreached, which is a
+different statement and is recorded as an open defect
+([`13-decisions-and-open.md`](13-decisions-and-open.md) §2).
 
 ## 6. Memory: three tiers in one budget
 
