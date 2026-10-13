@@ -8,7 +8,7 @@
 !docs/v2/*.md
 *.md
 !README.md
-!UI_DESIGN.md
+!CHANGELOG.md
 
 # published documentation sets (tracked)
 !docs/v1/*.md
