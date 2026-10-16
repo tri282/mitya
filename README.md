@@ -81,9 +81,8 @@ use the Vite dev server**, since `uvicorn src.api.app:app` is the same process e
 `npm run build` at least once before the backend's first boot.
 
 Dev mode (frontend/backend served separately, backend still requires the one-time build above to
-boot): `cd frontend && npm run dev` (Vite dev server on :5173, proxies `/chat`, `/health`, `/books`
-to `127.0.0.1:8000`). The proxy does not forward `/auth/*` (`frontend/vite.config.ts`), so sign-in
-works only against the built UI served by `uvicorn` on :8000.
+boot): `cd frontend && npm run dev` (Vite dev server on :5173, proxies `/chat`, `/health`, `/books`,
+`/auth` to `127.0.0.1:8000`).
 
 ## Layout
 
