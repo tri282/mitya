@@ -54,6 +54,12 @@ class LimitsConfig(BaseModel):
     teacher_max_retries: _NonNegInt
     teacher_timeout_ms: _PosInt
     teacher_max_output_tokens: _PosInt
+    teacher_rpm: _PosInt
+    teacher_tpm: _PosInt
+    teacher_rpd: _PosInt
+    login_window_seconds: _PosFloat
+    chat_fairness_window_seconds: _PosFloat
+    chat_fairness_tolerance: _PosFloat
     spend: SpendLimits
 
 

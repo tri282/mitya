@@ -100,10 +100,9 @@ class Config(metaclass=_ConfigMeta):
     # test/bakeoff/RESULTS.md. Limits below mirror its dashboard row; override in
     # .env if you switch models, they are not derivable from the model id.
     TEACHER_MODEL = os.getenv("TEACHER_MODEL", "models/gemini-3.1-flash-lite")
-    TEACHER_RPM = int(os.getenv("TEACHER_RPM", "15"))
-    TEACHER_TPM = int(os.getenv("TEACHER_TPM", "250000"))
-    TEACHER_RPD = int(os.getenv("TEACHER_RPD", "500"))
-    # TEACHER_MAX_RETRIES, TEACHER_TIMEOUT_MS, TEACHER_MAX_OUTPUT_TOKENS: config/limits.json (OI45).
+    # TEACHER_RPM/TPM/RPD, TEACHER_MAX_RETRIES, TEACHER_TIMEOUT_MS, TEACHER_MAX_OUTPUT_TOKENS:
+    # config/limits.json (OI45). The RPM/TPM/RPD values mirror the teacher model's dashboard row.
+    # They are not derivable from the model id: change them with TEACHER_MODEL.
 
     # --- Gemini free-tier quota table -------------------------------------
     # MODEL_LIMITS, UNKNOWN_MODEL_LIMITS, NO_TPM_LIMIT moved to the versioned
@@ -222,8 +221,7 @@ class Config(metaclass=_ConfigMeta):
     # ceiling; 20 per IP is deliberately higher because one NAT egress or one
     # harness host is many legitimate accounts, and a per-IP limit tuned to a
     # single user turns the harness into its own attacker.
-    LOGIN_WINDOW_SECONDS = float(os.getenv("LOGIN_WINDOW_SECONDS", "900"))
-    # LOGIN_MAX_PER_ACCOUNT, LOGIN_MAX_PER_IP: config/limits.json (OI45).
+    # LOGIN_WINDOW_SECONDS, LOGIN_MAX_PER_ACCOUNT, LOGIN_MAX_PER_IP: config/limits.json (OI45).
 
     # X-Forwarded-For is a CLIENT-SUPPLIED header. Trusting it unconditionally
     # hands every attacker an unlimited supply of distinct "IPs" and voids the
@@ -271,20 +269,11 @@ class Config(metaclass=_ConfigMeta):
     # Least-served fairness on the global slots (P5 G-P10, R117/R118). The last
     # RESERVE slots are withheld from a tenant already ahead of the mean served
     # count over WINDOW seconds, by more than TOLERANCE. 0 restores FCFS.
-    CHAT_FAIRNESS_WINDOW_SECONDS = float(os.getenv("CHAT_FAIRNESS_WINDOW_SECONDS", "60"))
-    CHAT_FAIRNESS_TOLERANCE = float(os.getenv("CHAT_FAIRNESS_TOLERANCE", "1.25"))
+    # CHAT_FAIRNESS_WINDOW_SECONDS, CHAT_FAIRNESS_TOLERANCE: config/limits.json (OI45).
     LLAMA_SERVER_URL = os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080")
     # CTX_SIZE, MAX_TOKENS, GEN_TEMPERATURE, GEN_TOP_P moved to the versioned
     # serving config -- they change what a correct answer is. Resolved through
-    # the facade above. EMPTY_RETRIES stays: it is a retry policy (deployment),
-    # not a generation parameter that changes what a correct answer says.
-    #
-    # 4, not 1. Measured on the 1060 (P0 step 9a / R28), one theme, k=3:
-    # 19.4% empty with no guard, 16.7% at EMPTY_RETRIES=1, 8.3% at 4. The
-    # residual is not transient -- it concentrates in specific queries that
-    # fail across independent runs and settings, and it is NOT prompt size
-    # (the failing prompts are smaller than the passing ones).
-    EMPTY_RETRIES = int(os.getenv("EMPTY_RETRIES", "4"))
+    # the facade above.
 
     # Spend-rate cap (was SPEND_RATE_MAX_USD_PER_MINUTE): config/limits.json spend.global_minute_usd (OI45, OI8).
 

@@ -38,6 +38,12 @@ EXPECTED_FLAT = {
     "teacher_max_retries": 3,
     "teacher_timeout_ms": 120000,
     "teacher_max_output_tokens": 2048,
+    "teacher_rpm": 15,
+    "teacher_tpm": 250_000,
+    "teacher_rpd": 500,
+    "login_window_seconds": 900,
+    "chat_fairness_window_seconds": 60,
+    "chat_fairness_tolerance": 1.25,
 }
 EXPECTED_SPEND = {
     "per_call_usd": 0.01,
