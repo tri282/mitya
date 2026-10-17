@@ -42,12 +42,13 @@ afterEach(() => {
 })
 
 describe("streamChat", () => {
-  it("yields token* -> sources -> meta in order on the live path (no done event)", async () => {
+  it("yields token* -> sources -> meta -> done in order on the live path", async () => {
     const text =
       `event: token\ndata: {"text":"Once "}\n\n` +
       `event: token\ndata: {"text":"upon a time"}\n\n` +
       `event: sources\ndata: {"sources":[{"book":"Crime and Punishment","part":1,"chapter":1}],"footer":"Crime and Punishment, Part 1, Chapter 1"}\n\n` +
-      `event: meta\ndata: {"route_name":"HYBRID","chunk_ids":[1,2],"ttft_ms":120,"total_ms":900,"filter_relaxed":false,"no_context":false,"cache_hit":false}\n\n`
+      `event: meta\ndata: {"route_name":"HYBRID","chunk_ids":[1,2],"ttft_ms":120,"total_ms":900,"filter_relaxed":false,"no_context":false,"cache_hit":false}\n\n` +
+      `event: done\ndata: {"complete":true,"finish_reason":"stop","refusal":null}\n\n`
     mockFetchOnce(streamOf([text]))
 
     const events: ChatStreamEvent[] = []
@@ -55,7 +56,7 @@ describe("streamChat", () => {
       events.push(ev)
     }
 
-    expect(events.map((e) => e.kind)).toEqual(["token", "token", "sources", "meta"])
+    expect(events.map((e) => e.kind)).toEqual(["token", "token", "sources", "meta", "done"])
     expect(events[0]).toEqual({ kind: "token", data: { text: "Once " } })
     expect(events[2]).toMatchObject({ kind: "sources", data: { footer: "Crime and Punishment, Part 1, Chapter 1" } })
     expect(events[3]).toMatchObject({ kind: "meta", data: { cache_hit: false } })
@@ -66,7 +67,7 @@ describe("streamChat", () => {
       `event: token\ndata: {"text":"Cached answer."}\n\n` +
       `event: sources\ndata: {"sources":[],"footer":""}\n\n` +
       `event: meta\ndata: {"route_name":"CACHE","chunk_ids":[],"ttft_ms":null,"total_ms":5,"filter_relaxed":false,"no_context":true,"cache_hit":true}\n\n` +
-      `event: done\ndata: {}\n\n`
+      `event: done\ndata: {"complete":true,"finish_reason":"none","refusal":null}\n\n`
     mockFetchOnce(streamOf([text]))
 
     const events: ChatStreamEvent[] = []

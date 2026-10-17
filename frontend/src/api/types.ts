@@ -107,7 +107,29 @@ export interface ErrorEvent {
   detail: string
 }
 
-export type DoneEvent = Record<string, never>
+// v3 P0: closed sets mirrored from src/gateway/contract.py and src/gateway/ledger.py.
+export type FinishReason = "stop" | "length" | "content_filter" | "error" | "other" | "none"
+export type SpendLayer =
+  | "per_call"
+  | "per_request"
+  | "tenant_day"
+  | "global_minute"
+  | "global_day"
+  | "global_month"
+
+// A spend layer declined the request. `retry_after_s` is null when the same
+// request would be declined again (per_call, per_request).
+export interface Refusal {
+  layer: SpendLayer
+  retry_after_s: number | null
+}
+
+// Terminal event, sent on every branch.
+export interface DoneEvent {
+  complete: boolean
+  finish_reason: FinishReason
+  refusal: Refusal | null
+}
 
 export interface Source {
   book: string

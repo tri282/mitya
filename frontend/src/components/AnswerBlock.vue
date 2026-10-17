@@ -6,6 +6,7 @@
 // never a markdown parse.
 
 import { computed } from "vue"
+import { formatWait } from "../formatWait"
 import type { Turn } from "../state/session"
 import DebugRow from "./DebugRow.vue"
 import SourcesList from "./SourcesList.vue"
@@ -51,6 +52,14 @@ const isEmptyComplete = computed(
 const isRetrievalOnly = computed(
   () => props.turn.state === "complete" && props.turn.meta?.rung === "retrieval_only",
 )
+
+const declinedMessage = computed(() => {
+  const r = props.turn.refusal
+  if (!r || r.retry_after_s === null) {
+    return "This question needs more than one question's spending allowance. Try a shorter or narrower one."
+  }
+  return `Mitya has reached his spending limit for now. Try again in ${formatWait(r.retry_after_s)}.`
+})
 </script>
 
 <template>
@@ -62,7 +71,8 @@ const isRetrievalOnly = computed(
         turn.state === 'streaming' ||
         turn.state === 'complete' ||
         turn.state === 'stream-error' ||
-        turn.state === 'interrupted'
+        turn.state === 'interrupted' ||
+        turn.state === 'declined'
       "
     >
       <!-- The retrieval-only cause wins: on that rung "considered your question"
@@ -89,6 +99,10 @@ const isRetrievalOnly = computed(
 
       <p v-if="turn.state === 'stream-error'" class="answer-block__notice">
         …the thread was lost mid-sentence. (connection interrupted)
+      </p>
+
+      <p v-if="turn.state === 'declined'" class="answer-block__notice">
+        {{ declinedMessage }}
       </p>
 
       <!-- turn.state === "interrupted": no §VI copy exists for this state

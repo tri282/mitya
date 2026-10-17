@@ -9,7 +9,9 @@ import type {
   DoneEvent,
   ErrorEvent,
   MetaEvent,
+  Refusal,
   SourcesEvent,
+  SpendLayer,
   TokenEvent,
 } from "./types"
 
@@ -17,9 +19,19 @@ export class ChatHttpError extends Error {
   constructor(
     public status: number,
     public detail: string,
+    public refusal: Refusal | null = null,
   ) {
     super(detail)
   }
+}
+
+/** A pre-stream spend refusal names its layer in X-Mitya-Refusal; Retry-After
+ * is present only when waiting helps. Admission 429s carry neither. */
+function refusalFrom(headers: Headers): Refusal | null {
+  const layer = headers.get("X-Mitya-Refusal")
+  if (!layer) return null
+  const retry = headers.get("Retry-After")
+  return { layer: layer as SpendLayer, retry_after_s: retry === null ? null : Number(retry) }
 }
 
 /** Parse one "event:"/"data:" SSE record into its typed variant. Unknown
@@ -65,7 +77,7 @@ export async function* streamChat(
   })
   if (!res.ok) {
     const body = (await res.json().catch(() => ({ detail: res.statusText }))) as { detail: string }
-    throw new ChatHttpError(res.status, body.detail)
+    throw new ChatHttpError(res.status, body.detail, refusalFrom(res.headers))
   }
 
   const reader = res.body!.getReader()

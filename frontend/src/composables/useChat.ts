@@ -68,10 +68,13 @@ export function useChat() {
             scheduleSave()
             return
           case "done":
-            // Cache-path terminal marker; live path has no `done` event
-            // (see phase-4.md) and instead falls through to stream close
-            // below. Either way turn.state is set to "complete" after the
-            // loop.
+            // Terminal on every branch (v3 P0). A spend refusal mid-stream
+            // keeps the partial prose and ends the turn as declined.
+            if (ev.data.refusal) {
+              turn.state = "declined"
+              turn.refusal = ev.data.refusal
+              return
+            }
             break
         }
       }
@@ -81,6 +84,9 @@ export function useChat() {
         // User-initiated Stop (Phase 7) -- tokens received so far are kept
         // verbatim, turn is never re-submitted automatically.
         turn.state = "interrupted"
+      } else if (e instanceof ChatHttpError && e.refusal) {
+        turn.state = "declined"
+        turn.refusal = e.refusal
       } else if (e instanceof ChatHttpError) {
         turn.state = `error-${e.status}` as Turn["state"]
         turn.errorDetail = e.detail

@@ -6,7 +6,7 @@
 // covers login, logout, 401 expiry and tenant switch uniformly.
 
 import { reactive, ref, watch } from "vue"
-import type { ChatFilters, MetaEvent, Source } from "../api/types"
+import type { ChatFilters, MetaEvent, Refusal, Source } from "../api/types"
 import { tenant } from "./auth"
 
 // Turn, ported verbatim from design §II.3 + the user's stream-cancel
@@ -30,7 +30,9 @@ export interface Turn {
     | "error-503"
     | "error-504"
     | "interrupted"
+    | "declined"
   errorDetail?: string
+  refusal?: Refusal
   createdAt: number
 }
 

@@ -18,6 +18,7 @@ vi.mock("../api/chatStream", () => ({
     constructor(
       public status: number,
       public detail: string,
+      public refusal: unknown = null,
     ) {
       super(detail)
     }
@@ -148,7 +149,7 @@ describe("useChat", () => {
             cost_metered: false,
           },
         },
-        { kind: "done", data: {} },
+        { kind: "done", data: { complete: true, finish_reason: "none", refusal: null } },
       ]),
     )
 
@@ -185,6 +186,46 @@ describe("useChat", () => {
     await send("q")
 
     expect(turns[0].state).toBe("error-400")
+    expect(repollMock).not.toHaveBeenCalled()
+  })
+
+  it("spend refusal mid-stream: partial prose kept, turn declined with its retry time", async () => {
+    streamChatMock.mockReturnValue(
+      sequence([
+        { kind: "token", data: { text: "Once " } },
+        {
+          kind: "done",
+          data: {
+            complete: false,
+            finish_reason: "none",
+            refusal: { layer: "global_minute", retry_after_s: 42 },
+          },
+        },
+      ]),
+    )
+
+    const { send, turns } = useChat()
+    await send("q")
+
+    expect(turns[0].state).toBe("declined")
+    expect(turns[0].answer).toBe("Once ")
+    expect(turns[0].refusal).toEqual({ layer: "global_minute", retry_after_s: 42 })
+  })
+
+  it("spend refusal before the stream: 429 with a refusal is declined, not error-429", async () => {
+    async function* http429(): AsyncGenerator<ChatStreamEvent> {
+      throw new ChatHttpError(429, "per_request budget exceeded", {
+        layer: "per_request",
+        retry_after_s: null,
+      })
+    }
+    streamChatMock.mockReturnValue(http429())
+
+    const { send, turns } = useChat()
+    await send("q")
+
+    expect(turns[0].state).toBe("declined")
+    expect(turns[0].refusal).toEqual({ layer: "per_request", retry_after_s: null })
     expect(repollMock).not.toHaveBeenCalled()
   })
 })
