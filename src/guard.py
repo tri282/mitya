@@ -73,6 +73,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from enum import StrEnum
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,11 @@ _PERSONA_BREAK: list[tuple[str, str]] = [
 _COMPILED = [(re.compile(p, re.IGNORECASE | re.MULTILINE), label) for p, label in _PERSONA_BREAK]
 
 
+class GuardLayer(StrEnum):
+    CANARY = "canary"
+    PERSONA_BREAK = "persona_break"
+
+
 @dataclass(frozen=True)
 class GuardVerdict:
     """Outcome of scanning one generated answer.
@@ -124,7 +130,7 @@ class GuardVerdict:
     """
 
     tripped: bool
-    layer: str | None = None
+    layer: GuardLayer | None = None
     label: str | None = None
     matched: str | None = None
 
@@ -153,14 +159,14 @@ def scan_output(answer: str, canary: str | None = None) -> GuardVerdict:
         # sentinel is not a word, so its presence in output can only mean the
         # system prompt reached the caller.
         logger.warning("guard: canary leak detected -- the system prompt reached the output")
-        return GuardVerdict(tripped=True, layer="canary", label="leak", matched=canary)
+        return GuardVerdict(tripped=True, layer=GuardLayer.CANARY, label="leak", matched=canary)
 
     for pattern, label in _COMPILED:
         match = pattern.search(answer)
         if match:
             logger.info("guard: persona break %r matched %r", label, match.group(0)[:60])
             return GuardVerdict(
-                tripped=True, layer="persona_break", label=label, matched=match.group(0)[:120]
+                tripped=True, layer=GuardLayer.PERSONA_BREAK, label=label, matched=match.group(0)[:120]
             )
 
     return CLEAN

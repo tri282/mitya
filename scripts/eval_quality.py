@@ -81,6 +81,7 @@ from src.config import Config
 from src.pricing import cost_usd
 from src.gateway.guard import BudgetExceeded, Degraded, RequestTooLarge
 from src.gateway.ladder import ContentRefused
+from src.gateway.ledger import new_request_ledger, set_current_ledger
 from src.gateway.retry import TransportError
 from src.limits import QuotaExhausted
 from src.rag.gate import paired_bootstrap
@@ -455,6 +456,7 @@ async def _collect_answer(messages: list[dict]) -> tuple[str, str | None, dict]:
             "error": error,
         }
 
+    set_current_ledger(new_request_ledger())  # one ledger per draw (OI8)
     try:
         async for token in stream_answer(messages, usage):
             if t_first is None:

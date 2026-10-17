@@ -62,6 +62,7 @@ from src.auth import (
 from src.config import Config
 from src.db import init_schema
 from src.limits import ConcurrencyMiddleware, TenantConcurrency
+from src.limits_config import active_limits
 from src.config_artifact import (
     active_config_version,
     active_corpus_manifest,
@@ -76,6 +77,7 @@ from src.metrics import (
     record_cache_bypass,
     record_cache_lookup,
     record_empty_completion,
+    record_guard_verdict,
     record_request_duration,
     record_stage_duration,
     record_ttft,
@@ -113,7 +115,10 @@ from src.observability import (
 from src.pricing import FREE, Cost, cost_usd, is_metered, total_usd
 from src.rag.context import build_context, expand_spans
 from src.rag.entities import EntityMap
-from src.gateway.guard import BudgetExceeded, Degraded, RequestTooLarge
+from src.gateway.contract import INCOMPLETE_FINISHES, FinishReason, normalize_finish_reason
+from src.gateway.guard import BudgetExceeded, RequestTooLarge
+from src.gateway.ledger import RequestLedger, new_request_ledger, set_current_ledger
+from src.guard import GuardVerdict, plant_canary, scan_output
 from src.gateway.ladder import ContentRefused
 from src.gateway.retry import TransportError
 from src.limits import QuotaExhausted
@@ -186,6 +191,7 @@ async def lifespan(app: FastAPI):
     missing artifacts (Config.validate_rag) or an empty Qdrant collection both
     raise before the server starts accepting requests."""
     Config.validate_rag()
+    active_limits()  # OI45: a missing or incomplete config/limits.json refuses boot
     # v2 P5 step 1 (C10): the one storage decision for the whole system.
     # CREATE TABLE IF NOT EXISTS at startup -- no ORM, no migration tool, no
     # extra service.
@@ -450,6 +456,32 @@ def _sse(event: str, payload: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
 
 
+def _guard_meta(verdict: GuardVerdict) -> dict:
+    """Content-free: the matched text is never carried."""
+    return {
+        "tripped": verdict.tripped,
+        "layer": verdict.layer.value if verdict.layer else None,
+        "label": verdict.label,
+    }
+
+
+def _ledger_meta(ledger: RequestLedger) -> dict:
+    totals = ledger.totals()
+    return {
+        "list_usd": totals.list_cost.usd,
+        "list_metered": totals.list_cost.metered,
+        "billed_usd": totals.billed.usd,
+        "billed_metered": totals.billed.metered,
+        "calls": totals.calls,
+        "failed_calls": totals.failed_calls,
+    }
+
+
+def _done(complete: bool, finish: FinishReason, refusal: dict | None = None) -> dict:
+    """The terminal event: closed shape, `refusal` is `{"layer", "retry_after_s"}` or None."""
+    return {"complete": complete, "finish_reason": finish.value, "refusal": refusal}
+
+
 _metrics_bind_checked = False
 
 
@@ -618,6 +650,10 @@ async def chat(
     state = request.app.state
     filters = body.filters.model_dump(exclude_none=True) if body.filters else None
     t_start = time.monotonic()
+    # Request-scoped ledger (OI8): every priced call in this request, the memory write
+    # included, is admitted against it through the contextvar.
+    ledger = new_request_ledger()
+    set_current_ledger(ledger)
 
     # Root span only (P1 step 4, A12) -- not on the seven stage spans below,
     # which are children of this one and inherit its trace. A per-stage copy
@@ -787,6 +823,8 @@ async def chat(
             )
 
             cached_outcome = ["error"]
+            cached_verdict = scan_output(cached["answer"], Config.GUARD_CANARY or None)
+            record_guard_verdict(cached_verdict.layer.value if cached_verdict.layer else None)
 
             async def cached_stream():
                 try:
@@ -828,8 +866,14 @@ async def chat(
                         # anything, with no further instrumentation.
                         "cost_usd": FREE.usd,
                         "cost_metered": FREE.metered,
+                        # The cache stores no finish reason: a hit reports none.
+                        "finish_reason": FinishReason.NONE.value,
+                        "complete": True,
+                        "guard": _guard_meta(cached_verdict),
+                        "refusal": None,
+                        "ledger": _ledger_meta(ledger),
                     })
-                    yield _sse("done", {})
+                    yield _sse("done", _done(True, FinishReason.NONE))
                     # A cache hit is only reachable on a memory-FREE request
                     # (the bypass above), i.e. turn 1 of a session. It still
                     # produced an answer, so it still becomes turn 1 of the
@@ -1046,8 +1090,13 @@ async def chat(
                     "model": None,
                     "cost_usd": FREE.usd,
                     "cost_metered": FREE.metered,
+                    "finish_reason": FinishReason.NONE.value,
+                    "complete": True,
+                    "guard": _guard_meta(scan_output("")),
+                    "refusal": None,
+                    "ledger": _ledger_meta(ledger),
                 })
-                yield _sse("done", {})
+                yield _sse("done", _done(True, FinishReason.NONE))
                 retrieval_only_outcome[0] = "ok"
             finally:
                 # Same posture as the cache-hit stream: a client that
@@ -1089,6 +1138,9 @@ async def chat(
         body.query,
         memory_block=plan.memory_block(),
     )
+    canary = Config.GUARD_CANARY
+    if canary:
+        messages = plant_canary(messages, canary)
     # Filled in place as the stream runs, summed across every EMPTY_RETRIES
     # attempt. Stays empty if llama-server reports no usage, which is what
     # makes the request UNPRICED rather than estimated (P1 step 3).
@@ -1160,14 +1212,13 @@ async def chat(
     except RequestTooLarge as exc:
         _abort()
         raise HTTPException(status_code=413, detail=str(exc), headers=rung_header) from exc
-    except (BudgetExceeded, Degraded) as exc:
-        # 503, not 402/429: charter IV puts a tripped spend guard into DEGRADED
-        # mode, which is an availability statement about this deployment, not a
-        # bill the caller can settle or a rate they can back off from.
+    except BudgetExceeded as exc:
+        # Clean decline (CP0 (iii)): 429 naming the layer, Retry-After where the layer has a window.
         _abort()
-        raise HTTPException(
-            status_code=503, detail="serving degraded: spend guard", headers=rung_header,
-        ) from exc
+        refusal_headers = {**rung_header, "X-Mitya-Refusal": exc.layer.value}
+        if exc.retry_after_s is not None:
+            refusal_headers["Retry-After"] = str(exc.retry_after_s)
+        raise HTTPException(status_code=429, detail=str(exc), headers=refusal_headers) from exc
     except ContentRefused as exc:
         # R53/R57: Google returns HTTP 200 carrying a refusal. Surfacing it as
         # 502 would call a policy decision an upstream failure; 200-with-empty
@@ -1198,6 +1249,47 @@ async def chat(
             usage.get("completion_tokens"),
         )
 
+    def _meta_event(
+        *, finish: FinishReason, complete: bool, verdict: GuardVerdict, refusal: dict | None,
+        ttft_ms: int | None, total_ms: int, cost: Cost,
+    ) -> dict:
+        return {
+            "request_id": current_request_id(),
+            "tenant": current_tenant(),
+            "config_version": config_version,
+            "corpus_version": corpus_version,
+            "route_name": route_name,
+            "chunk_ids": [p.id for p in points],
+            "ttft_ms": ttft_ms,
+            "total_ms": total_ms,
+            "filter_relaxed": filter_relaxed,
+            "no_context": no_context,
+            "cache_hit": False,
+            # The bypass predicate, computed once at :722. See the cached
+            # branch for why it rides beside cache_hit.
+            "memory_bearing": memory_bearing,
+            # Ladder tier this request was served at (P4 Batch A0).
+            "rung": rung.value,
+            "cost_usd": cost.usd,
+            "cost_metered": cost.metered,
+            # Token counts on the meta event (v2 P6 Batch E prerequisites). Absent
+            # stays absent (None), never 0: a 0 would read as a free draw.
+            "prompt_tokens": usage.get("prompt_tokens"),
+            "completion_tokens": usage.get("completion_tokens"),
+            # Producing arm (v2 P2 step 9, R51).
+            "model": _serving_model(),
+            # Observed upstream, recorded and never hashed (OI26 split).
+            "upstream": usage.get("upstream"),
+            # The context plan the SERVER actually served (R97).
+            "context_plan": plan.attributes(),
+            # Contract plumbing (v3 P0 B1): truncation, guard verdict, refusal, ledger.
+            "finish_reason": finish.value,
+            "complete": complete,
+            "guard": _guard_meta(verdict),
+            "refusal": refusal,
+            "ledger": _ledger_meta(ledger),
+        }
+
     stream_outcome = ["error"]
 
     async def event_stream():
@@ -1222,6 +1314,19 @@ async def chat(
                 logger.error("chat: mid-stream failure query=%r: %s", body.query, exc)
                 stream_span.set_attribute("generate.mid_stream_error", type(exc).__name__)
                 yield _sse("error", {"detail": str(exc)})
+                yield _sse("done", _done(False, FinishReason.ERROR))
+                return
+            except BudgetExceeded as exc:
+                # A later call of this request was refused. Streamed text stays, marked
+                # incomplete; no further provider call is made (CP0 (iii)).
+                refusal = exc.refusal()
+                stream_span.set_attribute("generate.refused_layer", exc.layer.value)
+                yield _sse("meta", _meta_event(
+                    finish=FinishReason.NONE, complete=False, verdict=scan_output(""),
+                    refusal=refusal, ttft_ms=None, total_ms=int((time.monotonic() - t_start) * 1000),
+                    cost=total_usd([_generation_cost()]),
+                ))
+                yield _sse("done", _done(False, FinishReason.NONE, refusal))
                 return
 
             answer = "".join(answer_parts)
@@ -1283,45 +1388,15 @@ async def chat(
                 record_answer_cost(cost.usd, _serving_model(), tenant)
             stream_outcome[0] = "empty" if not answer else "ok"
 
-            yield _sse("meta", {
-                "request_id": current_request_id(),
-                "tenant": current_tenant(),
-                "config_version": config_version,
-                "corpus_version": corpus_version,
-                "route_name": route_name,
-                "chunk_ids": [p.id for p in points],
-                "ttft_ms": ttft_ms,
-                "total_ms": total_ms,
-                "filter_relaxed": filter_relaxed,
-                "no_context": no_context,
-                "cache_hit": False,
-                # The bypass predicate, computed once at :722. See the cached
-                # branch for why it rides beside cache_hit.
-                "memory_bearing": memory_bearing,
-                # Ladder tier this request was served at (P4 Batch A0).
-                "rung": rung.value,
-                "cost_usd": cost.usd,
-                "cost_metered": cost.metered,
-                # Token counts on the meta event (v2 P6 Batch E prerequisites).
-                # They were already logged and already priced; CP-6d's dry run
-                # requires the standing four -- answer tail, TOKEN COUNTS, cost,
-                # model id -- and the harness client can only report what the
-                # server says. Absent stays absent (None), never 0: a 0 here
-                # would read as a free draw rather than an unreported one.
-                "prompt_tokens": usage.get("prompt_tokens"),
-                "completion_tokens": usage.get("completion_tokens"),
-                # Producing arm (v2 P2 step 9, R51) -- same field the cache-hit
-                # meta event carries, so the frontend/attribution reader does
-                # not need a different lookup per cache_hit value.
-                "model": _serving_model(),
-                # The context plan the SERVER actually served, verbatim from
-                # the same object the span was stamped from. Batch B's driver
-                # must record the served plan rather than recompute one
-                # client-side -- a client-recomputed plan agrees with the
-                # server right up until the moment it matters, and looks
-                # identical to success while disagreeing (R97).
-                "context_plan": plan.attributes(),
-            })
+            finish = normalize_finish_reason(usage.get("finish_reason"))
+            complete = finish not in INCOMPLETE_FINISHES
+            verdict = scan_output(answer, canary or None)
+            record_guard_verdict(verdict.layer.value if verdict.layer else None)
+            yield _sse("meta", _meta_event(
+                finish=finish, complete=complete, verdict=verdict, refusal=None,
+                ttft_ms=ttft_ms, total_ms=total_ms, cost=cost,
+            ))
+            yield _sse("done", _done(complete, finish))
             logger.info(
                 "chat: query=%r route=%s filters=%s entities=%s chunk_ids=%s "
                 "cache_hit=false cache_population=%s ttft_ms=%s total_ms=%s "

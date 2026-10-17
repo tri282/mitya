@@ -131,7 +131,6 @@ class GoogleUsage(Usage):
     truncation?) is C4/step 8(b)'s call, not this step's."""
 
     reasoning_tokens: int | None = None
-    finish_reason: str | None = None
 
 
 def _to_google_payload(

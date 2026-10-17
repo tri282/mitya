@@ -5,6 +5,7 @@ import os
 from dotenv import load_dotenv
 
 from src.config_artifact import active_serving_config
+from src.limits_config import LimitsConfig, active_limits
 from src.rag.names import normalize as _normalize_title
 
 load_dotenv()
@@ -33,6 +34,9 @@ class _ConfigMeta(type):
     """
 
     def __getattr__(cls, name):  # only runs when normal lookup FAILS
+        # Limit knobs (OI45) resolve through config/limits.json, never a code default.
+        if name.lower() in LimitsConfig.model_fields and name.lower() != "spend":
+            return getattr(active_limits(), name.lower())
         cfg = active_serving_config()
         try:
             return getattr(cfg, name.lower())
@@ -99,9 +103,7 @@ class Config(metaclass=_ConfigMeta):
     TEACHER_RPM = int(os.getenv("TEACHER_RPM", "15"))
     TEACHER_TPM = int(os.getenv("TEACHER_TPM", "250000"))
     TEACHER_RPD = int(os.getenv("TEACHER_RPD", "500"))
-    TEACHER_MAX_RETRIES = int(os.getenv("TEACHER_MAX_RETRIES", "3"))
-    TEACHER_TIMEOUT_MS = int(os.getenv("TEACHER_TIMEOUT_MS", "120000"))
-    TEACHER_MAX_OUTPUT_TOKENS = int(os.getenv("TEACHER_MAX_OUTPUT_TOKENS", "2048"))
+    # TEACHER_MAX_RETRIES, TEACHER_TIMEOUT_MS, TEACHER_MAX_OUTPUT_TOKENS: config/limits.json (OI45).
 
     # --- Gemini free-tier quota table -------------------------------------
     # MODEL_LIMITS, UNKNOWN_MODEL_LIMITS, NO_TPM_LIMIT moved to the versioned
@@ -221,8 +223,7 @@ class Config(metaclass=_ConfigMeta):
     # harness host is many legitimate accounts, and a per-IP limit tuned to a
     # single user turns the harness into its own attacker.
     LOGIN_WINDOW_SECONDS = float(os.getenv("LOGIN_WINDOW_SECONDS", "900"))
-    LOGIN_MAX_PER_ACCOUNT = int(os.getenv("LOGIN_MAX_PER_ACCOUNT", "5"))
-    LOGIN_MAX_PER_IP = int(os.getenv("LOGIN_MAX_PER_IP", "20"))
+    # LOGIN_MAX_PER_ACCOUNT, LOGIN_MAX_PER_IP: config/limits.json (OI45).
 
     # X-Forwarded-For is a CLIENT-SUPPLIED header. Trusting it unconditionally
     # hands every attacker an unlimited supply of distinct "IPs" and voids the
@@ -248,7 +249,7 @@ class Config(metaclass=_ConfigMeta):
     # nobody and rejecting it would throw away throughput to enforce a fairness
     # nobody needed. Fairness is a CONTENTION rule, not a quota -- with one
     # tenant active its own fair share is the whole pool either way.
-    POOL_FAIRNESS_PRESSURE = float(os.getenv("POOL_FAIRNESS_PRESSURE", "0.8"))
+    # POOL_FAIRNESS_PRESSURE: config/limits.json (OI45).
 
     # Admission control (P5 step 6, A12(3)), bounding the queue P4 measured as
     # unbounded (R99: zero rejections at every level on both arms, 62 s p99,
@@ -265,12 +266,11 @@ class Config(metaclass=_ConfigMeta):
     # binding constraint under real contention, which is what makes "requests
     # other tenants lose to a noisy one" a measurable number rather than zero
     # by construction.
-    CHAT_MAX_INFLIGHT_PER_TENANT = int(os.getenv("CHAT_MAX_INFLIGHT_PER_TENANT", "2"))
-    CHAT_MAX_INFLIGHT_TOTAL = int(os.getenv("CHAT_MAX_INFLIGHT_TOTAL", "6"))
+    # CHAT_MAX_INFLIGHT_PER_TENANT, CHAT_MAX_INFLIGHT_TOTAL (2 and 6 at P5), CHAT_FAIRNESS_RESERVE:
+    # config/limits.json (OI45).
     # Least-served fairness on the global slots (P5 G-P10, R117/R118). The last
     # RESERVE slots are withheld from a tenant already ahead of the mean served
     # count over WINDOW seconds, by more than TOLERANCE. 0 restores FCFS.
-    CHAT_FAIRNESS_RESERVE = int(os.getenv("CHAT_FAIRNESS_RESERVE", "2"))
     CHAT_FAIRNESS_WINDOW_SECONDS = float(os.getenv("CHAT_FAIRNESS_WINDOW_SECONDS", "60"))
     CHAT_FAIRNESS_TOLERANCE = float(os.getenv("CHAT_FAIRNESS_TOLERANCE", "1.25"))
     LLAMA_SERVER_URL = os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080")
@@ -286,21 +286,7 @@ class Config(metaclass=_ConfigMeta):
     # (the failing prompts are smaller than the passing ones).
     EMPTY_RETRIES = int(os.getenv("EMPTY_RETRIES", "4"))
 
-    # Spend-rate circuit breaker cap (v2 P2 Batch C step 6, wiring Batch B's
-    # SpendRateBreaker). DEPLOYMENT, not versioned: it is an operational
-    # safety limit and changing it does not change what a correct answer is,
-    # so it stays on Config rather than in the hash -- same split EMPTY_RETRIES
-    # sits on.
-    #
-    # $0.10/min is a BACKSTOP, deliberately loose. At the cheap arm's list rate
-    # (~$0.00157/answer, R60) that is ~63 answers/minute, well above
-    # gemini-3.5-flash-lite's own rpm of 15 -- so under normal operation the
-    # QUOTA limiter binds first and this never fires. It exists for the case the
-    # limiter cannot see: an expensive or newly-added model whose per-answer
-    # cost is an order of magnitude higher, where 15 rpm is still within quota
-    # but the spend rate is not. Trip it and the ladder degrades rather than
-    # spending (charter IV).
-    SPEND_RATE_MAX_USD_PER_MINUTE = float(os.getenv("SPEND_RATE_MAX_USD_PER_MINUTE", "0.10"))
+    # Spend-rate cap (was SPEND_RATE_MAX_USD_PER_MINUTE): config/limits.json spend.global_minute_usd (OI45, OI8).
 
     # --- Retry policy (v2 P2 step 8(b), scoped by CP-γ / R70) -----------
     # ONE attempt budget shared by both retry classes, so a transport retry and
@@ -308,7 +294,7 @@ class Config(metaclass=_ConfigMeta):
     # for one answer, and step 8 is explicit that "retries are a cost
     # multiplier here". Deployment, not versioned -- a retry policy does not
     # change what a correct answer is (same split EMPTY_RETRIES sits on).
-    MAX_GENERATION_ATTEMPTS = int(os.getenv("MAX_GENERATION_ATTEMPTS", "3"))
+    # Value in config/limits.json (OI45).
 
     # Fault injection (v2 P4 Batch C step 7, decided at CP-4b:
     # `plans/mitya-v2/02-decide/decisions-p4-cp4b.md` D7-D9). DEPLOYMENT, not

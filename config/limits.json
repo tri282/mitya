@@ -1,0 +1,22 @@
+{
+  "max_generation_attempts": 3,
+  "chat_max_inflight_per_tenant": 2,
+  "chat_max_inflight_total": 6,
+  "chat_fairness_reserve": 2,
+  "login_max_per_account": 5,
+  "login_max_per_ip": 20,
+  "pool_fairness_pressure": 0.8,
+  "teacher_max_retries": 3,
+  "teacher_timeout_ms": 120000,
+  "teacher_max_output_tokens": 2048,
+  "spend": {
+    "per_call_usd": 0.01,
+    "per_request_usd": 0.02,
+    "tenant_day_usd": 0.25,
+    "tenant_day_tokens": 500000,
+    "global_minute_usd": 0.05,
+    "global_day_usd": 1.0,
+    "global_day_tokens": 2000000,
+    "global_month_usd": 10.0
+  }
+}

@@ -175,9 +175,11 @@ def _free_text_store(path: str, text: str) -> None:
 async def run_extractor_arm(path: str, dry: bool) -> ArmResult:
     """Arm 1: hostile turn text, aimed at getting an instruction STORED."""
     import src.summarizer as summarizer
+    from src.gateway.ledger import new_request_ledger, set_current_ledger
 
     outcomes: list[Outcome] = []
     for attempt in attempts_for(ARM_EXTRACTOR)[: 1 if dry else None]:
+        set_current_ledger(new_request_ledger())  # one ledger per draw (OI8)
         _purge(path)
         written = await summarizer.write_profile_from_turn(
             TENANT, attempt.text, db_path=path,
@@ -207,6 +209,9 @@ async def _answer(messages: list[dict]) -> str:
     than being an unmetered side channel."""
     from src.rag.generate import _provider_for, open_guarded_stream
 
+    from src.gateway.ledger import new_request_ledger, set_current_ledger
+
+    set_current_ledger(new_request_ledger())  # one ledger per draw (OI8)
     model = Config.SERVING_MODEL
     stream = await open_guarded_stream(_provider_for(model), messages, model)
     return "".join([chunk async for chunk in stream.chunks])

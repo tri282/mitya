@@ -46,6 +46,8 @@ class Fixture:
     # how a factor-of-1e6 slips into a budget guard.
     prompt_rate: float
     completion_rate: float
+    # Raw provider string, normalized by `normalize_finish_reason`; "length" forces a truncation.
+    finish_reason: str = "stop"
 
 
 # One fixture is enough for Batch A/B's verification surface (contract shape,
@@ -103,6 +105,7 @@ class FakeProvider:
             # unfilled placeholder rather than a partial answer.
             usage.prompt_tokens = fixture.prompt_tokens
             usage.completion_tokens = fixture.completion_tokens
+            usage.finish_reason = fixture.finish_reason
             usage.cost = Cost(
                 usd=(
                     fixture.prompt_tokens * fixture.prompt_rate

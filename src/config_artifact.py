@@ -249,6 +249,25 @@ _DEFAULT_MODEL_RATES: dict[str, dict] = {
 _DEFAULT_SUMMARY_INTENT = ("summarize", "what happens", "overview of", "recap")
 
 
+class ProviderRoute(BaseModel):
+    """A declared OpenRouter `provider` routing pin (schedule-p0 V rulings, OI26). Hashed;
+    the upstream that actually served is observed, recorded per run and never hashed."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    order: tuple[str, ...]
+    allow_fallbacks: bool
+    zdr: bool
+    only: tuple[str, ...]
+
+
+# Identity slots added at v3 P0 B1 (OI26). Omitted from the canonical form while empty, so
+# every version written before they existed keeps its hash.
+_OMIT_WHEN_EMPTY = (
+    "guard_canary", "jev_model", "provider_routes", "adapter_profiles", "provider_safety",
+)
+
+
 class ServingConfig(BaseModel):
     """The versioned half of the config. Frozen, so a version is a value.
 
@@ -455,6 +474,19 @@ class ServingConfig(BaseModel):
     no_tpm_limit: int
     model_rates: dict[str, dict[str, Any]]
 
+    # --- v3 P0 B1 identity slots (OI26); empty means absent ---
+    # Sentinel planted in the system prompt; scanned for in the output (src/guard.py).
+    # Planting changes what the model sees, so it is part of the identity.
+    guard_canary: str = ""
+    # Declared Jev model id (observed snapshot is recorded per run, not hashed).
+    jev_model: str = ""
+    # Surface model id -> routing pin.
+    provider_routes: dict[str, ProviderRoute] = {}
+    # Surface -> adapter profile (error, reasoning, usage mapping); typed in B2.
+    adapter_profiles: dict[str, dict[str, Any]] = {}
+    # Provider -> safety settings sent with the request (C22).
+    provider_safety: dict[str, list[dict[str, Any]]] = {}
+
     @model_validator(mode="after")
     def _no_secrets(self) -> "ServingConfig":
         """Secrets cannot enter, asserted at build time rather than trusted to
@@ -588,10 +620,15 @@ class ServingConfig(BaseModel):
             unknown_model_limits=_DEFAULT_UNKNOWN_MODEL_LIMITS,
             no_tpm_limit=_DEFAULT_NO_TPM_LIMIT,
             model_rates=_DEFAULT_MODEL_RATES,
+            guard_canary=os.getenv("GUARD_CANARY", ""),
         )
 
     def canonical_json(self) -> str:
-        return _canonical_json(self.model_dump(mode="json"))
+        data = self.model_dump(mode="json")
+        for name in _OMIT_WHEN_EMPTY:
+            if not data.get(name):
+                data.pop(name, None)
+        return _canonical_json(data)
 
     def version(self) -> str:
         """Content-addressed identity. Two identical configs are the same

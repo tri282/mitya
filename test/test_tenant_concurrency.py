@@ -76,7 +76,7 @@ async def _noop_receive():
 
 
 def test_a_tenant_is_held_to_its_own_bound() -> None:
-    gate = TenantConcurrency(per_tenant=2, total=6)
+    gate = TenantConcurrency(per_tenant=2, total=6, reserve=0)
     gate.acquire("tenant-a")
     gate.acquire("tenant-a")
     try:
@@ -91,7 +91,7 @@ def test_a_tenant_is_held_to_its_own_bound() -> None:
 def test_one_tenant_at_its_bound_does_not_block_another() -> None:
     """The point of a PER-TENANT bound rather than a single global one: a noisy
     neighbour must not be able to consume the whole deployment."""
-    gate = TenantConcurrency(per_tenant=2, total=6)
+    gate = TenantConcurrency(per_tenant=2, total=6, reserve=0)
     gate.acquire("tenant-a")
     gate.acquire("tenant-a")
     gate.acquire("tenant-b")  # must not raise
@@ -101,7 +101,7 @@ def test_one_tenant_at_its_bound_does_not_block_another() -> None:
 def test_the_deployment_total_is_bounded_too() -> None:
     """This is the queue bound. Without it, five tenants x per_tenant would be
     the real ceiling and the pile P4 measured would just be smaller."""
-    gate = TenantConcurrency(per_tenant=2, total=4)
+    gate = TenantConcurrency(per_tenant=2, total=4, reserve=0)
     for tenant in ("a", "b"):
         gate.acquire(tenant)
         gate.acquire(tenant)
@@ -117,7 +117,7 @@ def test_the_two_rejection_reasons_are_attributed_correctly() -> None:
     """A tenant at its own cap when the box is ALSO full must be reported as
     "tenant", not "total". Otherwise the noisy neighbour's own rejections hide
     inside everyone else's count and the starvation number is unreadable."""
-    gate = TenantConcurrency(per_tenant=2, total=2)
+    gate = TenantConcurrency(per_tenant=2, total=2, reserve=0)
     gate.acquire("tenant-a")
     gate.acquire("tenant-a")
     try:
@@ -131,7 +131,7 @@ def test_the_two_rejection_reasons_are_attributed_correctly() -> None:
 
 
 def test_release_frees_the_slot_and_does_not_leave_a_key_behind() -> None:
-    gate = TenantConcurrency(per_tenant=1, total=1)
+    gate = TenantConcurrency(per_tenant=1, total=1, reserve=0)
     gate.acquire("tenant-a")
     gate.release("tenant-a")
     assert gate.inflight_total == 0
@@ -144,7 +144,7 @@ def test_release_frees_the_slot_and_does_not_leave_a_key_behind() -> None:
 
 
 def test_the_middleware_rejects_with_429_and_retry_after() -> None:
-    gate = TenantConcurrency(per_tenant=1, total=1)
+    gate = TenantConcurrency(per_tenant=1, total=1, reserve=0)
     gate.acquire("tenant-a")  # deployment is full before the request arrives
     downstream = _Downstream()
     mw = ConcurrencyMiddleware(downstream, gate=gate)
@@ -162,7 +162,7 @@ def test_a_rejection_is_immediate_and_never_queues() -> None:
     that waits is an unbounded queue with extra steps, and that is precisely
     what P4 measured. Driven by holding the one slot open forever and checking
     the second request completes anyway."""
-    gate = TenantConcurrency(per_tenant=1, total=1)
+    gate = TenantConcurrency(per_tenant=1, total=1, reserve=0)
     hold = asyncio.Event()
     downstream = _Downstream(hold=hold)
     mw = ConcurrencyMiddleware(downstream, gate=gate)
@@ -189,7 +189,7 @@ def test_a_rejection_is_immediate_and_never_queues() -> None:
 def test_the_slot_is_released_when_the_app_raises() -> None:
     """The leak that only shows up as a deadlock on a later request. Every
     /chat error path -- 400, 413, 422, 429, 502, 503, 504 -- exits this way."""
-    gate = TenantConcurrency(per_tenant=1, total=1)
+    gate = TenantConcurrency(per_tenant=1, total=1, reserve=0)
     downstream = _Downstream(raises=RuntimeError("boom"))
     mw = ConcurrencyMiddleware(downstream, gate=gate)
     _, send = _collect_send()
@@ -206,7 +206,7 @@ def test_the_slot_is_held_for_the_whole_call_then_released() -> None:
     """Held across the streamed body -- the reason this is a middleware and not
     a context manager inside chat(), which returns as soon as the
     StreamingResponse object is constructed."""
-    gate = TenantConcurrency(per_tenant=1, total=1)
+    gate = TenantConcurrency(per_tenant=1, total=1, reserve=0)
     hold = asyncio.Event()
     downstream = _Downstream(hold=hold)
     mw = ConcurrencyMiddleware(downstream, gate=gate)
@@ -228,7 +228,7 @@ def test_the_slot_is_held_for_the_whole_call_then_released() -> None:
 def test_the_operator_plane_is_never_admission_controlled() -> None:
     """/health, /ready and /metrics must answer while the serving plane is
     full -- which is exactly when an operator is looking at them."""
-    gate = TenantConcurrency(per_tenant=1, total=1)
+    gate = TenantConcurrency(per_tenant=1, total=1, reserve=0)
     gate.acquire("tenant-a")
     downstream = _Downstream()
     mw = ConcurrencyMiddleware(downstream, gate=gate)

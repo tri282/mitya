@@ -87,6 +87,12 @@ CACHE_OUTCOMES = ("hit", "miss")
 # losing a request because the deployment is full. Two labels because they are
 # the two halves of the starvation question.
 ADMISSION_REASONS = ("tenant", "total", "fairness")
+# Mirror the closed enums in src/gateway (FinishReason, SpendLayer) and src/guard.py
+# (GuardLayer); test_wiring_enums.py asserts they stay equal. Literals here because
+# importing the enums would make src/gateway/__init__ and this module circular.
+FINISH_REASONS = ("stop", "length", "content_filter", "error", "other", "none")
+SPEND_LAYERS = ("per_call", "per_request", "tenant_day", "global_minute", "global_day", "global_month")
+GUARD_LAYERS = ("canary", "persona_break", "none")
 
 UNKNOWN = "unknown"
 # Overflow bucket for the tenant label -- see _tenant_key(). Distinct from
@@ -331,6 +337,16 @@ def configure_metrics():
         "mitya_admission_rejections_total",
         description="Requests not admitted by the concurrency bound, by reason (v2 P5, A12(3))",
     )
+    _instruments["finish_reasons"] = meter.create_counter(
+        "mitya_finish_reasons_total",
+        description="Priced calls by normalized finish reason; 'other' counts unrecognised provider values",
+    )
+    _instruments["budget_refusals"] = meter.create_counter(
+        "mitya_budget_refusals_total", description="Calls refused before send, by spend layer (OI8)",
+    )
+    _instruments["guard_verdicts"] = meter.create_counter(
+        "mitya_guard_verdicts_total", description="Output-guard verdicts on served answers, by layer",
+    )
     _instruments["memory_write_failures"] = meter.create_counter(
         "mitya_memory_write_failures_total",
         description="Memory writes that failed without failing the turn, by stage (v2 P6, G-P13)",
@@ -428,6 +444,25 @@ def record_admission_rejection(tenant: str, reason: str) -> None:
     came back with nine rejections attributed to nothing."""
     _instruments.get("admission_rejections", _NULL).add(
         1, {"tenant": _tenant_key(tenant), "reason": reason if reason in ADMISSION_REASONS else UNKNOWN},
+    )
+
+
+def record_finish_reason(reason: str) -> None:
+    _instruments.get("finish_reasons", _NULL).add(
+        1, {"finish_reason": reason if reason in FINISH_REASONS else UNKNOWN},
+    )
+
+
+def record_budget_refusal(layer: str) -> None:
+    _instruments.get("budget_refusals", _NULL).add(
+        1, {"layer": layer if layer in SPEND_LAYERS else UNKNOWN},
+    )
+
+
+def record_guard_verdict(layer: str | None) -> None:
+    layer = layer or "none"
+    _instruments.get("guard_verdicts", _NULL).add(
+        1, {"layer": layer if layer in GUARD_LAYERS else UNKNOWN},
     )
 
 

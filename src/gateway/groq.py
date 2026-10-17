@@ -67,7 +67,6 @@ class GroqUsage(Usage):
     8(b) must not conflate when it decides whether hosted arms get a retry."""
 
     reasoning_tokens: int | None = None
-    finish_reason: str | None = None
     queue_time: float | None = None
     prompt_time: float | None = None
     completion_time: float | None = None

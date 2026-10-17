@@ -41,6 +41,7 @@ from src.injection_set import (
 from src.config_artifact import active_config_version
 from src.observability import configure_logging
 from src.rag.context import build_context, expand_spans
+from src.gateway.ledger import new_request_ledger, set_current_ledger
 from src.rag.generate import build_messages, stream_answer
 from src.rag.retrieve import rerank, retrieve
 
@@ -93,6 +94,7 @@ def instruction_text(persona: str, mode: str) -> str:
 
 async def _answer(messages: list[dict]) -> tuple[str, str | None]:
     parts, usage = [], {}
+    set_current_ledger(new_request_ledger())  # one ledger per draw (OI8)
     try:
         async for tok in stream_answer(messages, usage):
             parts.append(tok)

@@ -29,13 +29,15 @@ import time
 from collections.abc import AsyncIterator
 
 from src.config import Config
-from src.gateway.contract import GenerationStream, Provider, Usage
+from src.gateway.contract import GenerationStream, Provider, Usage, normalize_finish_reason
 from src.gateway.google import GoogleProvider
 from src.gateway.groq import GroqProvider
 from src.gateway.guard import SpendRateBreaker, guarded_generate
+from src.gateway.ledger import current_ledger
 from src.gateway.retry import TransportError
 from src.gateway.local import LOCAL_MODEL_ID, LocalProvider
 from src.limits import ScopedRateLimiter, estimate_tokens
+from src.limits_config import active_limits
 from src.observability import current_tenant
 from src.pricing import cost_usd
 from src.rag.ingest import BOOK_META
@@ -235,7 +237,9 @@ def _resolve_adapter(model: str) -> Provider:
         )
         return LocalProvider(model=model)
     if provider_name == "google":
-        return GoogleProvider(model=model)
+        # Declared safety settings are part of the config identity (OI26, C22).
+        safety = Config.PROVIDER_SAFETY.get("google")
+        return GoogleProvider(model=model, safety_settings=[dict(x) for x in safety] if safety else None)
     if provider_name == "groq":
         return GroqProvider(model=model)
     raise ValueError(
@@ -344,7 +348,7 @@ def _estimated_cost_usd(messages: list[dict], model: str) -> float:
 # Google's do not (see `src.limits.quota_scope`). R26's per-process split is
 # untouched: N uvicorn workers still hold N sets of windows.
 _limiter = ScopedRateLimiter()
-_breaker = SpendRateBreaker(Config.SPEND_RATE_MAX_USD_PER_MINUTE)
+_breaker = SpendRateBreaker(active_limits().spend.global_minute_usd, Config.POOL_FAIRNESS_PRESSURE)
 
 
 async def stream_answer(
@@ -481,14 +485,9 @@ async def open_guarded_stream(provider: Provider, messages: list[dict], model: s
         messages,
         tier="default",
         tenant=current_tenant(),
-        # No USD budget. R48: at the free tier there is no USD ceiling to
-        # breach -- Google's rolling spend cap is literally $0 -- so the
-        # binding constraint is QUOTA, enforced by the limiter above. Passing
-        # an invented USD ceiling would make the guard look like it was
-        # enforcing something it is not.
-        budget=None,
         limiter=_limiter.limiter_for(model),
         breaker=_breaker,
+        ledger=current_ledger(),
         estimated_cost_usd=_estimated_cost_usd(messages, model),
         max_input_tokens=Config.CTX_SIZE,
         max_history_messages=MAX_HISTORY_MESSAGES,
@@ -509,6 +508,11 @@ def _fill_usage_dict(usage: dict, reported: Usage) -> None:
     reasoning = getattr(reported, "reasoning_tokens", None)
     if reasoning is not None:
         usage["reasoning_tokens"] = reasoning
+    usage["finish_reason"] = normalize_finish_reason(
+        reported.finish_reason, reported.native_finish_reason,
+    ).value
+    if reported.upstream is not None:
+        usage["upstream"] = reported.upstream
 
 
 def build_sources_footer(sources: list[dict]) -> str:

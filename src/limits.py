@@ -292,14 +292,14 @@ class TenantConcurrency:
     call including the SSE body. Different questions, different scopes.
     """
 
-    def __init__(self, per_tenant: int, total: int, reserve: int = 0,
+    def __init__(self, per_tenant: int, total: int, reserve: int,
                  window_seconds: float = 60.0, tolerance: float = 1.25,
                  clock=time.monotonic):
         self.per_tenant = per_tenant
         self.total = total
         # Least-served fairness on the GLOBAL slots (P5 G-P10, R117/R118).
         # `reserve` is how many of the last slots are withheld from a tenant
-        # that is already ahead; 0 disables the rule and restores plain FCFS.
+        # that is already ahead; 0 disables the rule and restores plain FCFS. Required (OI45).
         self.reserve = reserve
         self.window_seconds = window_seconds
         self.tolerance = tolerance

@@ -297,6 +297,11 @@ EXCLUDED: dict[str, str] = {
         "objective itself; an optimizer permitted to edit it drives its objective to zero "
         "without touching a token"
     ),
+    "guard_canary": "OUT: a guard input, not an axis; an optimizer may not author its own guard",
+    "jev_model": "OUT: identity slot (OI26), declared by the owner, not searched",
+    "provider_routes": "OUT: identity slot (OI26); a route pin carries a data-handling term (ZDR)",
+    "adapter_profiles": "OUT: identity slot (OI26); a profile describes a surface, it is not tuned",
+    "provider_safety": "OUT: identity slot (OI26); a safety setting is a policy, not an axis",
 }
 
 # Instrument machinery scanned for D-5's instrument-integrity rule. A fixed

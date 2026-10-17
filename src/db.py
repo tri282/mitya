@@ -45,6 +45,20 @@ from src.config import Config
 
 logger = logging.getLogger(__name__)
 
+# Spend layers (v3 P0 B1, OI8). `scope` is 'global' or 'tenant:<id>'; `period` is
+# 'day:YYYY-MM-DD' or 'month:YYYY-MM', both UTC. No FK to accounts: global rows have no
+# tenant. Also executed by `SpendStore` before each operation, so a script that never ran
+# `init_schema()` still finds the table.
+SPEND_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS spend (
+        scope  TEXT NOT NULL,
+        period TEXT NOT NULL,
+        usd    REAL NOT NULL DEFAULT 0,
+        tokens INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (scope, period)
+    )
+    """
+
 # Every table in the system, in one greppable place. P6 appends here.
 #
 # `tenant_id` is the account's identity AND the value that reaches the tenant
@@ -169,6 +183,8 @@ SCHEMA: tuple[str, ...] = (
         PRIMARY KEY (tenant_id, session_id)
     )
     """,
+
+    SPEND_SCHEMA,
 )
 
 # `ALTER TABLE ... ADD COLUMN` statements, applied after SCHEMA. STILL EMPTY at

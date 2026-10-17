@@ -1,6 +1,8 @@
 # test/test_gateway_guard.py
 """P2 step 4 verify (schedule Batch B): spend safety enforced BEFORE the
-provider call -- src/gateway/guard.py.
+provider call -- src/gateway/guard.py. Updated at v3 P0 B1 for the request
+ledger (src/gateway/ledger.py): `budget` is no longer a caller argument, the
+ledger carries the per-call and per-request layers.
 
 Plain-assert script, not pytest (matches test_gateway_contract.py's idiom).
 Offline: FakeProvider only, no network, no real key, no clock sleeps (every
@@ -18,11 +20,13 @@ This file is the schedule's stated Batch B Verify(1) surface for step 4:
 
 import asyncio
 import inspect
+import os
 import sys
+import tempfile
 
 sys.path.insert(0, ".")
 
-from src.gateway.contract import Provider  # noqa: E402
+from src.db import init_schema  # noqa: E402
 from src.gateway.fake import FakeProvider  # noqa: E402
 from src.gateway.guard import (  # noqa: E402
     BudgetExceeded,
@@ -31,7 +35,17 @@ from src.gateway.guard import (  # noqa: E402
     SpendRateBreaker,
     guarded_generate,
 )
+from src.gateway.ledger import RequestLedger, SpendLayer, SpendStore  # noqa: E402
 from src.limits import QuotaExhausted, RateLimiter  # noqa: E402
+from src.limits_config import SpendLimits  # noqa: E402
+
+_DB = os.path.join(tempfile.mkdtemp(prefix="mitya-guard-db-"), "t.sqlite3")
+init_schema(_DB)
+
+_WIDE = SpendLimits(
+    per_call_usd=1000.0, per_request_usd=1000.0, tenant_day_usd=1e6, tenant_day_tokens=10**9,
+    global_minute_usd=1e6, global_day_usd=1e6, global_day_tokens=10**9, global_month_usd=1e6,
+)
 
 
 def _limiter(rpm=100, tpm=10_000, rpd=1000) -> RateLimiter:
@@ -41,10 +55,28 @@ def _limiter(rpm=100, tpm=10_000, rpd=1000) -> RateLimiter:
 
 
 def _breaker(cap=1000.0) -> SpendRateBreaker:
-    return SpendRateBreaker(max_usd_per_minute=cap)
+    return SpendRateBreaker(max_usd_per_minute=cap, fairness_pressure=0.8)
+
+
+def _ledger(**limits) -> RequestLedger:
+    spend = _WIDE.model_copy(update=limits)
+    return RequestLedger(spend, SpendStore(spend, _DB))
 
 
 _MESSAGES = [{"role": "user", "content": "who are you?"}]
+
+
+def _call(provider, messages=_MESSAGES, *, limiter=None, breaker=None, ledger=None,
+          estimated_cost_usd=0.0, max_input_tokens=10_000, max_history_messages=10):
+    return asyncio.run(
+        guarded_generate(
+            provider, messages, "default", "default",
+            limiter=limiter or _limiter(), breaker=breaker or _breaker(),
+            ledger=ledger or _ledger(), estimated_cost_usd=estimated_cost_usd,
+            max_input_tokens=max_input_tokens, max_history_messages=max_history_messages,
+            max_output_tokens=0,
+        )
+    )
 
 
 def test_provider_contract_has_no_body_controlled_routing_field() -> None:
@@ -58,15 +90,8 @@ def test_provider_contract_has_no_body_controlled_routing_field() -> None:
 
 def test_request_over_the_history_limit_never_reaches_the_provider() -> None:
     provider = FakeProvider()
-    long_history = _MESSAGES * 5
     try:
-        asyncio.run(
-            guarded_generate(
-                provider, long_history, "default", "default", None,
-                limiter=_limiter(), breaker=_breaker(),
-                estimated_cost_usd=0.0, max_input_tokens=10_000, max_history_messages=3,
-            )
-        )
+        _call(provider, _MESSAGES * 5, max_history_messages=3)
     except RequestTooLarge:
         pass
     else:
@@ -78,13 +103,7 @@ def test_request_over_the_token_limit_never_reaches_the_provider() -> None:
     provider = FakeProvider()
     huge = [{"role": "user", "content": "word " * 10_000}]
     try:
-        asyncio.run(
-            guarded_generate(
-                provider, huge, "default", "default", None,
-                limiter=_limiter(), breaker=_breaker(),
-                estimated_cost_usd=0.0, max_input_tokens=100, max_history_messages=10,
-            )
-        )
+        _call(provider, huge, max_input_tokens=100, max_history_messages=10)
     except RequestTooLarge:
         pass
     else:
@@ -98,15 +117,9 @@ def test_a_request_over_budget_never_reaches_the_provider() -> None:
     FakeProvider.calls, which is exactly why the fake carries that list."""
     provider = FakeProvider()
     try:
-        asyncio.run(
-            guarded_generate(
-                provider, _MESSAGES, "default", "default", budget=0.0001,
-                limiter=_limiter(), breaker=_breaker(),
-                estimated_cost_usd=1.0, max_input_tokens=10_000, max_history_messages=10,
-            )
-        )
-    except BudgetExceeded:
-        pass
+        _call(provider, ledger=_ledger(per_call_usd=0.0001), estimated_cost_usd=1.0)
+    except BudgetExceeded as exc:
+        assert exc.layer is SpendLayer.PER_CALL
     else:
         raise AssertionError("an over-budget request was not rejected")
     assert provider.calls == []
@@ -120,13 +133,7 @@ def test_exhausted_daily_quota_never_reaches_the_provider() -> None:
     limiter = _limiter(rpd=1)
     limiter.requests_today = 1  # quota already spent
     try:
-        asyncio.run(
-            guarded_generate(
-                provider, _MESSAGES, "default", "default", None,
-                limiter=limiter, breaker=_breaker(),
-                estimated_cost_usd=0.0, max_input_tokens=10_000, max_history_messages=10,
-            )
-        )
+        _call(provider, limiter=limiter)
     except QuotaExhausted:
         pass
     else:
@@ -134,23 +141,18 @@ def test_exhausted_daily_quota_never_reaches_the_provider() -> None:
     assert provider.calls == []
 
 
-def test_spend_rate_breaker_trips_into_degraded_not_failure() -> None:
-    """charter IV: 'global circuit breaker trips on spend rate, into
-    degraded mode not failure' -- Degraded is its own class, not a generic
-    RuntimeError/HTTPException, so a caller can distinguish 'walk the
-    degradation ladder' from 'this request failed'."""
+def test_spend_rate_breaker_refuses_cleanly_not_failure() -> None:
+    """The global per-minute layer refuses with a layer name (CP0 (iii)): Degraded is a
+    BudgetExceeded, raised before any provider call."""
     provider = FakeProvider()
     breaker = _breaker(cap=0.50)
     try:
-        asyncio.run(
-            guarded_generate(
-                provider, _MESSAGES, "default", "default", None,
-                limiter=_limiter(), breaker=breaker,
-                estimated_cost_usd=1.0, max_input_tokens=10_000, max_history_messages=10,
-            )
-        )
-    except Degraded:
-        pass
+        _call(provider, breaker=breaker, estimated_cost_usd=1.0)
+    except Degraded as exc:
+        assert exc.layer is SpendLayer.GLOBAL_MINUTE
+        assert isinstance(exc, BudgetExceeded)
+        # 1.0 can never fit under a 0.50 cap: no retry time.
+        assert exc.retry_after_s is None
     else:
         raise AssertionError("spend over the per-minute cap did not trip the breaker")
     assert provider.calls == [], "a tripped breaker must not let the call through"
@@ -159,13 +161,7 @@ def test_spend_rate_breaker_trips_into_degraded_not_failure() -> None:
 def test_a_request_within_every_limit_reaches_the_provider_and_records_spend() -> None:
     provider = FakeProvider()
     breaker = _breaker(cap=10.0)
-    result = asyncio.run(
-        guarded_generate(
-            provider, _MESSAGES, "default", "default", budget=10.0,
-            limiter=_limiter(), breaker=breaker,
-            estimated_cost_usd=0.5, max_input_tokens=10_000, max_history_messages=10,
-        )
-    )
+    result = _call(provider, breaker=breaker, ledger=_ledger(per_call_usd=10.0), estimated_cost_usd=0.5)
     assert len(provider.calls) == 1
     assert result is not None
     # Spend is only recorded AFTER a real call -- a rejected request must not

@@ -25,9 +25,55 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
 from src.pricing import UNPRICED, Cost
+
+
+class FinishReason(StrEnum):
+    """Closed set. Values outside the recorded vocabulary land in OTHER and are counted,
+    never dropped (P-1 F4, F24, findings VIII.1)."""
+
+    STOP = "stop"
+    LENGTH = "length"
+    CONTENT_FILTER = "content_filter"
+    ERROR = "error"
+    OTHER = "other"
+    NONE = "none"
+
+
+# Recorded raw values: Google status (R53, R56), OpenAI-dialect finish_reason on
+# Groq, OpenRouter, Baseten and Purdue (F4, F23, F26, F28).
+_FINISH_MAP: dict[str, FinishReason] = {
+    "stop": FinishReason.STOP,
+    "completed": FinishReason.STOP,
+    "length": FinishReason.LENGTH,
+    "truncated": FinishReason.LENGTH,
+    "error": FinishReason.ERROR,
+    # Idempotent over the enum's own values, so a normalized value re-normalizes to itself.
+    "content_filter": FinishReason.CONTENT_FILTER,
+    "other": FinishReason.OTHER,
+    "none": FinishReason.NONE,
+    **{code: FinishReason.CONTENT_FILTER for code in (
+        "safety", "recitation", "language", "prohibited_content",
+        "spii", "blocklist", "image_safety", "content_blocked",
+    )},
+}
+
+# A truncated or failed finish: the answer text is not the whole answer.
+INCOMPLETE_FINISHES = frozenset({FinishReason.LENGTH, FinishReason.ERROR, FinishReason.CONTENT_FILTER})
+
+
+def normalize_finish_reason(raw: str | None, native: str | None = None) -> FinishReason:
+    """Pure. `native` is OpenRouter's `native_finish_reason`, consulted only when `raw`
+    is absent or unmapped."""
+    for candidate in (raw, native):
+        if candidate:
+            hit = _FINISH_MAP.get(candidate.strip().lower())
+            if hit is not None:
+                return hit
+    return FinishReason.OTHER if (raw or native) else FinishReason.NONE
 
 
 @dataclass
@@ -52,6 +98,14 @@ class Usage:
     # gateway entirely). False here means "this provider did not serve this
     # answer from its own cache" -- not "no cache was consulted at all".
     cache_hit: bool = False
+    # Raw provider strings; `normalize_finish_reason` is the only reader.
+    finish_reason: str | None = None
+    native_finish_reason: str | None = None
+    # Observed, recorded per run and never hashed (config identity split, schedule-p0 V).
+    upstream: str | None = None
+    # Provider-reported charge (e.g. OpenRouter usage.cost); None when the provider reports none.
+    # Kept apart from `cost`, which is list price computed from the rate table (N-EV10).
+    billed_usd: float | None = None
 
 
 @dataclass

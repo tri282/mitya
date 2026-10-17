@@ -34,19 +34,24 @@ existing. `guarded_generate()` is the ONE place all four checks run, in the
 order charter IV requires -- request size, then fair share, then budget, then
 spend rate -- so a request that fails any of them never reaches `provider.generate()`
 (Batch B's Verify assertion, checked against `FakeProvider.calls`).
+
+v3 P0 B1: the six spend layers and the request ledger live in `ledger.py` (OI8, OI45); this
+module is still the one admission point.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import time
 from collections import deque
+from collections.abc import AsyncIterator
 
-from src.config import Config
-from src.gateway.contract import GenerationStream, Provider
+from src.gateway.contract import GenerationStream, Provider, Usage, normalize_finish_reason
+from src.gateway.ledger import BudgetExceeded, RequestLedger, Reservation, SpendLayer
 from src.limits import LimitError, QuotaExhausted, RateLimiter
 from src.limits import estimate_tokens as _estimate_tokens
-from src.metrics import record_quota_rejection
+from src.metrics import record_budget_refusal, record_finish_reason, record_quota_rejection
 
 logger = logging.getLogger(__name__)
 
@@ -58,15 +63,11 @@ class RequestTooLarge(LimitError):
     forbids."""
 
 
-class BudgetExceeded(LimitError):
-    """This request's estimated cost would exceed the remaining budget."""
+class Degraded(BudgetExceeded):
+    """The global per-minute layer refused (CP0: a clean decline, never a ladder rung)."""
 
-
-class Degraded(RuntimeError):
-    """The spend-rate breaker has tripped. Not a failure (IV: "into degraded
-    mode not failure") -- a caller catches this and walks the degradation
-    ladder (step 10, `src/gateway/ladder.py`); it must not become a 5xx by
-    itself."""
+    def __init__(self, retry_after_s: int | None) -> None:
+        super().__init__(SpendLayer.GLOBAL_MINUTE, retry_after_s)
 
 
 class SpendRateBreaker:
@@ -97,17 +98,15 @@ class SpendRateBreaker:
     def __init__(
         self,
         max_usd_per_minute: float,
+        fairness_pressure: float,
         clock=time.monotonic,
-        fairness_pressure: float | None = None,
     ) -> None:
         self.max_usd_per_minute = max_usd_per_minute
         # Below this fraction of the pool there is spare capacity, so nobody is
         # being starved and a heavy tenant is not costing anyone anything --
         # rejecting it then would throw away throughput to enforce a fairness
         # nobody needed. Fairness is a contention rule, not a quota.
-        self.fairness_pressure = (
-            Config.POOL_FAIRNESS_PRESSURE if fairness_pressure is None else fairness_pressure
-        )
+        self.fairness_pressure = fairness_pressure
         self._clock = clock
         # (timestamp, tenant, usd, pool_tokens_reserved)
         self._window: deque[tuple[float, str, float, int]] = deque()
@@ -121,6 +120,20 @@ class SpendRateBreaker:
         self._evict(now)
         spent = sum(entry[2] for entry in self._window)
         return (spent + projected_usd) > self.max_usd_per_minute
+
+    def seconds_until_fits(self, projected_usd: float) -> int | None:
+        """Seconds until the oldest entries leave the window enough for `projected_usd` to fit;
+        None when it cannot fit even in an empty window."""
+        if projected_usd > self.max_usd_per_minute:
+            return None
+        now = self._clock()
+        self._evict(now)
+        running = sum(entry[2] for entry in self._window)
+        for stamp, _, usd, _ in self._window:
+            running -= usd
+            if running + projected_usd <= self.max_usd_per_minute:
+                return max(1, math.ceil(stamp + 60.0 - now))
+        return 60
 
     def record(self, usd: float, tenant: str, tokens: int) -> None:
         """Only called once a call is actually made -- a rejected request
@@ -137,29 +150,56 @@ def _input_tokens(messages: list[dict]) -> int:
     return sum(_estimate_tokens(m.get("content", "") or "") for m in messages)
 
 
+async def _settling(
+    chunks: AsyncIterator[str], usage: Usage, ledger: RequestLedger, res: Reservation, model: str,
+) -> AsyncIterator[str]:
+    """Settle the ledger entry when the stream ends, however it ends. A stream that raises
+    before its first chunk produced nothing and releases its reservation."""
+    produced = False
+    try:
+        async for chunk in chunks:
+            produced = True
+            yield chunk
+    except BaseException:
+        if not produced:
+            ledger.fail(res)
+            raise
+        ledger.settle(res, usage)
+        raise
+    else:
+        ledger.settle(res, usage)
+    finally:
+        finish = normalize_finish_reason(usage.finish_reason, usage.native_finish_reason)
+        if res.entry.outcome != "failed":
+            record_finish_reason(finish.value)
+            if finish.value == "other":
+                logger.warning(
+                    "gateway: unrecognised finish reason %r from %s counted as other",
+                    (usage.finish_reason or usage.native_finish_reason or "")[:40], model,
+                )
+
+
 async def guarded_generate(
     provider: Provider,
     messages: list[dict],
     tier: str,
     tenant: str,
-    budget: float | None,
     *,
     limiter: RateLimiter,
     breaker: SpendRateBreaker,
+    ledger: RequestLedger,
     estimated_cost_usd: float,
     max_input_tokens: int,
     max_history_messages: int,
-    max_output_tokens: int = 0,
+    max_output_tokens: int,
 ) -> GenerationStream:
     """Enforce spend safety, then delegate to `provider.generate()`.
 
-    Order, and the order IS charter IV's point: request-size limits, then the
-    shared-pool fair-share check (P5 step 5 -- ahead of the limiter on purpose;
-    see the comment at its call site), then the per-model rate limiter (`RateLimiter.acquire_async` -- v2 P2 step 4's
-    stated reason it must be async: `time.sleep` inside this coroutine would
-    block the event loop for every OTHER concurrent request), then the
-    budget check, then the spend-rate breaker -- all before
-    `provider.generate()` runs. Nothing here is reconciled after the call.
+    Order: request size, the per-model quota window, per-call and per-request budget, the
+    global per-minute window, then the persisted tenant-day, global-day and global-month
+    sums (reserved atomically). All before `provider.generate()` runs; a refusal at any
+    layer raises `BudgetExceeded` naming the layer and sends nothing (CP0 (iii)). The
+    returned stream settles the ledger entry with the actual cost when it ends.
     """
     if len(messages) > max_history_messages:
         raise RequestTooLarge(
@@ -172,64 +212,44 @@ async def guarded_generate(
             f"~{input_tokens} input tokens over the {max_input_tokens} limit"
         )
 
-    # The fair-share guard that used to sit here is RETIRED (P5 G-P10, R117).
-    # It never fired: it needed 80% of `limiter.tpm` in pressure, and admission
-    # control (`src.limits.TenantConcurrency`) caps in-flight work at roughly 3%
-    # of that -- the offered load that would raise pressure is precisely what
-    # admission refuses. It passed nine tests and was unreachable in production,
-    # which is a worse state than absent, because green tests asserted it worked.
-    # Fairness now lives in the admission gate, the only place where contention
-    # is observable: `TenantConcurrency._ahead_of_share()`.
+    # Fairness lives in the admission gate (`TenantConcurrency._ahead_of_share`, R117).
     model = getattr(provider, "model", "unknown")
     pool_tokens_reserved = input_tokens + max_output_tokens
 
     try:
-        # Reserve input PLUS the completion ceiling, not input alone. Provider
-        # TPM counts tokens in both directions, so reserving only the prompt
-        # lets more requests through than the provider will accept and the
-        # difference comes back as 429s. Measured on Groq gpt-oss-120b (tpm
-        # 8000): a ~1712-token prompt reserved alone permits 4.7 req/min while
-        # the provider, counting the 400-token completion too, allows 3.8 --
-        # a 24% overshoot that the transport retry then absorbs, turning a
-        # limiter miss into latency and wasted rpd rather than an error.
-        #
-        # `_input_tokens` above stays input-only on purpose: that check is
-        # about REQUEST SIZE (does this prompt fit at all), which is a
-        # different question from how much quota the round trip consumes.
+        # Reserve input plus the completion ceiling: provider TPM counts both directions
+        # (measured on Groq gpt-oss-120b: input-only reservation overshoots by 24%).
         await limiter.acquire_async(pool_tokens_reserved)
     except QuotaExhausted:
-        # First live call site for mitya_quota_rejections_total (Q13,
-        # src/metrics.py) -- QuotaExhausted has existed since P1 5b with no
-        # caller on the request path to raise it.
         record_quota_rejection(model, tenant)
         raise
 
-    if budget is not None and estimated_cost_usd > budget:
-        # Deliberately NOT record_quota_rejection() here -- that counter's
-        # description (src/metrics.py) is specifically QuotaExhausted
-        # rejections. A budget-exceeded rejection is a different reason and
-        # would blur the two under one series with no way to tell them
-        # apart; adding a second, distinctly-named counter is out of this
-        # step's "~3 lines" scope (schedule Batch B), so this is logged, not
-        # metered, until a later phase asks for the metric.
+    try:
+        ledger.check(estimated_cost_usd)
+        if breaker.would_trip(estimated_cost_usd):
+            logger.warning(
+                "gateway: spend-rate layer refused (tenant=%s, projected=%s)",
+                tenant, estimated_cost_usd,
+            )
+            raise Degraded(breaker.seconds_until_fits(estimated_cost_usd))
+        remaining = ledger.remaining_usd()
+        res = ledger.reserve(tenant, model, estimated_cost_usd, pool_tokens_reserved)
+    except BudgetExceeded as exc:
         logger.warning(
-            "gateway: budget guard rejected request (tenant=%s, estimated=%s, budget=%s)",
-            tenant, estimated_cost_usd, budget,
+            "gateway: budget refused at %s (tenant=%s, estimated=%s)",
+            exc.layer.value, tenant, estimated_cost_usd,
         )
-        raise BudgetExceeded(
-            f"estimated cost {estimated_cost_usd} exceeds remaining budget {budget}"
-        )
+        record_budget_refusal(exc.layer.value)
+        raise
 
-    if breaker.would_trip(estimated_cost_usd):
-        logger.warning(
-            "gateway: spend-rate breaker tripped (tenant=%s, projected=%s) -- degraded mode",
-            tenant, estimated_cost_usd,
-        )
-        raise Degraded("spend rate over the per-minute cap")
-
-    stream = await provider.generate(messages, tier, tenant, budget)
+    try:
+        stream = await provider.generate(messages, tier, tenant, remaining)
+    except BaseException:
+        ledger.fail(res)
+        raise
     # One record, both policies: `estimated_cost_usd` feeds the spend-rate cap,
-    # `tenant`/`pool_tokens_reserved` feed the fair-share view of the same
-    # minute. See SpendRateBreaker's "two policies, one window" note.
+    # `tenant`/`pool_tokens_reserved` feed the fair-share view of the same minute.
     breaker.record(estimated_cost_usd, tenant, pool_tokens_reserved)
-    return stream
+    return GenerationStream(
+        chunks=_settling(stream.chunks, stream.usage, ledger, res, model), usage=stream.usage,
+    )
