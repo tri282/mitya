@@ -22,7 +22,7 @@ import hashlib
 import json
 import logging
 import os
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -59,7 +59,9 @@ _SECRET_NAME_SEGMENTS = frozenset({"key", "secret", "token", "password", "creden
 
 # Value-side check. A secret does not need a secret-shaped field name to leak:
 # it only needs to be assigned to one that is not.
-_SECRET_ENV_VARS = ("GOOGLE_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY")
+_SECRET_ENV_VARS = (
+    "GOOGLE_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY", "BASETEN_API_KEY", "PURDUE_API_KEY",
+)
 
 
 def _secret_values() -> list[str]:
@@ -259,6 +261,29 @@ class ProviderRoute(BaseModel):
     allow_fallbacks: bool
     zdr: bool
     only: tuple[str, ...]
+
+
+class AdapterProfile(BaseModel):
+    """Per-surface dialect of the generic OpenAI-compatible adapter (schedule-p0 V rulings, OI26).
+    Hashed; `key_env` names an environment variable and never holds a key. Values are the recorded
+    ones in P-1 findings F4, F11, F23-F29, VIII.1."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    base_url: str
+    key_env: str
+    # Which error body the surface sends: {"error": {...}}, {"error": "..."}, {"detail": "..."}.
+    error_shape: Literal["object", "string", "detail"]
+    # Delta fields that carry chain-of-thought; never yielded as answer text.
+    reasoning_fields: tuple[Literal["reasoning", "reasoning_content"], ...]
+    # last_chunk: one usage object in the final chunk; cumulative: usage on every chunk; absent: none.
+    usage: Literal["last_chunk", "cumulative", "absent"]
+    # Send stream_options.include_usage (Groq needs it; OpenRouter ignores it; Purdue unprobed).
+    request_usage: bool
+    # Key in the usage object carrying the provider-reported charge, or None.
+    cost_field: str | None
+    # Send the OpenRouter `provider` routing object (requires a ProviderRoute pin).
+    provider_routing: bool
 
 
 # Identity slots added at v3 P0 B1 (OI26). Omitted from the canonical form while empty, so
@@ -482,8 +507,8 @@ class ServingConfig(BaseModel):
     jev_model: str = ""
     # Surface model id -> routing pin.
     provider_routes: dict[str, ProviderRoute] = {}
-    # Surface -> adapter profile (error, reasoning, usage mapping); typed in B2.
-    adapter_profiles: dict[str, dict[str, Any]] = {}
+    # Surface -> adapter profile (error, reasoning, usage mapping, routing).
+    adapter_profiles: dict[str, AdapterProfile] = {}
     # Provider -> safety settings sent with the request (C22).
     provider_safety: dict[str, list[dict[str, Any]]] = {}
 

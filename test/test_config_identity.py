@@ -19,9 +19,19 @@ from src.config_artifact import ServingConfig  # noqa: E402
 
 SLOTS = ("guard_canary", "jev_model", "provider_routes", "adapter_profiles", "provider_safety")
 ROUTE = {"order": ["deepinfra"], "allow_fallbacks": False, "zdr": True, "only": []}
+SEED_PATH = os.path.join("config", "gateway_seed.json")
+
+
+def _seed() -> dict:
+    with open(SEED_PATH, encoding="utf-8") as f:
+        return json.load(f)
+
+
+PROFILE = _seed()["adapter_profiles"]["openrouter"]
 
 _PROBES = {
     "provider_routes": ROUTE,
+    "adapter_profiles": PROFILE,
     "book_title_aliases": "x",
     "provider_safety": [{"category": "c", "threshold": "t"}],
 }
@@ -72,8 +82,34 @@ def test_each_route_pin_field_is_hashed() -> None:
         assert other.version() != pinned.version(), key
 
 
+def test_each_adapter_profile_field_is_hashed() -> None:
+    base = _base_dump()
+    declared = ServingConfig(**{**base, "adapter_profiles": {"openrouter": PROFILE}})
+    assert declared.version() != ServingConfig(**base).version()
+    changed = {
+        "base_url": "https://example.invalid/v1", "key_env": "OTHER_KEY_ENV", "error_shape": "detail",
+        "reasoning_fields": ["reasoning_content"], "usage": "cumulative", "request_usage": True,
+        "cost_field": None, "provider_routing": False,
+    }
+    assert set(changed) == set(PROFILE), "a profile field has no known-answer here"
+    for key, new in changed.items():
+        other = ServingConfig(**{**base, "adapter_profiles": {"openrouter": {**PROFILE, key: new}}})
+        assert other.version() != declared.version(), key
+
+
+def test_the_committed_seed_builds_a_valid_config_with_the_ruled_pins() -> None:
+    seed = _seed()
+    cfg = ServingConfig(**{**_base_dump(), **seed})
+    assert set(cfg.adapter_profiles) == {"openrouter", "baseten", "purdue", "groq"}
+    pin = cfg.provider_routes["openai/gpt-oss-120b"]
+    assert (pin.order, pin.allow_fallbacks, pin.zdr, pin.only) == (("deepinfra",), False, True, ())
+    jev = cfg.provider_routes[cfg.jev_model]
+    assert cfg.jev_model == "typesafe/jev-1.14" and jev.order == ("typesafe",) and jev.zdr
+    assert not jev.allow_fallbacks
+
+
 def test_observed_values_are_not_part_of_the_identity() -> None:
-    for observed in ("upstream", "resolved_model", "native_finish_reason", "billed_usd"):
+    for observed in ("upstream", "resolved_model", "native_finish_reason", "billed_usd", "ratelimit"):
         assert observed not in ServingConfig.model_fields, observed
 
 
@@ -108,7 +144,7 @@ def test_a_slotted_config_round_trips_to_the_same_version() -> None:
     dump.update(
         guard_canary="MITYA-CANARY-7Q4X", jev_model="typesafe/jev-1.14",
         provider_routes={"openai/gpt-oss-120b": ROUTE},
-        adapter_profiles={"openrouter": {"reasoning": "reasoning"}},
+        adapter_profiles={"openrouter": PROFILE},
         provider_safety={"google": [{"category": "c", "threshold": "t"}]},
     )
     cfg = ServingConfig(**dump)

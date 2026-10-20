@@ -26,9 +26,17 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from src.pricing import UNPRICED, Cost
+
+
+class CallClass(StrEnum):
+    """Closed set of gateway call classes. Anything else is refused before a provider is
+    touched; embed and rerank join in P2 (G-P8, OI41)."""
+
+    GENERATION = "generation"
+    DECIDE = "decide"
 
 
 class FinishReason(StrEnum):
@@ -103,6 +111,9 @@ class Usage:
     native_finish_reason: str | None = None
     # Observed, recorded per run and never hashed (config identity split, schedule-p0 V).
     upstream: str | None = None
+    # The model snapshot the provider says it served (e.g. a dated alias target); `model` stays
+    # the requested id so rate and label lookups keep working.
+    resolved_model: str | None = None
     # Provider-reported charge (e.g. OpenRouter usage.cost); None when the provider reports none.
     # Kept apart from `cost`, which is list price computed from the rate table (N-EV10).
     billed_usd: float | None = None
@@ -119,6 +130,14 @@ class GenerationStream:
     """
 
     chunks: AsyncIterator[str]
+    usage: Usage
+
+
+@dataclass
+class DecideResult:
+    """A `decide` call's parsed answers (question id -> raw answer object) and its `Usage`."""
+
+    answers: dict[str, Any]
     usage: Usage
 
 
@@ -149,4 +168,14 @@ class Provider(Protocol):
         so Batch B's guard is an enforcement point added in front of this
         call, not a signature change to every implementation of it.
         """
+        ...
+
+
+@runtime_checkable
+class Decider(Protocol):
+    """The `decide` call class: structured questions over a text state (Jev, D4 is P3)."""
+
+    async def decide(
+        self, state: str, questions: dict, tenant: str, budget: float | None,
+    ) -> DecideResult:
         ...

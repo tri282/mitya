@@ -1,0 +1,49 @@
+{
+  "jev_model": "typesafe/jev-1.14",
+  "provider_routes": {
+    "openai/gpt-oss-120b": {"order": ["deepinfra"], "allow_fallbacks": false, "zdr": true, "only": []},
+    "typesafe/jev-1.14": {"order": ["typesafe"], "allow_fallbacks": false, "zdr": true, "only": []}
+  },
+  "adapter_profiles": {
+    "openrouter": {
+      "base_url": "https://openrouter.ai/api/v1",
+      "key_env": "OPENROUTER_API_KEY",
+      "error_shape": "object",
+      "reasoning_fields": ["reasoning"],
+      "usage": "last_chunk",
+      "request_usage": false,
+      "cost_field": "cost",
+      "provider_routing": true
+    },
+    "baseten": {
+      "base_url": "https://inference.baseten.co/v1",
+      "key_env": "BASETEN_API_KEY",
+      "error_shape": "string",
+      "reasoning_fields": ["reasoning_content"],
+      "usage": "cumulative",
+      "request_usage": true,
+      "cost_field": null,
+      "provider_routing": false
+    },
+    "purdue": {
+      "base_url": "https://genai.rcac.purdue.edu/api",
+      "key_env": "PURDUE_API_KEY",
+      "error_shape": "detail",
+      "reasoning_fields": ["reasoning", "reasoning_content"],
+      "usage": "absent",
+      "request_usage": false,
+      "cost_field": null,
+      "provider_routing": false
+    },
+    "groq": {
+      "base_url": "https://api.groq.com/openai/v1",
+      "key_env": "GROQ_API_KEY",
+      "error_shape": "object",
+      "reasoning_fields": ["reasoning"],
+      "usage": "last_chunk",
+      "request_usage": true,
+      "cost_field": null,
+      "provider_routing": false
+    }
+  }
+}

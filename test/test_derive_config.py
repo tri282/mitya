@@ -9,7 +9,7 @@ import sys
 
 sys.path.insert(0, ".")
 
-from scripts.derive_config import derive, parse_override  # noqa: E402
+from scripts.derive_config import derive, load_seed, parse_override  # noqa: E402
 from src.config_artifact import load, read_pointer  # noqa: E402
 
 CANARY = "MITYA-CANARY-7Q4X"
@@ -33,6 +33,16 @@ def test_canary_changes_version_and_nothing_else() -> None:
     assert derived.model_dump() == {**base.model_dump(), "guard_canary": CANARY}
     # No override: same content, same version.
     assert derive(base, {}).version() == base.version()
+
+
+def test_seed_overrides_apply_and_change_the_version() -> None:
+    base = load(read_pointer())
+    seed = load_seed("config/gateway_seed.json")
+    derived = derive(base, seed)
+    assert derived.version() != base.version()
+    assert set(derived.adapter_profiles) == {"openrouter", "baseten", "purdue", "groq"}
+    assert derived.jev_model == "typesafe/jev-1.14"
+    assert derived.model_dump(exclude=set(seed)) == base.model_dump(exclude=set(seed))
 
 
 def test_unknown_field_refused() -> None:

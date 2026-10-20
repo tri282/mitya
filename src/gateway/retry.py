@@ -46,9 +46,13 @@ class TransportError(RuntimeError):
     answer available.
     """
 
-    def __init__(self, *args, retry_after: float | None = None) -> None:
+    def __init__(
+        self, *args, retry_after: float | None = None, error_class: str | None = None,
+    ) -> None:
         super().__init__(*args)
         self.retry_after = retry_after
+        # Set by the generic OpenAI-dialect adapter (`ErrorClass` value); None from older adapters.
+        self.error_class = error_class
 
 
 def record_if_empty_completion(route: str, usage: Usage) -> None:
