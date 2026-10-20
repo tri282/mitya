@@ -1,0 +1,27 @@
+{
+  "request": {
+    "model": "openai/gpt-oss-120b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Reply with the single word: ok"
+      }
+    ],
+    "temperature": 0,
+    "stream_options": {
+      "include_usage": true
+    },
+    "max_tokens": 5,
+    "stream": true
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "text/event-stream",
+    "x-ratelimit-limit-requests": "15",
+    "x-ratelimit-limit-tokens": "100000",
+    "x-ratelimit-remaining-requests": "6",
+    "x-ratelimit-remaining-tokens": "100000"
+  },
+  "body": "data: {\"id\":\"chatcmpl-c4abc197d0a54bd4b41c5bf2960f0da3\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}],\"created\":1792174626,\"model\":\"openai/gpt-oss-120b\",\"object\":\"chat.completion.chunk\",\"usage\":{\"prompt_tokens\":85,\"completion_tokens\":1,\"total_tokens\":86,\"prompt_tokens_details\":{\"audio_tokens\":0,\"cached_tokens\":64},\"completion_tokens_details\":{\"accepted_prediction_tokens\":0,\"audio_tokens\":0,\"reasoning_tokens\":0,\"rejected_prediction_tokens\":0}}}\n\ndata: {\"id\":\"chatcmpl-c4abc197d0a54bd4b41c5bf2960f0da3\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" user\"}}],\"created\":1792174626,\"model\":\"openai/gpt-oss-120b\",\"object\":\"chat.completion.chunk\",\"usage\":{\"prompt_tokens\":85,\"completion_tokens\":4,\"total_tokens\":89,\"prompt_tokens_details\":{\"audio_tokens\":0,\"cached_tokens\":64},\"completion_tokens_details\":{\"accepted_prediction_tokens\":0,\"audio_tokens\":0,\"reasoning_tokens\":0,\"rejected_prediction_tokens\":0}}}\n\ndata: {\"id\":\"chatcmpl-c4abc197d0a54bd4b41c5bf2960f0da3\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" asks\"}}],\"created\":1792174626,\"model\":\"openai/gpt-oss-120b\",\"object\":\"chat.completion.chunk\",\"usage\":{\"prompt_tokens\":85,\"completion_tokens\":4,\"total_tokens\":89,\"prompt_tokens_details\":{\"audio_tokens\":0,\"cached_tokens\":64},\"completion_tokens_details\":{\"accepted_prediction_tokens\":0,\"audio_tokens\":0,\"reasoning_tokens\":0,\"rejected_prediction_tokens\":0}}}\n\ndata: {\"id\":\"chatcmpl-c4abc197d0a54bd4b41c5bf2960f0da3\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\":\"}}],\"created\":1792174626,\"model\":\"openai/gpt-oss-120b\",\"object\":\"chat.completion.chunk\",\"usage\":{\"prompt_tokens\":85,\"completion_tokens\":4,\"total_tokens\":89,\"prompt_tokens_details\":{\"audio_tokens\":0,\"cached_tokens\":64},\"completion_tokens_details\":{\"accepted_prediction_tokens\":0,\"audio_tokens\":0,\"reasoning_tokens\":0,\"rejected_prediction_tokens\":0}}}\n\ndata: {\"id\":\"chatcmpl-c4abc197d0a54bd4b41c5bf2960f0da3\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" \\\"\"}}],\"created\":1792174626,\"model\":\"openai/gpt-oss-120b\",\"object\":\"chat.completion.chunk\",\"usage\":{\"prompt_tokens\":85,\"completion_tokens\":5,\"total_tokens\":90,\"prompt_tokens_details\":{\"audio_tokens\":0,\"cached_tokens\":64},\"completion_tokens_details\":{\"accepted_prediction_tokens\":0,\"audio_tokens\":0,\"reasoning_tokens\":0,\"rejected_prediction_tokens\":0}}}\n\ndata: {\"id\":\"chatcmpl-c4abc197d0a54bd4b41c5bf2960f0da3\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}],\"created\":1792174626,\"model\":\"openai/gpt-oss-120b\",\"object\":\"chat.completion.chunk\",\"usage\":{\"prompt_tokens\":85,\"completion_tokens\":5,\"total_tokens\":90,\"prompt_tokens_details\":{\"audio_tokens\":0,\"cached_tokens\":64},\"completion_tokens_details\":{\"accepted_prediction_tokens\":0,\"audio_tokens\":0,\"reasoning_tokens\":0,\"rejected_prediction_tokens\":0}}}\n\ndata: {\"id\":\"chatcmpl-c4abc197d0a54bd4b41c5bf2960f0da3\",\"choices\":[],\"created\":1792174626,\"model\":\"openai/gpt-oss-120b\",\"object\":\"chat.completion.chunk\",\"usage\":{\"prompt_tokens\":85,\"completion_tokens\":5,\"total_tokens\":90,\"prompt_tokens_details\":{\"audio_tokens\":0,\"cached_tokens\":64},\"completion_tokens_details\":{\"accepted_prediction_tokens\":0,\"audio_tokens\":0,\"reasoning_tokens\":0,\"rejected_prediction_tokens\":0}}}\n\ndata: [DONE]\n\n",
+  "latency_ms": 1229
+}

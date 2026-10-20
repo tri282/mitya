@@ -1,0 +1,23 @@
+{
+  "request": {
+    "model": "openai/gpt-oss-120b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Reply with the single word: ok"
+      }
+    ],
+    "temperature": 0,
+    "stream_options": {
+      "include_usage": true
+    },
+    "max_tokens": 5,
+    "stream": true
+  },
+  "status": 403,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "body": "{\"error\":\"please check the api-key you provided\"}\n",
+  "latency_ms": 964
+}

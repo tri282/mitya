@@ -1,0 +1,23 @@
+{
+  "request": {
+    "model": "openai/gpt-oss-120b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Reply with the single word: ok"
+      }
+    ],
+    "temperature": 0,
+    "provider": {
+      "zdr": true
+    },
+    "max_tokens": 5,
+    "stream": true
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "text/event-stream"
+  },
+  "body": "data: {\"id\":\"gen-1792173386-i0OmdG1D5gJz87dqozTw\",\"object\":\"chat.completion.chunk\",\"created\":1792173386,\"model\":\"openai/gpt-oss-120b\",\"provider\":\"Crusoe\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\",\"reasoning\":\"The\",\"reasoning_details\":[{\"type\":\"reasoning.text\",\"text\":\"The\",\"format\":\"unknown\",\"index\":0}]},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1792173386-i0OmdG1D5gJz87dqozTw\",\"object\":\"chat.completion.chunk\",\"created\":1792173386,\"model\":\"openai/gpt-oss-120b\",\"provider\":\"Crusoe\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\",\"reasoning\":\" user\",\"reasoning_details\":[{\"type\":\"reasoning.text\",\"text\":\" user\",\"format\":\"unknown\",\"index\":0}]},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1792173386-i0OmdG1D5gJz87dqozTw\",\"object\":\"chat.completion.chunk\",\"created\":1792173386,\"model\":\"openai/gpt-oss-120b\",\"provider\":\"Crusoe\",\"system_fingerprint\":\"vllm-0.27.1-tp4-80ed3009\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\",\"reasoning\":null},\"finish_reason\":\"length\",\"native_finish_reason\":\"length\"}]}\n\ndata: {\"id\":\"gen-1792173386-i0OmdG1D5gJz87dqozTw\",\"object\":\"chat.completion.chunk\",\"created\":1792173386,\"model\":\"openai/gpt-oss-120b\",\"provider\":\"Crusoe\",\"system_fingerprint\":\"vllm-0.27.1-tp4-80ed3009\",\"service_tier\":null,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\"},\"finish_reason\":\"length\",\"native_finish_reason\":\"length\"}],\"usage\":{\"prompt_tokens\":74,\"completion_tokens\":5,\"total_tokens\":79,\"cost\":0.00000495,\"is_byok\":false,\"prompt_tokens_details\":{\"cached_tokens\":64,\"cache_write_tokens\":0,\"audio_tokens\":0,\"video_tokens\":0},\"cost_details\":{\"upstream_inference_cost\":0.00000495,\"upstream_inference_prompt_cost\":0.0000037,\"upstream_inference_completions_cost\":0.00000125},\"completion_tokens_details\":{\"reasoning_tokens\":2,\"image_tokens\":0,\"audio_tokens\":0}}}\n\ndata: [DONE]\n\n",
+  "latency_ms": 1098
+}

@@ -1,0 +1,23 @@
+{
+  "request": {
+    "model": "openai/gpt-oss-120b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Reply with the single word: ok"
+      }
+    ],
+    "temperature": 0,
+    "provider": {
+      "zdr": true
+    },
+    "max_tokens": 5,
+    "stream": true
+  },
+  "status": 401,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "body": "{\"error\":{\"message\":\"Missing Authentication header\",\"code\":401}}",
+  "latency_ms": 847
+}
