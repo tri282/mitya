@@ -1,6 +1,8 @@
 """Request-scoped ledger and the six spend layers (OI8, OI45); persistence in src/db.py's `spend` table.
 
 Every priced call is admitted against all six layers before it is sent and settled after it returns.
+A call with no list price (estimate None, UNPRICED) is bound by the token layers and the
+`unpriced_call_tokens` cap only; the USD layers do not apply to it (schedule-p0 V rulings, 2026-10-20).
 """
 
 from __future__ import annotations
@@ -115,9 +117,12 @@ class SpendStore:
             (scope, period, usd, tokens),
         )
 
-    def reserve(self, tenant: str, usd: float, tokens: int) -> Hold:
-        """Check the three persisted layers and add the estimate in one transaction."""
+    def reserve(self, tenant: str, usd: float | None, tokens: int) -> Hold:
+        """Check the three persisted layers and add the estimate in one transaction. `usd` None
+        (UNPRICED) skips the USD comparisons and adds 0 to the USD sums; tokens still bind."""
         lim = self._limits
+        priced = usd is not None
+        usd = usd if usd is not None else 0.0
         now = self._clock()
         day, month = f"day:{now:%Y-%m-%d}", f"month:{now:%Y-%m}"
         t_scope = f"tenant:{tenant}"
@@ -126,11 +131,11 @@ class SpendStore:
             t_usd, t_tok = self._get(conn, t_scope, day)
             gd_usd, gd_tok = self._get(conn, "global", day)
             gm_usd, _ = self._get(conn, "global", month)
-            if t_usd + usd > lim.tenant_day_usd or t_tok + tokens > lim.tenant_day_tokens:
+            if (priced and t_usd + usd > lim.tenant_day_usd) or t_tok + tokens > lim.tenant_day_tokens:
                 raise BudgetExceeded(SpendLayer.TENANT_DAY, seconds_to_next_utc_midnight(now))
-            if gd_usd + usd > lim.global_day_usd or gd_tok + tokens > lim.global_day_tokens:
+            if (priced and gd_usd + usd > lim.global_day_usd) or gd_tok + tokens > lim.global_day_tokens:
                 raise BudgetExceeded(SpendLayer.GLOBAL_DAY, seconds_to_next_utc_midnight(now))
-            if gm_usd + usd > lim.global_month_usd:
+            if priced and gm_usd + usd > lim.global_month_usd:
                 raise BudgetExceeded(SpendLayer.GLOBAL_MONTH, seconds_to_next_utc_month(now))
             self._add(conn, t_scope, day, usd, tokens)
             self._add(conn, "global", day, usd, tokens)
@@ -161,7 +166,7 @@ class SpendStore:
 @dataclass
 class LedgerEntry:
     model: str | None
-    estimate_usd: float
+    estimate_usd: float | None  # None: no list price, UNPRICED
     cost: Cost | None = None
     billed_usd: float | None = None
     tokens: int | None = None
@@ -174,6 +179,7 @@ class LedgerTotals:
     billed: Cost
     calls: int
     failed_calls: int
+    unpriced_calls: int
 
 
 @dataclass
@@ -194,7 +200,7 @@ class RequestLedger:
 
     def _committed_usd(self) -> float:
         return sum(
-            e.cost.usd if e.cost is not None and e.cost.usd is not None else e.estimate_usd
+            e.cost.usd if e.cost is not None and e.cost.usd is not None else (e.estimate_usd or 0.0)
             for e in self.entries if e.outcome != "failed"
         )
 
@@ -202,14 +208,20 @@ class RequestLedger:
         left = min(self._limits.per_call_usd, self._limits.per_request_usd - self._committed_usd())
         return max(0.0, left)
 
-    def check(self, estimate_usd: float) -> None:
+    def check(self, estimate_usd: float | None, estimate_tokens: int) -> None:
+        if estimate_usd is None:
+            if estimate_tokens > self._limits.unpriced_call_tokens:
+                raise BudgetExceeded(SpendLayer.PER_CALL, None)
+            return
         if estimate_usd > self._limits.per_call_usd:
             raise BudgetExceeded(SpendLayer.PER_CALL, None)
         if self._committed_usd() + estimate_usd > self._limits.per_request_usd:
             raise BudgetExceeded(SpendLayer.PER_REQUEST, None)
 
-    def reserve(self, tenant: str, model: str | None, estimate_usd: float, estimate_tokens: int) -> Reservation:
-        self.check(estimate_usd)
+    def reserve(
+        self, tenant: str, model: str | None, estimate_usd: float | None, estimate_tokens: int,
+    ) -> Reservation:
+        self.check(estimate_usd, estimate_tokens)
         hold = self._store.reserve(tenant, estimate_usd, estimate_tokens)
         entry = LedgerEntry(model=model, estimate_usd=estimate_usd)
         self.entries.append(entry)
@@ -222,8 +234,9 @@ class RequestLedger:
         if usage.prompt_tokens is not None and usage.completion_tokens is not None:
             entry.tokens = usage.prompt_tokens + usage.completion_tokens
         entry.outcome = "ok"
-        # An unknown actual is charged at its estimate, a ceiling, never at 0.
-        actual_usd = usage.cost.usd if usage.cost.usd is not None else res.entry.estimate_usd
+        # An unknown actual is charged at its estimate, a ceiling, never at 0. A call that never
+        # had a USD estimate adds nothing to the USD sums; its tokens are still counted.
+        actual_usd = usage.cost.usd if usage.cost.usd is not None else (res.entry.estimate_usd or 0.0)
         actual_tokens = entry.tokens if entry.tokens is not None else res.estimate_tokens
         self._store.settle(res.hold, actual_usd, actual_tokens)
 
@@ -248,6 +261,7 @@ class RequestLedger:
             billed=total_usd(billed_costs),
             calls=len(live),
             failed_calls=len(self.entries) - len(live),
+            unpriced_calls=sum(1 for c in list_costs if not c.priced),
         )
 
 

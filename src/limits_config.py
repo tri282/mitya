@@ -24,7 +24,7 @@ _NonNegInt = Annotated[int, Field(ge=0)]
 
 
 class SpendLimits(BaseModel):
-    """The six spend layers. Reset boundaries for the day and month sums are UTC."""
+    """The six spend layers plus the unpriced per-call token cap. Reset boundaries for the day and month sums are UTC."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -36,6 +36,9 @@ class SpendLimits(BaseModel):
     global_day_usd: _PosFloat
     global_day_tokens: _PosInt
     global_month_usd: _PosFloat
+    # Per-call cap, in tokens, for a call with no list price. The USD layers do not bind such a
+    # call; the token layers and this cap do (schedule-p0 V rulings, 2026-10-20).
+    unpriced_call_tokens: _PosInt
 
 
 class LimitsConfig(BaseModel):

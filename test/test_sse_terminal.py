@@ -142,14 +142,14 @@ def test_cached_branch_has_a_terminal_event_and_a_verdict() -> None:
     try:
         cached = {
             "answer": f"It is {CANARY_SENTINEL}.", "sources": h.SOURCES, "footer": "Sources:",
-            "model": "stub",
+            "model": "stub", "finish_reason": "stop",
         }
         events = asyncio.run(h.run_chat(h.make_state(cached=cached)))
     finally:
         restore()
     meta = _assert_terminal(events, complete=True)
     assert meta["cache_hit"] is True
-    assert meta["finish_reason"] == "none"
+    assert meta["finish_reason"] == "stop"
     assert meta["guard"]["layer"] == "canary"
     assert meta["refusal"] is None
 

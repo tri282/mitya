@@ -29,7 +29,7 @@ import time
 from collections.abc import AsyncIterator
 
 from src.config import Config
-from src.gateway.contract import GenerationStream, Provider, Usage, normalize_finish_reason
+from src.gateway.contract import CallClass, GenerationStream, Provider, Usage, normalize_finish_reason
 from src.gateway.google import GoogleProvider
 from src.gateway.groq import GroqProvider
 from src.gateway.guard import SpendRateBreaker, guarded_generate
@@ -324,7 +324,7 @@ def credential_status(provider: str) -> str:
     return "ok" if getattr(Config, env, None) else f"{env} is not set"
 
 
-def _estimated_cost_usd(messages: list[dict], model: str) -> float:
+def _estimate_usd_or_none(messages: list[dict], model: str) -> float | None:
     """Pre-flight spend estimate for the guard -- a CEILING, not a prediction.
 
     The guard has to decide before calling, and actual cost is only knowable
@@ -334,13 +334,18 @@ def _estimated_cost_usd(messages: list[dict], model: str) -> float:
 
     `MAX_TOKENS` really is an upper bound on both arms, and R56 is why: thinking
     counts against `max_output_tokens` on Google and against `max_tokens` on
-    Groq, so a reasoning model cannot exceed it by thinking. An unpriced model
-    estimates 0.0 -- `cost_usd()` already logs that the request is UNPRICED, and
-    a guard must not invent a number to block on.
+    Groq, so a reasoning model cannot exceed it by thinking. A model with no rate
+    row estimates None (UNPRICED), never 0.0: the guard then binds that call by
+    the token layers and the unpriced per-call cap instead of the USD layers.
     """
     prompt_tokens = sum(estimate_tokens(m.get("content", "") or "") for m in messages)
-    cost = cost_usd(model, prompt_tokens, Config.MAX_TOKENS)
-    return cost.usd or 0.0
+    return cost_usd(model, prompt_tokens, Config.MAX_TOKENS).usd
+
+
+def _estimated_cost_usd(messages: list[dict], model: str) -> float:
+    """`_estimate_usd_or_none` with an unpriced model read as 0.0 -- P7's ranking objective
+    (`src/p7_objective.py`) needs a number; the guard does not use this."""
+    return _estimate_usd_or_none(messages, model) or 0.0
 
 
 # One limiter object for the process, keyed by QUOTA SCOPE rather than by model
@@ -485,10 +490,11 @@ async def open_guarded_stream(provider: Provider, messages: list[dict], model: s
         messages,
         tier="default",
         tenant=current_tenant(),
+        call_class=CallClass.GENERATION.value,
         limiter=_limiter.limiter_for(model),
         breaker=_breaker,
         ledger=current_ledger(),
-        estimated_cost_usd=_estimated_cost_usd(messages, model),
+        estimated_cost_usd=_estimate_usd_or_none(messages, model),
         max_input_tokens=Config.CTX_SIZE,
         max_history_messages=MAX_HISTORY_MESSAGES,
         max_output_tokens=Config.MAX_TOKENS,

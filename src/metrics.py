@@ -93,6 +93,11 @@ ADMISSION_REASONS = ("tenant", "total", "fairness")
 FINISH_REASONS = ("stop", "length", "content_filter", "error", "other", "none")
 SPEND_LAYERS = ("per_call", "per_request", "tenant_day", "global_minute", "global_day", "global_month")
 GUARD_LAYERS = ("canary", "persona_break", "none")
+# Mirrors `CallClass`. A refused class is not in this set and collapses to "unknown".
+CALL_CLASSES = ("generation", "decide")
+GATEWAY_ADMISSIONS = ("admitted", "refused")
+# Closed provider set; a `MODEL_LIMITS` provider outside it collapses to "unknown".
+PROVIDERS = ("google", "groq", "openrouter", "baseten", "purdue", "local")
 
 UNKNOWN = "unknown"
 # Overflow bucket for the tenant label -- see _tenant_key(). Distinct from
@@ -169,7 +174,7 @@ def _provider_key(model: str) -> str:
     if model.startswith("local-"):
         return "local"
     limits = Config.MODEL_LIMITS.get(model)
-    if limits and limits.get("provider"):
+    if limits and limits.get("provider") in PROVIDERS:
         return str(limits["provider"])
     return UNKNOWN
 
@@ -344,6 +349,9 @@ def configure_metrics():
     _instruments["budget_refusals"] = meter.create_counter(
         "mitya_budget_refusals_total", description="Calls refused before send, by spend layer (OI8)",
     )
+    _instruments["gateway_calls"] = meter.create_counter(
+        "mitya_gateway_calls_total", description="Gateway calls by call class and admission outcome",
+    )
     _instruments["guard_verdicts"] = meter.create_counter(
         "mitya_guard_verdicts_total", description="Output-guard verdicts on served answers, by layer",
     )
@@ -456,6 +464,15 @@ def record_finish_reason(reason: str) -> None:
 def record_budget_refusal(layer: str) -> None:
     _instruments.get("budget_refusals", _NULL).add(
         1, {"layer": layer if layer in SPEND_LAYERS else UNKNOWN},
+    )
+
+
+def record_gateway_call(call_class: str, admitted: bool) -> None:
+    _instruments.get("gateway_calls", _NULL).add(
+        1, {
+            "call_class": call_class if call_class in CALL_CLASSES else UNKNOWN,
+            "outcome": "admitted" if admitted else "refused",
+        },
     )
 
 

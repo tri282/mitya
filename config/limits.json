@@ -23,6 +23,7 @@
     "global_minute_usd": 0.05,
     "global_day_usd": 1.0,
     "global_day_tokens": 2000000,
-    "global_month_usd": 10.0
+    "global_month_usd": 10.0,
+    "unpriced_call_tokens": 16000
   }
 }

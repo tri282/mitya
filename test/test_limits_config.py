@@ -54,6 +54,7 @@ EXPECTED_SPEND = {
     "global_day_usd": 1.0,
     "global_day_tokens": 2_000_000,
     "global_month_usd": 10.0,
+    "unpriced_call_tokens": 16_000,
 }
 
 
@@ -171,7 +172,7 @@ def test_limit_primitives_take_their_value_as_a_required_argument() -> None:
     _no_defaults(RequestLedger.__init__, ("limits", "store"))
     _no_defaults(guarded_generate, (
         "limiter", "breaker", "ledger", "estimated_cost_usd", "max_input_tokens",
-        "max_history_messages", "max_output_tokens",
+        "max_history_messages", "max_output_tokens", "call_class",
     ))
     assert "budget" not in inspect.signature(guarded_generate).parameters
     for build in (lambda: SpendRateBreaker(0.05), lambda: TenantConcurrency(2, 6),

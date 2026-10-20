@@ -198,6 +198,7 @@ def test_double_release_raises() -> None:
 def test_cache_hit_releases_before_the_stream() -> None:
     state = _state(cached={
         "answer": "He was.", "sources": _SOURCES, "footer": "Sources:", "model": "stub",
+        "finish_reason": "stop",
     })
     at_return, after_drain = asyncio.run(_run(state))
     assert at_return == 1, f"cache hit still held the lock at return: {at_return}"

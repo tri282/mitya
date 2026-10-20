@@ -75,6 +75,7 @@ init_schema(_DB)
 _SPEND = SpendLimits(
     per_call_usd=1.0, per_request_usd=1.0, tenant_day_usd=1e6, tenant_day_tokens=10**9,
     global_minute_usd=1e6, global_day_usd=1e6, global_day_tokens=10**9, global_month_usd=1e6,
+    unpriced_call_tokens=10**9,
 )
 
 
@@ -104,7 +105,7 @@ def _drive(provider) -> tuple[list[str], Usage]:
     async def _go():
         stream = await guarded_generate(
             provider, [{"role": "user", "content": "q"}], "default", "default",
-            limiter=RateLimiter(rpm=10**6, tpm=10**9, rpd=10**9, sleep=lambda s: None),
+            call_class="generation", limiter=RateLimiter(rpm=10**6, tpm=10**9, rpd=10**9, sleep=lambda s: None),
             breaker=SpendRateBreaker(1e6, 0.8), ledger=ledger, estimated_cost_usd=0.0001,
             max_input_tokens=10**6, max_history_messages=10, max_output_tokens=0,
         )
@@ -162,7 +163,7 @@ def _drive_raw(provider) -> None:
     async def _go():
         stream = await guarded_generate(
             provider, [{"role": "user", "content": "q"}], "default", "default",
-            limiter=RateLimiter(rpm=10**6, tpm=10**9, rpd=10**9, sleep=lambda s: None),
+            call_class="generation", limiter=RateLimiter(rpm=10**6, tpm=10**9, rpd=10**9, sleep=lambda s: None),
             breaker=SpendRateBreaker(1e6, 0.8), ledger=ledger, estimated_cost_usd=0.0001,
             max_input_tokens=10**6, max_history_messages=10, max_output_tokens=0,
         )

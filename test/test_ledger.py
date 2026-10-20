@@ -37,6 +37,7 @@ from src.pricing import TOKENS_PER_RATE_UNIT, UNPRICED, Cost, total_usd  # noqa:
 WIDE = SpendLimits(
     per_call_usd=1000.0, per_request_usd=1000.0, tenant_day_usd=1e6, tenant_day_tokens=10**9,
     global_minute_usd=1e6, global_day_usd=1e6, global_day_tokens=10**9, global_month_usd=1e6,
+    unpriced_call_tokens=10**9,
 )
 NOON = datetime(2026, 10, 17, 12, 0, 0, tzinfo=timezone.utc)
 MESSAGES = [{"role": "user", "content": "who are you?"}]
@@ -89,7 +90,7 @@ class StubProvider:
 async def _send(provider, ledger, *, tenant="default", estimate=0.001, max_output_tokens=0,
                 messages=MESSAGES, breaker=None, drain=True):
     stream = await guarded_generate(
-        provider, messages, "default", tenant,
+        provider, messages, "default", tenant, call_class="generation",
         limiter=RateLimiter(rpm=10**6, tpm=10**9, rpd=10**9, sleep=lambda s: None),
         breaker=breaker or SpendRateBreaker(1e6, 0.8), ledger=ledger,
         estimated_cost_usd=estimate, max_input_tokens=10**6, max_history_messages=10,

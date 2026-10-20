@@ -108,7 +108,7 @@ def test_two_tenants_share_one_entry_under_concurrency() -> None:
         async def writer() -> None:
             cache.set(
                 _QUERY, None, "DEFAULT", _CFG, _CORPUS,
-                "He confesses because...", [{"id": 1}], "footer", "local-q4km",
+                "He confesses because...", [{"id": 1}], "footer", "local-q4km", finish_reason="stop",
             )
 
         async def reader() -> dict | None:
@@ -144,10 +144,10 @@ def test_nothing_in_a_cached_value_is_per_tenant() -> None:
     try:
         cache.set(
             _QUERY, None, "DEFAULT", _CFG, _CORPUS,
-            "answer", [{"id": 1}], "footer", "local-q4km",
+            "answer", [{"id": 1}], "footer", "local-q4km", finish_reason="stop",
         )
         stored = cache.get(_QUERY, None, "DEFAULT", _CFG, _CORPUS)
-        assert set(stored) == {"answer", "sources", "footer", "model"}, set(stored)
+        assert set(stored) == {"answer", "sources", "footer", "model", "finish_reason"}, set(stored)
         # Each field's provenance, in one line each: the generated text, the
         # retrieved corpus chunks, a rendering of those chunks, and the arm id.
         # None of the four can carry per-tenant content while the prompt has
@@ -204,11 +204,12 @@ class _RecordingCache:
         return self.store.get(key)
 
     def set(self, query, filters, route, config_version, corpus_version,
-            answer, sources, footer, model):
+            answer, sources, footer, model, *, finish_reason="stop"):
         key = (query, route, config_version, corpus_version)
         self.sets.append(key)
         self.store[key] = {
             "answer": answer, "sources": sources, "footer": footer, "model": model,
+            "finish_reason": finish_reason,
         }
 
 
@@ -367,7 +368,7 @@ def test_the_tripwire_can_actually_fire() -> None:
         "must carry tenant now, that reverses a decision, not a test."
     )
     recorder = _RecordingCache()
-    recorder.set(_QUERY, None, "DEFAULT", _CFG, _CORPUS, "a", [], "f", "local-q4km")
+    recorder.set(_QUERY, None, "DEFAULT", _CFG, _CORPUS, "a", [], "f", "local-q4km", finish_reason="stop")
     assert recorder.sets and recorder.get(_QUERY, None, "DEFAULT", _CFG, _CORPUS) is not None, (
         "the recording cache does not record -- every assertion above would "
         "then read zero writes no matter what the request path did"

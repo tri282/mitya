@@ -45,6 +45,7 @@ init_schema(_DB)
 _WIDE = SpendLimits(
     per_call_usd=1000.0, per_request_usd=1000.0, tenant_day_usd=1e6, tenant_day_tokens=10**9,
     global_minute_usd=1e6, global_day_usd=1e6, global_day_tokens=10**9, global_month_usd=1e6,
+    unpriced_call_tokens=10**9,
 )
 
 
@@ -70,7 +71,7 @@ def _call(provider, messages=_MESSAGES, *, limiter=None, breaker=None, ledger=No
           estimated_cost_usd=0.0, max_input_tokens=10_000, max_history_messages=10):
     return asyncio.run(
         guarded_generate(
-            provider, messages, "default", "default",
+            provider, messages, "default", "default", call_class="generation",
             limiter=limiter or _limiter(), breaker=breaker or _breaker(),
             ledger=ledger or _ledger(), estimated_cost_usd=estimated_cost_usd,
             max_input_tokens=max_input_tokens, max_history_messages=max_history_messages,

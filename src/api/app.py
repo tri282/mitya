@@ -474,6 +474,7 @@ def _ledger_meta(ledger: RequestLedger) -> dict:
         "billed_metered": totals.billed.metered,
         "calls": totals.calls,
         "failed_calls": totals.failed_calls,
+        "unpriced_calls": totals.unpriced_calls,
     }
 
 
@@ -817,11 +818,15 @@ async def chat(
 
         if cached is not None:
             logger.info(
-                "chat: query=%r filters=%s session_id=%s cache_hit=true "
+                "chat: query_chars=%d filters=%s session_id=%s cache_hit=true "
                 "cache_population=memory_free",
-                body.query, filters, body.session_id,
+                len(body.query), filters, body.session_id,
             )
 
+            # The cache stores the finish reason it was written with, so a truncated answer
+            # replays as incomplete (P0-F6).
+            cached_finish = normalize_finish_reason(cached["finish_reason"])
+            cached_complete = cached_finish not in INCOMPLETE_FINISHES
             cached_outcome = ["error"]
             cached_verdict = scan_output(cached["answer"], Config.GUARD_CANARY or None)
             record_guard_verdict(cached_verdict.layer.value if cached_verdict.layer else None)
@@ -866,14 +871,13 @@ async def chat(
                         # anything, with no further instrumentation.
                         "cost_usd": FREE.usd,
                         "cost_metered": FREE.metered,
-                        # The cache stores no finish reason: a hit reports none.
-                        "finish_reason": FinishReason.NONE.value,
-                        "complete": True,
+                        "finish_reason": cached_finish.value,
+                        "complete": cached_complete,
                         "guard": _guard_meta(cached_verdict),
                         "refusal": None,
                         "ledger": _ledger_meta(ledger),
                     })
-                    yield _sse("done", _done(True, FinishReason.NONE))
+                    yield _sse("done", _done(cached_complete, cached_finish))
                     # A cache hit is only reachable on a memory-FREE request
                     # (the bypass above), i.e. turn 1 of a session. It still
                     # produced an answer, so it still becomes turn 1 of the
@@ -900,8 +904,8 @@ async def chat(
             # its own, because a 503 that says "the ladder found no rung" and a 500
             # from a broken Qdrant call are different operator facts.
             logger.warning(
-                "chat: rung=%s query=%r -- no rung can serve this request (%s)",
-                rung.value, body.query, dependency_result.get("generation"),
+                "chat: rung=%s query_chars=%d -- no rung can serve this request (%s)",
+                rung.value, len(body.query), dependency_result.get("generation"),
             )
             _abort()
             raise HTTPException(
@@ -985,7 +989,7 @@ async def chat(
                         # chunks retries once unfiltered rather than dead-ending.
                         filter_relaxed = True
                         logger.info(
-                            "chat: filter_relaxed=true query=%r filters=%s", body.query, filters,
+                            "chat: filter_relaxed=true query_chars=%d filters=%s", len(body.query), filters,
                         )
                         points = retrieve(
                             state.qdrant, state.embedder, state.bm25, expanded_query, None
@@ -1035,7 +1039,7 @@ async def chat(
                 span.set_attribute("context.no_context", no_context)
                 set_cost(span)
             if no_context:
-                logger.info("chat: no_context=true query=%r", body.query)
+                logger.info("chat: no_context=true query_chars=%d", len(body.query))
         except ValueError as exc:
             # Unmapped book title / non-integral part-chapter filter -- reject
             # loudly (matches Config.resolve_book_title()'s own contract) rather
@@ -1055,9 +1059,9 @@ async def chat(
         # decided at CP-4c by looking at what it renders; Batch A0 does not
         # touch `frontend/`.
         logger.warning(
-            "chat: rung=%s query=%r sources=%d -- generation unavailable, serving "
+            "chat: rung=%s query_chars=%d sources=%d -- generation unavailable, serving "
             "passages only (%s)",
-            rung.value, body.query, len(sources), dependency_result.get("generation"),
+            rung.value, len(body.query), len(sources), dependency_result.get("generation"),
         )
         footer = "" if no_context else build_sources_footer(sources)
         retrieval_only_outcome = ["error"]
@@ -1311,7 +1315,7 @@ async def chat(
                 # belongs here as well as in the pre-stream handler: Google can
                 # emit a refusal partway through a stream that had already
                 # started producing text (R57's in-band `error` event).
-                logger.error("chat: mid-stream failure query=%r: %s", body.query, exc)
+                logger.error("chat: mid-stream failure query_chars=%d: %s", len(body.query), exc)
                 stream_span.set_attribute("generate.mid_stream_error", type(exc).__name__)
                 yield _sse("error", {"detail": str(exc)})
                 yield _sse("done", _done(False, FinishReason.ERROR))
@@ -1335,6 +1339,9 @@ async def chat(
             footer = "" if no_context else build_sources_footer(sources)
             yield _sse("sources", {"sources": sources, "footer": footer})
 
+            finish = normalize_finish_reason(usage.get("finish_reason"))
+            complete = finish not in INCOMPLETE_FINISHES
+
             if answer and not memory_bearing:
                 # Config.SERVING_MODEL is the producing arm (v2 P2 step 9,
                 # R51) -- the only one there is until Batch D's routing picks
@@ -1348,7 +1355,7 @@ async def chat(
                 # look identical from outside until the day it leaked.
                 state.cache.set(
                     body.query, filters, route_name, config_version, corpus_version,
-                    answer, sources, footer, _serving_model(),
+                    answer, sources, footer, _serving_model(), finish_reason=finish.value,
                 )
             if answer:
                 # In-band, post-answer (G-P13's placement). Free here -- a dict
@@ -1388,8 +1395,6 @@ async def chat(
                 record_answer_cost(cost.usd, _serving_model(), tenant)
             stream_outcome[0] = "empty" if not answer else "ok"
 
-            finish = normalize_finish_reason(usage.get("finish_reason"))
-            complete = finish not in INCOMPLETE_FINISHES
             verdict = scan_output(answer, canary or None)
             record_guard_verdict(verdict.layer.value if verdict.layer else None)
             yield _sse("meta", _meta_event(
@@ -1398,11 +1403,11 @@ async def chat(
             ))
             yield _sse("done", _done(complete, finish))
             logger.info(
-                "chat: query=%r route=%s filters=%s entities=%s chunk_ids=%s "
+                "chat: query_chars=%d route=%s filters=%s entities=%s chunk_ids=%s "
                 "cache_hit=false cache_population=%s ttft_ms=%s total_ms=%s "
                 "filter_relaxed=%s no_context=%s "
                 "prompt_tokens=%s completion_tokens=%s cost_usd=%s cost_metered=%s session_id=%s",
-                body.query, route_name, filters, resolved_entities,
+                len(body.query), route_name, filters, resolved_entities,
                 [p.id for p in points],
                 # Step 7(b): which POPULATION this request belongs to, on the
                 # line that already carries `cache_hit`. Counting `cache_hit=false`

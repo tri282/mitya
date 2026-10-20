@@ -47,11 +47,24 @@ import time
 from collections import deque
 from collections.abc import AsyncIterator
 
-from src.gateway.contract import GenerationStream, Provider, Usage, normalize_finish_reason
+from src.gateway.contract import (
+    CallClass,
+    DecideResult,
+    Decider,
+    GenerationStream,
+    Provider,
+    Usage,
+    normalize_finish_reason,
+)
 from src.gateway.ledger import BudgetExceeded, RequestLedger, Reservation, SpendLayer
 from src.limits import LimitError, QuotaExhausted, RateLimiter
 from src.limits import estimate_tokens as _estimate_tokens
-from src.metrics import record_budget_refusal, record_finish_reason, record_quota_rejection
+from src.metrics import (
+    record_budget_refusal,
+    record_finish_reason,
+    record_gateway_call,
+    record_quota_rejection,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +74,27 @@ class RequestTooLarge(LimitError):
     before the provider call -- billing for an oversized prompt and only
     THEN refusing it is exactly the "reconciled after" failure mode IV
     forbids."""
+
+
+class UnknownCallClass(LimitError):
+    """A call class the gateway does not know, or one this entry point does not serve. Raised
+    before the limiter, the ledger or any provider is touched."""
+
+
+def admit_call_class(call_class: str, serves: CallClass) -> CallClass:
+    """Closed-set admission. `embed` and `rerank` are not members until P2 (G-P8)."""
+    try:
+        admitted = CallClass(call_class)
+    except ValueError:
+        admitted = None
+    if admitted is not serves:
+        record_gateway_call(str(call_class), False)
+        logger.warning(
+            "gateway: call class %r refused (entry point serves %s)", str(call_class)[:40], serves.value,
+        )
+        raise UnknownCallClass(f"call class {str(call_class)[:40]!r} is not served here", status=400)
+    record_gateway_call(admitted.value, True)
+    return admitted
 
 
 class Degraded(BudgetExceeded):
@@ -115,7 +149,10 @@ class SpendRateBreaker:
         while self._window and now - self._window[0][0] >= 60.0:
             self._window.popleft()
 
-    def would_trip(self, projected_usd: float) -> bool:
+    def would_trip(self, projected_usd: float | None) -> bool:
+        """None (UNPRICED) never trips the USD window: the token layers bind that call."""
+        if projected_usd is None:
+            return False
         now = self._clock()
         self._evict(now)
         spent = sum(entry[2] for entry in self._window)
@@ -179,43 +216,18 @@ async def _settling(
                 )
 
 
-async def guarded_generate(
-    provider: Provider,
-    messages: list[dict],
-    tier: str,
+async def _admit(
+    model: str,
     tenant: str,
     *,
     limiter: RateLimiter,
     breaker: SpendRateBreaker,
     ledger: RequestLedger,
-    estimated_cost_usd: float,
-    max_input_tokens: int,
-    max_history_messages: int,
-    max_output_tokens: int,
-) -> GenerationStream:
-    """Enforce spend safety, then delegate to `provider.generate()`.
-
-    Order: request size, the per-model quota window, per-call and per-request budget, the
-    global per-minute window, then the persisted tenant-day, global-day and global-month
-    sums (reserved atomically). All before `provider.generate()` runs; a refusal at any
-    layer raises `BudgetExceeded` naming the layer and sends nothing (CP0 (iii)). The
-    returned stream settles the ledger entry with the actual cost when it ends.
-    """
-    if len(messages) > max_history_messages:
-        raise RequestTooLarge(
-            f"{len(messages)} messages over the {max_history_messages}-message "
-            f"history limit"
-        )
-    input_tokens = _input_tokens(messages)
-    if input_tokens > max_input_tokens:
-        raise RequestTooLarge(
-            f"~{input_tokens} input tokens over the {max_input_tokens} limit"
-        )
-
-    # Fairness lives in the admission gate (`TenantConcurrency._ahead_of_share`, R117).
-    model = getattr(provider, "model", "unknown")
-    pool_tokens_reserved = input_tokens + max_output_tokens
-
+    estimated_cost_usd: float | None,
+    pool_tokens_reserved: int,
+) -> tuple[Reservation, float]:
+    """The per-model quota window, then the ledger layers, then the global per-minute window,
+    then the persisted layers. Returns the reservation and the remaining USD for the provider."""
     try:
         # Reserve input plus the completion ceiling: provider TPM counts both directions
         # (measured on Groq gpt-oss-120b: input-only reservation overshoots by 24%).
@@ -225,7 +237,7 @@ async def guarded_generate(
         raise
 
     try:
-        ledger.check(estimated_cost_usd)
+        ledger.check(estimated_cost_usd, pool_tokens_reserved)
         if breaker.would_trip(estimated_cost_usd):
             logger.warning(
                 "gateway: spend-rate layer refused (tenant=%s, projected=%s)",
@@ -241,6 +253,58 @@ async def guarded_generate(
         )
         record_budget_refusal(exc.layer.value)
         raise
+    return res, remaining
+
+
+def _check_size(messages_or_text: list[dict] | str, max_input_tokens: int) -> int:
+    input_tokens = (
+        _estimate_tokens(messages_or_text) if isinstance(messages_or_text, str)
+        else _input_tokens(messages_or_text)
+    )
+    if input_tokens > max_input_tokens:
+        raise RequestTooLarge(f"~{input_tokens} input tokens over the {max_input_tokens} limit")
+    return input_tokens
+
+
+async def guarded_generate(
+    provider: Provider,
+    messages: list[dict],
+    tier: str,
+    tenant: str,
+    *,
+    call_class: str,
+    limiter: RateLimiter,
+    breaker: SpendRateBreaker,
+    ledger: RequestLedger,
+    estimated_cost_usd: float | None,
+    max_input_tokens: int,
+    max_history_messages: int,
+    max_output_tokens: int,
+) -> GenerationStream:
+    """Enforce spend safety, then delegate to `provider.generate()`.
+
+    Order: call class, request size, the per-model quota window, per-call and per-request
+    budget, the global per-minute window, then the persisted tenant-day, global-day and
+    global-month sums (reserved atomically). All before `provider.generate()` runs; a refusal
+    at any layer raises and sends nothing (CP0 (iii)). `estimated_cost_usd` None is an UNPRICED
+    call: bound by the token layers and the unpriced per-call cap, not the USD layers. The
+    returned stream settles the ledger entry with the actual cost when it ends.
+    """
+    admit_call_class(call_class, CallClass.GENERATION)
+    if len(messages) > max_history_messages:
+        raise RequestTooLarge(
+            f"{len(messages)} messages over the {max_history_messages}-message "
+            f"history limit"
+        )
+    input_tokens = _check_size(messages, max_input_tokens)
+
+    # Fairness lives in the admission gate (`TenantConcurrency._ahead_of_share`, R117).
+    model = getattr(provider, "model", "unknown")
+    pool_tokens_reserved = input_tokens + max_output_tokens
+    res, remaining = await _admit(
+        model, tenant, limiter=limiter, breaker=breaker, ledger=ledger,
+        estimated_cost_usd=estimated_cost_usd, pool_tokens_reserved=pool_tokens_reserved,
+    )
 
     try:
         stream = await provider.generate(messages, tier, tenant, remaining)
@@ -249,7 +313,41 @@ async def guarded_generate(
         raise
     # One record, both policies: `estimated_cost_usd` feeds the spend-rate cap,
     # `tenant`/`pool_tokens_reserved` feed the fair-share view of the same minute.
-    breaker.record(estimated_cost_usd, tenant, pool_tokens_reserved)
+    breaker.record(estimated_cost_usd or 0.0, tenant, pool_tokens_reserved)
     return GenerationStream(
         chunks=_settling(stream.chunks, stream.usage, ledger, res, model), usage=stream.usage,
     )
+
+
+async def guarded_decide(
+    decider: Decider,
+    state: str,
+    questions: dict,
+    tenant: str,
+    *,
+    call_class: str,
+    limiter: RateLimiter,
+    breaker: SpendRateBreaker,
+    ledger: RequestLedger,
+    estimated_cost_usd: float | None,
+    max_input_tokens: int,
+    max_output_tokens: int,
+) -> DecideResult:
+    """The `decide` call class on the same admission path as `guarded_generate`: class, size,
+    quota window, ledger layers, global per-minute window, persisted layers, then the send."""
+    admit_call_class(call_class, CallClass.DECIDE)
+    input_tokens = _check_size(state, max_input_tokens)
+    model = getattr(decider, "model", "unknown")
+    pool_tokens_reserved = input_tokens + max_output_tokens
+    res, remaining = await _admit(
+        model, tenant, limiter=limiter, breaker=breaker, ledger=ledger,
+        estimated_cost_usd=estimated_cost_usd, pool_tokens_reserved=pool_tokens_reserved,
+    )
+    try:
+        result = await decider.decide(state, questions, tenant, remaining)
+    except BaseException:
+        ledger.fail(res)
+        raise
+    ledger.settle(res, result.usage)
+    breaker.record(estimated_cost_usd or 0.0, tenant, pool_tokens_reserved)
+    return result

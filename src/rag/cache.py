@@ -30,10 +30,12 @@ from src.config import Config
 
 logger = logging.getLogger(__name__)
 
+_VALUE_KEYS = {"answer", "sources", "footer", "model", "finish_reason"}
+
 
 class AnswerCache:
     """Exact-match cache over (query, filters, route) -> {answer, sources,
-    footer, model}."""
+    footer, model, finish_reason}."""
 
     def __init__(self) -> None:
         # None when disabled -- get()/set() become no-ops rather than every
@@ -81,12 +83,15 @@ class AnswerCache:
         self, query: str, filters: dict | None, route: str,
         config_version: str, corpus_version: str,
     ) -> dict | None:
-        """Return the cached {answer, sources, footer, model}, or None on a
+        """Return the cached {answer, sources, footer, model, finish_reason}, or None on a
         miss, when disabled, or when the stored value predates this shape
         (R6/C10, extended v2 P2 step 9 -- self-healing: a legacy entry
         without `model` is treated as a miss and re-generated once, not
         migrated. A stored value has no way to *acquire* a producing arm
-        after the fact, so migration would mean fabricating one).
+        after the fact, so migration would mean fabricating one. The same
+        holds for `finish_reason` (v3 P0 B2, P0-F6): an entry stored before
+        it existed could be a truncated answer, so it is a miss, not a
+        "complete" hit).
 
         Keying on `route` (P1 5c), `config_version` and `corpus_version` (P1
         step 9) invalidates every entry stored before those changes --
@@ -96,7 +101,7 @@ class AnswerCache:
             return None
         key = self._key(query, filters, route, config_version, corpus_version)
         cached = self._cache.get(key)
-        if not isinstance(cached, dict) or cached.keys() != {"answer", "sources", "footer", "model"}:
+        if not isinstance(cached, dict) or cached.keys() != _VALUE_KEYS:
             return None
         logger.info("AnswerCache: hit key=%s model=%s", key[:12], cached["model"])
         return cached
@@ -105,9 +110,13 @@ class AnswerCache:
         self, query: str, filters: dict | None, route: str,
         config_version: str, corpus_version: str,
         answer: str, sources: list[dict], footer: str, model: str,
+        *, finish_reason: str,
     ) -> None:
-        """Store a successful {answer, sources, footer, model}. No-op when
-        disabled or answer is empty.
+        """Store a successful {answer, sources, footer, model, finish_reason}. No-op
+        when disabled or answer is empty.
+
+        `finish_reason` is the normalized value the answer ended with; a hit replays
+        it, so a truncated answer never replays as complete. Required, like `model`.
 
         `model` (v2 P2 step 9, R51) is the producing arm -- required, not
         optional, so a caller cannot silently reintroduce an unattributed
@@ -115,5 +124,8 @@ class AnswerCache:
         if self._cache is None or not answer:
             return
         key = self._key(query, filters, route, config_version, corpus_version)
-        self._cache.set(key, {"answer": answer, "sources": sources, "footer": footer, "model": model})
+        self._cache.set(key, {
+            "answer": answer, "sources": sources, "footer": footer, "model": model,
+            "finish_reason": finish_reason,
+        })
         logger.info("AnswerCache: stored key=%s model=%s", key[:12], model)

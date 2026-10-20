@@ -108,7 +108,7 @@ class EntityMap:
             return query, resolved_names
 
         expanded_query = query + " " + " ".join(expansion_terms)
-        logger.info("EntityMap.resolve: query=%r resolved=%s", query, resolved_names)
+        logger.info("EntityMap.resolve: query_chars=%d resolved=%s", len(query), resolved_names)
         return expanded_query, resolved_names
 
     def _scan(self, query_tokens: tuple[str, ...]) -> list[str]:

@@ -30,11 +30,21 @@ CP-beta has not picked a routing family, so building any of that now would be
 code shaped for a decision that has not been made.
 """
 
-from src.gateway.contract import FinishReason, GenerationStream, Provider, Usage
+from src.gateway.contract import (
+    CallClass,
+    DecideResult,
+    Decider,
+    FinishReason,
+    GenerationStream,
+    Provider,
+    Usage,
+)
 from src.gateway.guard import (
     Degraded,
     RequestTooLarge,
     SpendRateBreaker,
+    UnknownCallClass,
+    guarded_decide,
     guarded_generate,
 )
 from src.gateway.ledger import BudgetExceeded, RequestLedger, SpendLayer
@@ -42,9 +52,9 @@ from src.gateway.ladder import Readiness, Rung, next_rung, readiness_from_status
 from src.gateway.retry import TransportError, record_if_empty_completion
 
 __all__ = [
-    "FinishReason", "GenerationStream", "Provider", "Usage",
+    "CallClass", "DecideResult", "Decider", "FinishReason", "GenerationStream", "Provider", "Usage",
     "BudgetExceeded", "Degraded", "RequestLedger", "RequestTooLarge", "SpendLayer",
-    "SpendRateBreaker", "guarded_generate",
+    "SpendRateBreaker", "UnknownCallClass", "guarded_decide", "guarded_generate",
     "Readiness", "Rung", "next_rung", "readiness_from_status",
     "TransportError", "record_if_empty_completion",
 ]
